@@ -1,0 +1,568 @@
+Traceback (most recent call last):
+  File "/Users/azeez/.local/share/uv/tools/realm-verifier/lib/python3.14/site-packages/harbor/trial/trial.py", line 415, in run
+    await self._prepare()
+  File "/Users/azeez/.local/share/uv/tools/realm-verifier/lib/python3.14/site-packages/harbor/trial/trial.py", line 453, in _prepare
+    await self._setup_agent_environment()
+  File "/Users/azeez/.local/share/uv/tools/realm-verifier/lib/python3.14/site-packages/harbor/trial/trial.py", line 1542, in _setup_agent_environment
+    await self._start_agent_environment()
+  File "/Users/azeez/.local/share/uv/tools/realm-verifier/lib/python3.14/site-packages/harbor/trial/trial.py", line 1548, in _start_agent_environment
+    await asyncio.wait_for(
+    ...<4 lines>...
+    )
+  File "/opt/homebrew/Cellar/python@3.14/3.14.2_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/asyncio/tasks.py", line 488, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/Users/azeez/.local/share/uv/tools/realm-verifier/lib/python3.14/site-packages/harbor/environments/docker/docker.py", line 981, in start
+    await self._run_docker_compose_command(["build"])
+  File "/Users/azeez/.local/share/uv/tools/realm-verifier/lib/python3.14/site-packages/harbor/environments/docker/docker.py", line 704, in _run_docker_compose_command
+    raise RuntimeError(
+    ...<5 lines>...
+    )
+RuntimeError: Docker compose command failed for environment clearledger-settlement. Command: docker compose --project-name aw-az-01__qjbnmd8__env --project-directory /Users/azeez/Azeez/microai/aw-az-01/environment -f /private/var/folders/cx/31vj2yzs6xv5qzw7hx0tvjp40000gn/T/tmp62m4oj8n/aw-az-01__qJbNMD8__env-docker-compose-resources.json -f /Users/azeez/.local/share/uv/tools/realm-verifier/lib/python3.14/site-packages/harbor/environments/docker/docker-compose-build.yaml -f /Users/azeez/Azeez/microai/aw-az-01/environment/docker-compose.yaml -f /private/var/folders/cx/31vj2yzs6xv5qzw7hx0tvjp40000gn/T/tmpz_dhp9uk/docker-compose-environment.json -f /private/var/folders/cx/31vj2yzs6xv5qzw7hx0tvjp40000gn/T/tmp795b6lxd/docker-compose-mounts.json build. Return code: 1. Stdout:  Image aw-az-01__qjbnmd8__env-main Building 
+ Image aw-az-01__qjbnmd8__env-runtime Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.06kB done
+#1 DONE 0.0s
+
+#2 [runtime internal] load build definition from Dockerfile
+#2 transferring dockerfile: 5.00kB done
+#2 DONE 0.0s
+
+#3 [main] resolve image config for docker-image://docker.io/docker/dockerfile:1.7
+#3 ...
+
+#4 [auth] docker/dockerfile:pull token for registry-1.docker.io
+#4 DONE 0.0s
+
+#3 [main] resolve image config for docker-image://docker.io/docker/dockerfile:1.7
+#3 DONE 4.6s
+
+#5 [main] docker-image://docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+#5 resolve docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e done
+#5 sha256:45fc0e793a06559debf1128a8e0a2aef5bd1822e7d98b7412afcc474f04cc4fe 1.26kB / 1.26kB done
+#5 sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 0B / 11.24MB 0.1s
+#5 sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e 8.40kB / 8.40kB done
+#5 sha256:c8678869a83fab70232869ba24acc1c0be661f4d65135c0eeacb6a8e78420fdd 482B / 482B done
+#5 sha256:45fc0e793a06559debf1128a8e0a2aef5bd1822e7d98b7412afcc474f04cc4fe 1.26kB / 1.26kB done
+#5 sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e 8.40kB / 8.40kB done
+#5 sha256:c8678869a83fab70232869ba24acc1c0be661f4d65135c0eeacb6a8e78420fdd 482B / 482B done
+#5 sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 1.05MB / 11.24MB 1.2s
+#5 sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 2.10MB / 11.24MB 1.7s
+#5 sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 3.15MB / 11.24MB 2.1s
+#5 sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 4.19MB / 11.24MB 2.6s
+#5 sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 5.24MB / 11.24MB 3.1s
+#5 sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 6.29MB / 11.24MB 3.7s
+#5 sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 7.34MB / 11.24MB 4.1s
+#5 sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 8.39MB / 11.24MB 4.4s
+#5 sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 9.44MB / 11.24MB 4.9s
+#5 sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 10.49MB / 11.24MB 5.3s
+#5 sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 11.24MB / 11.24MB 5.5s done
+#5 extracting sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 0.1s
+#5 extracting sha256:6e230fe0035dc5b9d8d5e65513d1f11ae3b25d14362031fb540a4c23bf862933 0.1s done
+#5 DONE 5.7s
+
+#6 [runtime internal] load build definition from Dockerfile
+#6 transferring dockerfile: 5.00kB done
+#6 DONE 0.0s
+
+#7 [main internal] load build definition from Dockerfile
+#7 transferring dockerfile: 5.00kB done
+#7 DONE 0.0s
+
+#8 [main internal] load metadata for docker.io/library/python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+#8 ...
+
+#9 [auth] library/python:pull token for registry-1.docker.io
+#9 DONE 0.0s
+
+#10 [auth] library/rust:pull token for registry-1.docker.io
+#10 DONE 0.0s
+
+#11 [auth] hashicorp/terraform:pull token for registry-1.docker.io
+#11 DONE 0.0s
+
+#12 [main internal] load metadata for docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#12 DONE 2.6s
+
+#8 [main internal] load metadata for docker.io/library/python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+#8 DONE 2.6s
+
+#13 [main internal] load metadata for docker.io/hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd
+#13 DONE 3.2s
+
+#14 [main internal] load .dockerignore
+#14 transferring context: 82B done
+#14 DONE 0.0s
+
+#15 [runtime internal] load .dockerignore
+#15 transferring context: 82B done
+#15 DONE 0.0s
+
+#16 [main internal] load build context
+#16 transferring context: 243.18kB 0.0s done
+#16 DONE 0.0s
+
+#17 [runtime main  1/18] FROM docker.io/library/python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+#17 resolve docker.io/library/python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3 0.0s done
+#17 ...
+
+#18 [runtime internal] load build context
+#18 transferring context: 243.18kB done
+#18 DONE 0.0s
+
+#17 [runtime main  1/18] FROM docker.io/library/python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+#17 sha256:ee2c320efc696d510c4579d9d40d5e2ece061a6cd0adc4b966db84b581bc8be0 5.70kB / 5.70kB done
+#17 sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3 6.55kB / 6.55kB done
+#17 sha256:349275ed26e7aea20752e1fd63c40c30a0281d324e51fb41612c2433cb6482d4 1.75kB / 1.75kB done
+#17 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 resolve docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081 0.0s done
+#19 sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081 7.75kB / 7.75kB done
+#19 sha256:877b65923b63b29ab88280b214163b3310bf2357c0815823047a27f184fc575f 1.94kB / 1.94kB done
+#19 sha256:37fb1961beeee66240fdb54cb34270e5ebc20513b1e3ace163930b800b69e312 4.38kB / 4.38kB done
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 4.19MB / 48.33MB 5.1s
+#19 sha256:84649bff67ea459549b6f371f7045d9968d6ebf370b815c922a625f3ab065724 6.29MB / 23.54MB 5.1s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 3.15MB / 64.36MB 5.1s
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 7.34MB / 48.33MB 7.4s
+#19 sha256:84649bff67ea459549b6f371f7045d9968d6ebf370b815c922a625f3ab065724 8.39MB / 23.54MB 7.4s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 7.34MB / 64.36MB 9.8s
+#19 ...
+
+#20 [runtime terraform-cli 1/1] FROM docker.io/hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd
+#20 resolve docker.io/hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd 0.0s done
+#20 sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd 964B / 964B done
+#20 sha256:af232de8508d1ebc9de63d52e91841a613648a7cd08bd26cffaed255d2bd78cd 918B / 918B done
+#20 sha256:97aaea908f872c3c60b75e9bffd6eeae34386c0e9671d6b2a1e30418ea702269 4.24kB / 4.24kB done
+#20 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:84649bff67ea459549b6f371f7045d9968d6ebf370b815c922a625f3ab065724 10.49MB / 23.54MB 10.8s
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 10.49MB / 48.33MB 11.5s
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 13.63MB / 48.33MB 14.7s
+#19 sha256:84649bff67ea459549b6f371f7045d9968d6ebf370b815c922a625f3ab065724 12.58MB / 23.54MB 14.7s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 10.49MB / 64.36MB 14.9s
+#19 sha256:84649bff67ea459549b6f371f7045d9968d6ebf370b815c922a625f3ab065724 14.68MB / 23.54MB 18.3s
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 16.78MB / 48.33MB 18.4s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 14.68MB / 64.36MB 19.3s
+#19 sha256:84649bff67ea459549b6f371f7045d9968d6ebf370b815c922a625f3ab065724 16.78MB / 23.54MB 21.4s
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 19.92MB / 48.33MB 22.0s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 17.83MB / 64.36MB 24.5s
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 23.07MB / 48.33MB 24.8s
+#19 sha256:84649bff67ea459549b6f371f7045d9968d6ebf370b815c922a625f3ab065724 18.87MB / 23.54MB 24.9s
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 26.21MB / 48.33MB 27.6s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 22.02MB / 64.36MB 29.6s
+#19 sha256:84649bff67ea459549b6f371f7045d9968d6ebf370b815c922a625f3ab065724 19.92MB / 23.54MB 30.0s
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 29.36MB / 48.33MB 31.6s
+#19 sha256:84649bff67ea459549b6f371f7045d9968d6ebf370b815c922a625f3ab065724 22.02MB / 23.54MB 32.0s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 26.21MB / 64.36MB 33.7s
+#19 sha256:84649bff67ea459549b6f371f7045d9968d6ebf370b815c922a625f3ab065724 23.54MB / 23.54MB 35.1s done
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 0B / 202.75MB 35.1s
+#19 sha256:84649bff67ea459549b6f371f7045d9968d6ebf370b815c922a625f3ab065724 23.54MB / 23.54MB 35.1s done
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 32.51MB / 48.33MB 36.3s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 30.41MB / 64.36MB 37.0s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 1.05MB / 202.75MB 40.1s
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 35.65MB / 48.33MB 40.3s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 34.60MB / 64.36MB 40.9s
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 38.80MB / 48.33MB 43.1s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 3.15MB / 202.75MB 45.2s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 38.80MB / 64.36MB 45.9s
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 41.94MB / 48.33MB 47.5s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 9.44MB / 202.75MB 50.4s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 41.94MB / 64.36MB 50.9s
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 44.04MB / 48.33MB 52.6s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 14.68MB / 202.75MB 55.5s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 45.09MB / 64.36MB 56.0s
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 47.19MB / 48.33MB 56.1s
+#19 extracting sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955
+#19 sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 48.33MB / 48.33MB 57.5s done
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 0B / 168.22MB 57.6s
+#19 extracting sha256:de07ba6f486e0ce29760ab32d4381edabbc660a04c493e95eb9a8056925d8955 2.1s done
+#19 extracting sha256:84649bff67ea459549b6f371f7045d9968d6ebf370b815c922a625f3ab065724 0.1s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 49.28MB / 64.36MB 59.9s
+#19 extracting sha256:84649bff67ea459549b6f371f7045d9968d6ebf370b815c922a625f3ab065724 0.5s done
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 17.83MB / 202.75MB 60.6s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 3.15MB / 168.22MB 62.6s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 52.43MB / 64.36MB 64.9s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 22.02MB / 202.75MB 65.6s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 7.34MB / 168.22MB 67.7s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 55.57MB / 64.36MB 69.9s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 26.21MB / 202.75MB 70.6s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 12.58MB / 168.22MB 72.8s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 58.72MB / 64.36MB 75.1s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 28.31MB / 202.75MB 75.7s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 18.87MB / 168.22MB 77.8s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 61.87MB / 64.36MB 80.2s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 30.41MB / 202.75MB 80.8s
+#19 sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 64.36MB / 64.36MB 82.6s done
+#19 extracting sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465
+#19 ...
+
+#17 [runtime main  1/18] FROM docker.io/library/python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+#17 sha256:333125b5cee9fb6718bdcb523fc93b4adc71b7c37ada6146a20c193430e549b9 0B / 28.12MB 82.7s
+#17 sha256:333125b5cee9fb6718bdcb523fc93b4adc71b7c37ada6146a20c193430e549b9 2.10MB / 28.12MB 86.3s
+#17 sha256:333125b5cee9fb6718bdcb523fc93b4adc71b7c37ada6146a20c193430e549b9 4.19MB / 28.12MB 87.7s
+#17 sha256:333125b5cee9fb6718bdcb523fc93b4adc71b7c37ada6146a20c193430e549b9 6.29MB / 28.12MB 89.6s
+#17 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 35.65MB / 202.75MB 90.0s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 32.51MB / 168.22MB 90.0s
+#19 extracting sha256:48a2a14f59a002f5ef50911a0687d30beadf65bbe35bde8bd3823c3496cbd465 2.4s done
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 38.80MB / 202.75MB 95.1s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 35.65MB / 168.22MB 95.1s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 41.94MB / 202.75MB 100.1s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 39.85MB / 168.22MB 100.1s
+#19 ...
+
+#17 [runtime main  1/18] FROM docker.io/library/python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+#17 sha256:333125b5cee9fb6718bdcb523fc93b4adc71b7c37ada6146a20c193430e549b9 15.73MB / 28.12MB 100.0s
+#17 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 46.14MB / 202.75MB 105.3s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 44.04MB / 168.22MB 105.3s
+#19 ...
+
+#17 [runtime main  1/18] FROM docker.io/library/python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+#17 sha256:333125b5cee9fb6718bdcb523fc93b4adc71b7c37ada6146a20c193430e549b9 23.07MB / 28.12MB 110.2s
+#17 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 49.28MB / 202.75MB 110.5s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 48.23MB / 168.22MB 110.5s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 52.43MB / 202.75MB 115.6s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 53.48MB / 168.22MB 115.6s
+#19 ...
+
+#17 [runtime main  1/18] FROM docker.io/library/python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+#17 sha256:333125b5cee9fb6718bdcb523fc93b4adc71b7c37ada6146a20c193430e549b9 28.12MB / 28.12MB 117.4s done
+#17 extracting sha256:333125b5cee9fb6718bdcb523fc93b4adc71b7c37ada6146a20c193430e549b9 1.3s done
+#17 sha256:3cdc64d2ec2c1952d47b21c981c11d770071ba3a1e6c1f35843919d826b09684 0B / 3.82MB 120.4s
+#17 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 56.62MB / 202.75MB 120.6s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 59.77MB / 168.22MB 120.6s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 60.82MB / 202.75MB 125.8s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 65.01MB / 168.22MB 125.8s
+#19 ...
+
+#17 [runtime main  1/18] FROM docker.io/library/python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+#17 sha256:3cdc64d2ec2c1952d47b21c981c11d770071ba3a1e6c1f35843919d826b09684 3.82MB / 3.82MB 126.9s done
+#17 extracting sha256:3cdc64d2ec2c1952d47b21c981c11d770071ba3a1e6c1f35843919d826b09684 0.4s done
+#17 sha256:dd8fff778ff6006ec901922031a5c00067338c079435bdc790468d359b9797c2 1.05MB / 13.61MB 130.5s
+#17 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 63.96MB / 202.75MB 130.8s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 71.30MB / 168.22MB 130.8s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 68.16MB / 202.75MB 135.9s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 75.50MB / 168.22MB 135.9s
+#19 ...
+
+#17 [runtime main  1/18] FROM docker.io/library/python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+#17 sha256:dd8fff778ff6006ec901922031a5c00067338c079435bdc790468d359b9797c2 8.39MB / 13.61MB 140.7s
+#17 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 72.35MB / 202.75MB 141.0s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 78.64MB / 168.22MB 141.0s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 76.55MB / 202.75MB 146.0s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 82.84MB / 168.22MB 146.0s
+#19 ...
+
+#17 [runtime main  1/18] FROM docker.io/library/python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+#17 sha256:dd8fff778ff6006ec901922031a5c00067338c079435bdc790468d359b9797c2 13.61MB / 13.61MB 147.0s done
+#17 extracting sha256:dd8fff778ff6006ec901922031a5c00067338c079435bdc790468d359b9797c2 0.7s done
+#17 sha256:5178256f396bb556aab3006b443dce8ba6c5a9863abeb0b757ad7319af1b2238 250B / 250B 147.4s done
+#17 extracting sha256:5178256f396bb556aab3006b443dce8ba6c5a9863abeb0b757ad7319af1b2238 done
+#17 DONE 147.8s
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 ...
+
+#21 [runtime main  2/18] RUN apt-get update && apt-get install -y --no-install-recommends       bash       ca-certificates       curl       git       iproute2       jq       less       netcat-openbsd       openssl       postgresql-client       procps       ripgrep       skopeo       tar       unzip       vim-tiny       xz-utils     && rm -rf /var/lib/apt/lists/*
+#21 0.242 Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+#21 0.350 Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+#21 0.426 Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [34.8 kB]
+#21 0.538 Get:4 http://deb.debian.org/debian bookworm/main arm64 Packages [8689 kB]
+#21 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 83.89MB / 202.75MB 153.0s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 87.03MB / 168.22MB 153.0s
+#19 ...
+
+#20 [runtime terraform-cli 1/1] FROM docker.io/hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd
+#20 sha256:aed6481c86ad17b8b57c77b5b7aa87325bc8f7c8c7c49bf3ac332507a611255f 4.17MB / 4.17MB 151.0s done
+#20 extracting sha256:aed6481c86ad17b8b57c77b5b7aa87325bc8f7c8c7c49bf3ac332507a611255f 0.1s done
+#20 sha256:9180acfd63551eccf7bec9a0e031e96162905ef30bc2b0afb2b4c067fcc948d2 5.24MB / 8.78MB 157.4s
+#20 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 87.03MB / 202.75MB 158.1s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 89.13MB / 168.22MB 158.1s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 93.32MB / 168.22MB 163.1s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 91.23MB / 202.75MB 163.2s
+#19 ...
+
+#20 [runtime terraform-cli 1/1] FROM docker.io/hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd
+#20 sha256:9180acfd63551eccf7bec9a0e031e96162905ef30bc2b0afb2b4c067fcc948d2 8.78MB / 8.78MB 160.6s done
+#20 extracting sha256:9180acfd63551eccf7bec9a0e031e96162905ef30bc2b0afb2b4c067fcc948d2 0.2s done
+#20 sha256:6fde8df0d51a010fa868187c1427070ad2e6645ecc20f7ed770f7aa8c6287e69 2.08kB / 2.08kB 161.6s done
+#20 extracting sha256:6fde8df0d51a010fa868187c1427070ad2e6645ecc20f7ed770f7aa8c6287e69 done
+#20 sha256:0be60e0f61e4ca3dda5b8083f5f916098723ab350ec798660e77d090c10ede9a 3.15MB / 25.47MB 167.6s
+#20 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 93.32MB / 202.75MB 168.3s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 97.52MB / 168.22MB 168.3s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 97.52MB / 202.75MB 173.4s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 100.66MB / 168.22MB 173.4s
+#19 ...
+
+#20 [runtime terraform-cli 1/1] FROM docker.io/hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd
+#20 sha256:0be60e0f61e4ca3dda5b8083f5f916098723ab350ec798660e77d090c10ede9a 8.39MB / 25.47MB 177.9s
+#20 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 99.61MB / 202.75MB 178.5s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 102.76MB / 168.22MB 178.5s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 100.66MB / 202.75MB 183.6s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 103.81MB / 168.22MB 183.6s
+#19 ...
+
+#20 [runtime terraform-cli 1/1] FROM docker.io/hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd
+#20 sha256:0be60e0f61e4ca3dda5b8083f5f916098723ab350ec798660e77d090c10ede9a 10.49MB / 25.47MB 188.2s
+#20 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 101.71MB / 202.75MB 188.6s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 104.86MB / 168.22MB 188.6s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 102.76MB / 202.75MB 193.7s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 104.86MB / 168.22MB 193.7s
+#19 ...
+
+#20 [runtime terraform-cli 1/1] FROM docker.io/hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd
+#20 sha256:0be60e0f61e4ca3dda5b8083f5f916098723ab350ec798660e77d090c10ede9a 12.58MB / 25.47MB 198.4s
+#20 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 109.05MB / 202.75MB 198.9s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 106.95MB / 168.22MB 198.9s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 114.29MB / 202.75MB 203.9s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 110.10MB / 168.22MB 203.9s
+#19 ...
+
+#20 [runtime terraform-cli 1/1] FROM docker.io/hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd
+#20 sha256:0be60e0f61e4ca3dda5b8083f5f916098723ab350ec798660e77d090c10ede9a 18.87MB / 25.47MB 208.6s
+#20 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 119.54MB / 202.75MB 209.0s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 112.20MB / 168.22MB 209.0s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 122.68MB / 202.75MB 214.0s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 117.44MB / 168.22MB 214.0s
+#19 ...
+
+#20 [runtime terraform-cli 1/1] FROM docker.io/hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd
+#20 sha256:0be60e0f61e4ca3dda5b8083f5f916098723ab350ec798660e77d090c10ede9a 24.12MB / 25.47MB 218.9s
+#20 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 125.83MB / 202.75MB 219.1s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 122.68MB / 168.22MB 219.1s
+#19 ...
+
+#20 [main terraform-cli 1/1] FROM docker.io/hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd
+#20 sha256:0be60e0f61e4ca3dda5b8083f5f916098723ab350ec798660e77d090c10ede9a 25.47MB / 25.47MB 219.5s done
+#20 extracting sha256:0be60e0f61e4ca3dda5b8083f5f916098723ab350ec798660e77d090c10ede9a 0.4s done
+#20 DONE 220.0s
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 128.97MB / 202.75MB 224.2s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 130.02MB / 168.22MB 224.2s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 132.12MB / 202.75MB 229.3s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 138.41MB / 168.22MB 229.3s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 135.27MB / 202.75MB 234.4s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 144.70MB / 168.22MB 234.4s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 140.51MB / 202.75MB 239.5s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 150.99MB / 168.22MB 239.5s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 145.75MB / 202.75MB 244.6s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 157.29MB / 168.22MB 244.6s
+#19 ...
+
+#21 [runtime main  2/18] RUN apt-get update && apt-get install -y --no-install-recommends       bash       ca-certificates       curl       git       iproute2       jq       less       netcat-openbsd       openssl       postgresql-client       procps       ripgrep       skopeo       tar       unzip       vim-tiny       xz-utils     && rm -rf /var/lib/apt/lists/*
+#21 90.15 Get:5 http://deb.debian.org/debian bookworm-updates/main arm64 Packages [6936 B]
+#21 90.17 Get:6 http://deb.debian.org/debian-security bookworm-security/main arm64 Packages [343 kB]
+#21 92.61 Fetched 9280 kB in 1min 33s (100 kB/s)
+#21 92.61 Reading package lists...
+#21 93.10 Reading package lists...
+#21 93.59 Building dependency tree...
+#21 93.68 Reading state information...
+#21 93.80 bash is already the newest version (5.2.15-2+b13).
+#21 93.80 bash set to manually installed.
+#21 93.80 ca-certificates is already the newest version (20250419~deb12u1).
+#21 93.80 openssl is already the newest version (3.0.22-1~deb12u1).
+#21 93.80 openssl set to manually installed.
+#21 93.80 tar is already the newest version (1.34+dfsg-1.2+deb12u1).
+#21 93.80 tar set to manually installed.
+#21 93.80 The following additional packages will be installed:
+#21 93.80   containernetworking-plugins dirmngr dmsetup git-man gnupg gnupg-l10n
+#21 93.80   gnupg-utils golang-github-containers-common golang-github-containers-image
+#21 93.80   gpg gpg-agent gpg-wks-client gpg-wks-server gpgconf gpgsm iptables
+#21 93.80   libassuan0 libbpf1 libbrotli1 libbsd0 libcap2-bin libcurl3-gnutls libcurl4
+#21 93.80   libdevmapper1.02.1 libelf1 liberror-perl libexpat1 libgdbm-compat4
+#21 93.80   libgpgme11 libip4tc2 libip6tc2 libjq1 libksba8 libldap-2.5-0 libmnl0
+#21 93.80   libnetfilter-conntrack3 libnfnetlink0 libnftnl11 libnghttp2-14 libnpth0
+#21 93.80   libonig5 libperl5.36 libpq5 libproc2-0 libpsl5 librtmp1 libsasl2-2
+#21 93.80   libsasl2-modules-db libssh2-1 libxtables12 perl perl-modules-5.36
+#21 93.80   pinentry-curses postgresql-client-15 postgresql-client-common sensible-utils
+#21 93.80   vim-common
+#21 93.80 Suggested packages:
+#21 93.80   dbus-user-session libpam-systemd pinentry-gnome3 tor gettext-base
+#21 93.80   git-daemon-run | git-daemon-sysvinit git-doc git-email git-gui gitk gitweb
+#21 93.80   git-cvs git-mediawiki git-svn parcimonie xloadimage scdaemon iproute2-doc
+#21 93.80   python3:any firewalld kmod perl-doc libterm-readline-gnu-perl
+#21 93.80   | libterm-readline-perl-perl make libtap-harness-archive-perl pinentry-doc
+#21 93.80   postgresql-15 postgresql-doc-15 zip indent
+#21 93.80 Recommended packages:
+#21 93.80   patch ssh-client netavark libatm1 nftables libpam-cap libldap-common
+#21 93.80   publicsuffix libsasl2-modules psmisc xxd
+#21 94.33 The following NEW packages will be installed:
+#21 94.33   containernetworking-plugins curl dirmngr dmsetup git git-man gnupg
+#21 94.33   gnupg-l10n gnupg-utils golang-github-containers-common
+#21 94.33   golang-github-containers-image gpg gpg-agent gpg-wks-client gpg-wks-server
+#21 94.33   gpgconf gpgsm iproute2 iptables jq less libassuan0 libbpf1 libbrotli1
+#21 94.33   libbsd0 libcap2-bin libcurl3-gnutls libcurl4 libdevmapper1.02.1 libelf1
+#21 94.33   liberror-perl libexpat1 libgdbm-compat4 libgpgme11 libip4tc2 libip6tc2
+#21 94.33   libjq1 libksba8 libldap-2.5-0 libmnl0 libnetfilter-conntrack3 libnfnetlink0
+#21 94.33   libnftnl11 libnghttp2-14 libnpth0 libonig5 libperl5.36 libpq5 libproc2-0
+#21 94.33   libpsl5 librtmp1 libsasl2-2 libsasl2-modules-db libssh2-1 libxtables12
+#21 94.33   netcat-openbsd perl perl-modules-5.36 pinentry-curses postgresql-client
+#21 94.33   postgresql-client-15 postgresql-client-common procps ripgrep sensible-utils
+#21 94.33   skopeo unzip vim-common vim-tiny xz-utils
+#21 94.43 0 upgraded, 70 newly installed, 0 to remove and 0 not upgraded.
+#21 94.43 Need to get 44.4 MB of archives.
+#21 94.43 After this operation, 222 MB of additional disk space will be used.
+#21 94.43 Get:1 http://deb.debian.org/debian bookworm/main arm64 perl-modules-5.36 all 5.36.0-7+deb12u3 [2815 kB]
+#21 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 150.99MB / 202.75MB 249.8s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 162.53MB / 168.22MB 249.8s
+#19 sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 168.22MB / 168.22MB 253.7s done
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 156.24MB / 202.75MB 255.0s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 166.72MB / 202.75MB 259.6s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 177.21MB / 202.75MB 263.8s
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 187.70MB / 202.75MB 268.3s
+#19 ...
+
+#21 [runtime main  2/18] RUN apt-get update && apt-get install -y --no-install-recommends       bash       ca-certificates       curl       git       iproute2       jq       less       netcat-openbsd       openssl       postgresql-client       procps       ripgrep       skopeo       tar       unzip       vim-tiny       xz-utils     && rm -rf /var/lib/apt/lists/*
+#21 111.4 Get:2 http://deb.debian.org/debian bookworm/main arm64 libgdbm-compat4 arm64 1.23-3 [48.0 kB]
+#21 111.6 Get:3 http://deb.debian.org/debian bookworm/main arm64 libperl5.36 arm64 5.36.0-7+deb12u3 [4009 kB]
+#21 ...
+
+#19 [runtime rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 198.18MB / 202.75MB 273.2s
+#19 extracting sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603
+#19 sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 202.75MB / 202.75MB 275.0s done
+#19 ...
+
+#21 [runtime main  2/18] RUN apt-get update && apt-get install -y --no-install-recommends       bash       ca-certificates       curl       git       iproute2       jq       less       netcat-openbsd       openssl       postgresql-client       procps       ripgrep       skopeo       tar       unzip       vim-tiny       xz-utils     && rm -rf /var/lib/apt/lists/*
+#21 132.0 Get:4 http://deb.debian.org/debian bookworm/main arm64 perl arm64 5.36.0-7+deb12u3 [239 kB]
+#21 132.8 Get:5 http://deb.debian.org/debian bookworm/main arm64 libelf1 arm64 0.188-2.1 [173 kB]
+#21 133.1 Get:6 http://deb.debian.org/debian bookworm/main arm64 libbpf1 arm64 1:1.1.2-0+deb12u1 [136 kB]
+#21 133.5 Get:7 http://deb.debian.org/debian bookworm/main arm64 libbsd0 arm64 0.11.7-2 [115 kB]
+#21 133.8 Get:8 http://deb.debian.org/debian bookworm/main arm64 libmnl0 arm64 1.0.4-3 [12.1 kB]
+#21 133.8 Get:9 http://deb.debian.org/debian bookworm/main arm64 libxtables12 arm64 1.8.9-2 [29.6 kB]
+#21 133.9 Get:10 http://deb.debian.org/debian bookworm/main arm64 libcap2-bin arm64 1:2.66-4+deb12u3+b1 [34.5 kB]
+#21 133.9 Get:11 http://deb.debian.org/debian bookworm/main arm64 iproute2 arm64 6.1.0-3 [1008 kB]
+#21 ...
+
+#19 [main rust-builder 1/5] FROM docker.io/library/rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081
+#19 extracting sha256:0d41c7623f41e51939686bf861fe89538ae4dc84481ff4136b55524e770d2603 5.7s done
+#19 extracting sha256:b582ca43e8cd7917644f11dc63e7fd052a5c5ebfe633229cdce473bcf4040ada 2.5s done
+#19 DONE 283.6s
+
+#22 [runtime rust-builder 2/5] WORKDIR /src/application
+#22 DONE 0.4s
+
+#23 [runtime rust-builder 3/5] COPY application/Cargo.toml application/Cargo.lock ./
+#23 DONE 0.0s
+
+#24 [runtime rust-builder 4/5] COPY application/crates ./crates
+#24 DONE 0.0s
+
+#25 [runtime rust-builder 5/5] RUN --mount=type=cache,target=/usr/local/cargo/registry     --mount=type=cache,target=/usr/local/cargo/git     --mount=type=cache,target=/src/application/target     cargo build --release --locked --bins &&     mkdir -p /out &&     cp target/release/clearledger-api        target/release/clearledger-projector        target/release/clearledger-outbox-relay        target/release/clearledger-audit-archiver        /out/
+#25 0.245     Updating crates.io index
+#25 ...
+
+#21 [runtime main  2/18] RUN apt-get update && apt-get install -y --no-install-recommends       bash       ca-certificates       curl       git       iproute2       jq       less       netcat-openbsd       openssl       postgresql-client       procps       ripgrep       skopeo       tar       unzip       vim-tiny       xz-utils     && rm -rf /var/lib/apt/lists/*
+#21 136.5 Get:12 http://deb.debian.org/debian bookworm/main arm64 less arm64 590-2.1~deb12u2 [128 kB]
+#21 137.2 Get:13 http://deb.debian.org/debian bookworm/main arm64 libproc2-0 arm64 2:4.0.2-3 [60.1 kB]
+#21 137.5 Get:14 http://deb.debian.org/debian bookworm/main arm64 procps arm64 2:4.0.2-3 [698 kB]
+#21 139.7 Get:15 http://deb.debian.org/debian bookworm/main arm64 sensible-utils all 0.0.17+nmu1 [19.0 kB]
+#21 139.8 Get:16 http://deb.debian.org/debian bookworm/main arm64 vim-common all 2:9.0.1378-2+deb12u2 [125 kB]
+#21 140.4 Get:17 http://deb.debian.org/debian bookworm/main arm64 vim-tiny arm64 2:9.0.1378-2+deb12u2 [652 kB]
+#21 143.2 Get:18 http://deb.debian.org/debian-security bookworm-security/main arm64 xz-utils arm64 5.4.1-1+deb12u2 [471 kB]
+#21 145.3 Get:19 http://deb.debian.org/debian bookworm/main arm64 libip4tc2 arm64 1.8.9-2 [18.5 kB]
+#21 145.4 Get:20 http://deb.debian.org/debian bookworm/main arm64 libip6tc2 arm64 1.8.9-2 [18.7 kB]
+#21 145.5 Get:21 http://deb.debian.org/debian bookworm/main arm64 libnfnetlink0 arm64 1.0.2-2 [14.5 kB]
+#21 145.6 Get:22 http://deb.debian.org/debian bookworm/main arm64 libnetfilter-conntrack3 arm64 1.0.9-3 [38.4 kB]
+#21 145.7 Get:23 http://deb.debian.org/debian bookworm/main arm64 libnftnl11 arm64 1.2.4-2 [57.6 kB]
+#21 145.9 Get:24 http://deb.debian.org/debian bookworm/main arm64 iptables arm64 1.8.9-2 [352 kB]
+#21 147.6 Get:25 http://deb.debian.org/debian bookworm/main arm64 containernetworking-plugins arm64 1.1.1+ds1-3+b5 [6026 kB]
+#21 171.7 Get:26 http://deb.debian.org/debian bookworm/main arm64 libbrotli1 arm64 1.0.9-2+b6 [269 kB]
+#21 172.6 Get:27 http://deb.debian.org/debian bookworm/main arm64 libsasl2-modules-db arm64 2.1.28+dfsg-10 [20.8 kB]
+#21 172.7 Get:28 http://deb.debian.org/debian bookworm/main arm64 libsasl2-2 arm64 2.1.28+dfsg-10 [58.0 kB]
+#21 173.1 Get:29 http://deb.debian.org/debian bookworm/main arm64 libldap-2.5-0 arm64 2.5.13+dfsg-5 [171 kB]
+#21 173.7 Get:30 http://deb.debian.org/debian bookworm/main arm64 libnghttp2-14 arm64 1.52.0-1+deb12u3 [69.0 kB]
+#21 174.2 Get:31 http://deb.debian.org/debian bookworm/main arm64 libpsl5 arm64 0.21.2-1 [58.6 kB]
+#21 174.4 Get:32 http://deb.debian.org/debian bookworm/main arm64 librtmp1 arm64 2.4+20151223.gitfa8646d.1-2+b2 [59.4 kB]
+#21 174.5 Get:33 http://deb.debian.org/debian-security bookworm-security/main arm64 libssh2-1 arm64 1.10.0-3+deb12u1 [169 kB]
+#21 175.0 Get:34 http://deb.debian.org/debian bookworm/main arm64 libcurl4 arm64 7.88.1-10+deb12u15 [367 kB]
+#21 175.9 Get:35 http://deb.debian.org/debian bookworm/main arm64 curl arm64 7.88.1-10+deb12u15 [310 kB]
+#21 177.0 Get:36 http://deb.debian.org/debian bookworm/main arm64 libassuan0 arm64 2.5.5-5 [45.9 kB]
+#21 177.2 Get:37 http://deb.debian.org/debian bookworm/main arm64 gpgconf arm64 2.2.40-1.1+deb12u2 [557 kB]
+#21 179.1 Get:38 http://deb.debian.org/debian bookworm/main arm64 libksba8 arm64 1.6.3-2 [119 kB]
+#21 179.5 Get:39 http://deb.debian.org/debian bookworm/main arm64 libnpth0 arm64 1.6-3 [18.6 kB]
+#21 179.6 Get:40 http://deb.debian.org/debian bookworm/main arm64 dirmngr arm64 2.2.40-1.1+deb12u2 [769 kB]
+#21 182.8 Get:41 http://deb.debian.org/debian bookworm/main arm64 libdevmapper1.02.1 arm64 2:1.02.185-2 [115 kB]
+#21 183.2 Get:42 http://deb.debian.org/debian bookworm/main arm64 dmsetup arm64 2:1.02.185-2 [75.2 kB]
+#21 183.4 Get:43 http://deb.debian.org/debian bookworm/main arm64 libcurl3-gnutls arm64 7.88.1-10+deb12u15 [362 kB]
+#21 184.8 Get:44 http://deb.debian.org/debian-security bookworm-security/main arm64 libexpat1 arm64 2.5.0-1+deb12u4 [89.2 kB]
+#21 185.2 Get:45 http://deb.debian.org/debian bookworm/main arm64 liberror-perl all 0.17029-2 [29.0 kB]
+#21 185.3 Get:46 http://deb.debian.org/debian bookworm/main arm64 git-man all 1:2.39.5-0+deb12u3 [2053 kB]
+#21 193.7 Get:47 http://deb.debian.org/debian bookworm/main arm64 git arm64 1:2.39.5-0+deb12u3 [7153 kB]
+#21 219.2 Get:48 http://deb.debian.org/debian bookworm/main arm64 gnupg-l10n all 2.2.40-1.1+deb12u2 [1093 kB]
+#21 222.8 Get:49 http://deb.debian.org/debian bookworm/main arm64 gnupg-utils arm64 2.2.40-1.1+deb12u2 [879 kB]
+#21 224.8 Get:50 http://deb.debian.org/debian bookworm/main arm64 gpg arm64 2.2.40-1.1+deb12u2 [902 kB]
+#21 227.3 Get:51 http://deb.debian.org/debian bookworm/main arm64 pinentry-curses arm64 1.2.1-1 [75.2 kB]
+#21 227.5 Get:52 http://deb.debian.org/debian bookworm/main arm64 gpg-agent arm64 2.2.40-1.1+deb12u2 [673 kB]
+#21 229.6 Get:53 http://deb.debian.org/debian bookworm/main arm64 gpg-wks-client arm64 2.2.40-1.1+deb12u2 [533 kB]
+#21 231.0 Get:54 http://deb.debian.org/debian bookworm/main arm64 gpg-wks-server arm64 2.2.40-1.1+deb12u2 [525 kB]
+#21 232.7 Get:55 http://deb.debian.org/debian bookworm/main arm64 gpgsm arm64 2.2.40-1.1+deb12u2 [650 kB]
+#21 234.7 Get:56 http://deb.debian.org/debian bookworm/main arm64 gnupg all 2.2.40-1.1+deb12u2 [846 kB]
+#21 235.9 Get:57 http://deb.debian.org/debian bookworm/main arm64 golang-github-containers-image all 5.23.1-4 [31.7 kB]
+#21 236.0 Get:58 http://deb.debian.org/debian bookworm/main arm64 golang-github-containers-common all 0.50.1+ds1-4 [36.2 kB]
+#21 236.1 Get:59 http://deb.debian.org/debian bookworm/main arm64 libonig5 arm64 6.9.8-1 [179 kB]
+#21 ...
+
+#25 [runtime rust-builder 5/5] RUN --mount=type=cache,target=/usr/local/cargo/registry     --mount=type=cache,target=/usr/local/cargo/git     --mount=type=cache,target=/src/application/target     cargo build --release --locked --bins &&     mkdir -p /out &&     cp target/release/clearledger-api        target/release/clearledger-projector        target/release/clearledger-outbox-relay        target/release/clearledger-audit-archiver        /out/
+#25 99.86 error: the lock file /src/application/Cargo.lock needs to be updated but --locked was passed to prevent this
+#25 99.86 If you want to try to generate the lock file without accessing the network, remove the --locked flag and use --offline instead.
+#25 ERROR: process "/bin/sh -c cargo build --release --locked --bins &&     mkdir -p /out &&     cp target/release/clearledger-api        target/release/clearledger-projector        target/release/clearledger-outbox-relay        target/release/clearledger-audit-archiver        /out/" did not complete successfully: exit code: 101
+
+#21 [runtime main  2/18] RUN apt-get update && apt-get install -y --no-install-recommends       bash       ca-certificates       curl       git       iproute2       jq       less       netcat-openbsd       openssl       postgresql-client       procps       ripgrep       skopeo       tar       unzip       vim-tiny       xz-utils     && rm -rf /var/lib/apt/lists/*
+#21 CANCELED
+------
+ > [main rust-builder 5/5] RUN --mount=type=cache,target=/usr/local/cargo/registry     --mount=type=cache,target=/usr/local/cargo/git     --mount=type=cache,target=/src/application/target     cargo build --release --locked --bins &&     mkdir -p /out &&     cp target/release/clearledger-api        target/release/clearledger-projector        target/release/clearledger-outbox-relay        target/release/clearledger-audit-archiver        /out/:
+0.245     Updating crates.io index
+99.86 error: the lock file /src/application/Cargo.lock needs to be updated but --locked was passed to prevent this
+99.86 If you want to try to generate the lock file without accessing the network, remove the --locked flag and use --offline instead.
+------
+target main: failed to solve: process "/bin/sh -c cargo build --release --locked --bins &&     mkdir -p /out &&     cp target/release/clearledger-api        target/release/clearledger-projector        target/release/clearledger-outbox-relay        target/release/clearledger-audit-archiver        /out/" did not complete successfully: exit code: 101
+
+. Stderr: None. 
