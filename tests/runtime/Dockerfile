@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM rust:1.86-bookworm AS rust-builder
+FROM rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081 AS rust-builder
 WORKDIR /src/application
 COPY application/Cargo.toml application/Cargo.lock ./
 COPY application/crates ./crates
@@ -15,33 +15,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
        target/release/clearledger-audit-archiver \
        /out/
 
-FROM debian:bookworm-slim AS app-runtime-base
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates \
-      libssl3 \
-    && rm -rf /var/lib/apt/lists/*
+FROM hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd AS terraform-cli
 
-FROM app-runtime-base AS api-image
-COPY --from=rust-builder /out/clearledger-api /usr/local/bin/clearledger-api
-EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/clearledger-api"]
-
-FROM app-runtime-base AS projector-image
-COPY --from=rust-builder /out/clearledger-projector /var/runtime/bootstrap
-ENTRYPOINT ["/var/runtime/bootstrap"]
-
-FROM app-runtime-base AS relay-image
-COPY --from=rust-builder /out/clearledger-outbox-relay /var/runtime/bootstrap
-ENTRYPOINT ["/var/runtime/bootstrap"]
-
-FROM app-runtime-base AS archiver-image
-COPY --from=rust-builder /out/clearledger-audit-archiver /var/runtime/bootstrap
-ENTRYPOINT ["/var/runtime/bootstrap"]
-
-FROM hashicorp/terraform:1.9.8 AS terraform-cli
-FROM ghcr.io/opentofu/opentofu:1.8.4 AS opentofu-cli
-
-FROM python:3.12-slim-bookworm AS main
+FROM python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3 AS main
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -61,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       iproute2 \
       jq \
       less \
+      netcat-openbsd \
       openssl \
       postgresql-client \
       procps \
@@ -73,7 +50,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=terraform-cli /bin/terraform /usr/local/bin/terraform
-COPY --from=opentofu-cli /usr/local/bin/tofu /usr/local/bin/tofu
+
+RUN curl -fsSL https://github.com/opentofu/opentofu/releases/download/v1.8.4/tofu_1.8.4_linux_amd64.zip \
+      -o /tmp/tofu.zip && \
+    unzip -q /tmp/tofu.zip tofu -d /usr/local/bin && \
+    chmod +x /usr/local/bin/tofu && \
+    rm -f /tmp/tofu.zip
 
 RUN pip install --no-cache-dir \
       awscli==1.38.1 \
@@ -124,4 +106,3 @@ RUN mkdir -p /workspace/contracts /workspace/config /workspace/submission/infra 
 
 WORKDIR /workspace
 USER verifier
-CMD ["sleep", "infinity"]

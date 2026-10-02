@@ -7,6 +7,16 @@ services:
     user: "1000:1000"
     working_dir: /workspace
     environment:
+      HTTP_PROXY: http://172.20.0.1:18080
+      http_proxy: http://172.20.0.1:18080
+      HTTPS_PROXY: http://172.20.0.1:18080
+      https_proxy: http://172.20.0.1:18080
+      NO_PROXY: localhost,127.0.0.1,::1,aws,runtime
+      no_proxy: localhost,127.0.0.1,::1,aws,runtime
+      CURL_CA_BUNDLE: /etc/daytona-netleash-ca.crt
+      SSL_CERT_FILE: /etc/daytona-netleash-ca.crt
+      REQUESTS_CA_BUNDLE: /etc/daytona-netleash-ca.crt
+      NODE_EXTRA_CA_CERTS: /etc/daytona-netleash-ca.crt
       AWS_DEFAULT_REGION: us-east-1
       AWS_REGION: us-east-1
       AWS_ACCESS_KEY_ID: test
@@ -15,13 +25,14 @@ services:
       TF_CLI_CONFIG_FILE: /etc/terraform.tfrc
     volumes:
       - shared-workspace:/workspace
+      - /etc/daytona/netleash/ca.crt:/etc/daytona-netleash-ca.crt:ro
     depends_on:
       runtime:
         condition: service_completed_successfully
     command: ["sleep", "infinity"]
 
   aws:
-    image: floci/floci:1.5.33
+    image: floci/floci:1.5.33@sha256:d2ecc8035822b23b8587a56eab15edd825f41d3fb80d93e8e66680410beddc08
     init: true
     environment:
       FLOCI_STORAGE_MODE: memory

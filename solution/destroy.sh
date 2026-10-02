@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+export NO_PROXY="localhost,127.0.0.1,::1,aws,runtime"
+export no_proxy="localhost,127.0.0.1,::1,aws,runtime"
+
 CONFIG_FILE="/workspace/config/config.json"
 SUBMISSION_DIR="/workspace/submission"
 INFRA_DIR="${SUBMISSION_DIR}/infra"
