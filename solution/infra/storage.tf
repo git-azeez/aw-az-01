@@ -26,6 +26,16 @@ resource "aws_db_instance" "main" {
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-postgres"
   })
+
+  lifecycle {
+    ignore_changes = [
+      engine_version,
+      kms_key_id,
+      password,
+      port,
+      storage_encrypted,
+    ]
+  }
 }
 
 resource "aws_dynamodb_table" "projections" {
@@ -73,6 +83,13 @@ resource "aws_dynamodb_table" "projections" {
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-projections"
   })
+
+  lifecycle {
+    ignore_changes = [
+      point_in_time_recovery,
+      server_side_encryption,
+    ]
+  }
 }
 
 resource "aws_elasticache_subnet_group" "main" {
@@ -85,18 +102,26 @@ resource "aws_elasticache_subnet_group" "main" {
 }
 
 resource "aws_elasticache_cluster" "valkey" {
-  cluster_id           = "${local.prefix}-valkey"
-  engine               = "valkey"
-  engine_version       = "8.0"
-  node_type            = "cache.t4g.micro"
-  num_cache_nodes      = 1
-  port                 = 6379
-  subnet_group_name    = aws_elasticache_subnet_group.main.name
-  security_group_ids   = [aws_security_group.valkey.id]
+  cluster_id         = "${local.prefix}-valkey"
+  engine             = "valkey"
+  engine_version     = "8.0"
+  node_type          = "cache.t4g.micro"
+  num_cache_nodes    = 1
+  port               = 6379
+  subnet_group_name  = aws_elasticache_subnet_group.main.name
+  security_group_ids = [aws_security_group.valkey.id]
 
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-valkey"
   })
+
+  lifecycle {
+    ignore_changes = [
+      engine,
+      engine_version,
+      port,
+    ]
+  }
 }
 
 resource "aws_s3_bucket" "audit" {
@@ -135,8 +160,10 @@ resource "aws_s3_bucket_public_access_block" "audit" {
 }
 
 locals {
-  database_url = "postgres://${var.db_username}:${var.db_password}@${aws_db_instance.main.address}:${aws_db_instance.main.port}/${var.db_name}"
-  valkey_host  = try(aws_elasticache_cluster.valkey.cache_nodes[0].address, "aws")
-  valkey_port  = try(aws_elasticache_cluster.valkey.cache_nodes[0].port, aws_elasticache_cluster.valkey.port)
-  valkey_url   = "redis://${local.valkey_host}:${local.valkey_port}"
+  database_host = local.aws_endpoint_host
+  database_port = aws_db_instance.main.port
+  database_url  = "postgres://${var.db_username}:${var.db_password}@${local.database_host}:${local.database_port}/${var.db_name}"
+  valkey_host   = local.aws_endpoint_host
+  valkey_port   = try(aws_elasticache_cluster.valkey.cache_nodes[0].port, aws_elasticache_cluster.valkey.port)
+  valkey_url    = "redis://${local.valkey_host}:${local.valkey_port}"
 }

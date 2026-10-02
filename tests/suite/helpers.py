@@ -81,19 +81,39 @@ def run_script(script_path: Path, timeout_sec: int) -> subprocess.CompletedProce
     )
 
 
+def resolve_floci_host(host: str, config: dict[str, Any] | None = None) -> str:
+    cfg = config or load_config()
+    endpoint = cfg.get("aws_endpoint_url", "http://aws:4566")
+    floci_host = endpoint.split("://")[-1].split(":")[0].split("/")[0]
+    if not host or host.endswith(".amazonaws.com") or host == "localhost":
+        return floci_host
+    return host
+
+
+def resolve_service_url(service_url: str, config: dict[str, Any] | None = None) -> str:
+    cfg = config or load_config()
+    floci_host = resolve_floci_host("", cfg)
+    cleaned = service_url.strip().rstrip("/")
+    if ".amazonaws.com" in cleaned:
+        return f"http://{floci_host}:80"
+    return cleaned
+
+
 def pg_connect(manifest: dict[str, Any], config: dict[str, Any]):
     db = manifest["database"]
+    host = resolve_floci_host(str(db["endpoint"]), config)
     conninfo = (
-        f"host={db['endpoint']} port={db['port']} dbname={db['db_name']} "
+        f"host={host} port={db['port']} dbname={db['db_name']} "
         f"user={db['username']} password={config['db_password']} connect_timeout=5"
     )
     return psycopg.connect(conninfo)
 
 
-def valkey_connect(manifest: dict[str, Any]) -> redis.Redis:
+def valkey_connect(manifest: dict[str, Any], config: dict[str, Any] | None = None) -> redis.Redis:
     cache = manifest["cache"]
+    host = resolve_floci_host(str(cache["endpoint"]), config)
     return redis.Redis(
-        host=cache["endpoint"],
+        host=host,
         port=int(cache["port"]),
         decode_responses=True,
         socket_connect_timeout=5,
@@ -106,31 +126,51 @@ def fetch_oauth_token(
     role: str,
     scope_override: str | None = None,
     secret_override: str | None = None,
+    client_id_override: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
+    cfg = load_config()
     auth = manifest["auth"]
     client_cfg = auth["clients"][role]
-    client_id = client_cfg["client_id"]
+    client_id = client_id_override if client_id_override is not None else client_cfg["client_id"]
     client_secret = secret_override if secret_override is not None else client_cfg["client_secret"]
     scope = scope_override if scope_override is not None else client_cfg["scope"]
 
     basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    fallback_url = f"{cfg['aws_endpoint_url'].rstrip('/')}/cognito-idp/oauth2/token"
+    candidate_urls = [auth["token_endpoint"]]
+    if fallback_url not in candidate_urls:
+        candidate_urls.append(fallback_url)
+
+    last_status = 500
+    last_body: dict[str, Any] = {}
     with httpx.Client(timeout=10.0) as client:
-        resp = client.post(
-            auth["token_endpoint"],
-            headers={
-                "Authorization": f"Basic {basic}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            data={
-                "grant_type": "client_credentials",
-                "scope": scope,
-            },
-        )
-        try:
-            body = resp.json()
-        except Exception:
-            body = {"raw": resp.text}
-        return resp.status_code, body
+        for url in candidate_urls:
+            try:
+                resp = client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Basic {basic}",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    data={
+                        "grant_type": "client_credentials",
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                        "scope": scope,
+                    },
+                )
+                try:
+                    body = resp.json()
+                except Exception:
+                    body = {"raw": resp.text}
+                last_status, last_body = resp.status_code, body
+                if resp.status_code == 200 and "access_token" in body:
+                    return resp.status_code, body
+                if resp.status_code in {400, 401, 403}:
+                    return resp.status_code, body
+            except Exception as err:  # noqa: BLE001
+                last_body = {"error": str(err)}
+    return last_status, last_body
 
 
 def get_access_token(manifest: dict[str, Any], role: str) -> str:
@@ -242,8 +282,11 @@ def snapshot_inventory(config: dict[str, Any] | None = None) -> dict[str, set[st
         p["Id"] for p in cognito.list_user_pools(MaxResults=60).get("UserPools", [])
     }
     inv["iam_roles"] = {r["RoleName"] for r in iam.list_roles().get("Roles", [])}
+    auto_log_prefixes = ("/aws/rds/", "/aws/elasticache/", "/aws/lambda/", "/ecs/")
     inv["log_groups"] = {
-        lg["logGroupName"] for lg in logs.describe_log_groups().get("logGroups", [])
+        lg["logGroupName"]
+        for lg in logs.describe_log_groups().get("logGroups", [])
+        if not lg["logGroupName"].startswith(auto_log_prefixes)
     }
     inv["vpcs"] = {
         v["VpcId"]

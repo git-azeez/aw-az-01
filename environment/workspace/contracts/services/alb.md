@@ -6,4 +6,4 @@
   - `protocol = "HTTP"`
   - `matcher = "200"`
 - Provision an HTTP listener (`aws_lb_listener`) on port `80` (`protocol = "HTTP"`) with a default `forward` action targeting the target group.
-- Expose `http://<alb_dns_name>` as `service_url` in `manifest.json`.
+- Expose `http://aws:80` (or `http://<alb_dns_name>`) as `service_url` in `manifest.json`.

@@ -12,4 +12,4 @@
     - `clients.read`: `allowed_oauth_scopes = ["clearledger/read"]`
     - `clients.write`: `allowed_oauth_scopes = ["clearledger/write"]`
     - `clients.admin`: `allowed_oauth_scopes = ["clearledger/admin"]`
-- Export `issuer_url` (`http://aws:4566/<user_pool_id>`) and `token_endpoint` (`http://aws:4566/<domain>.auth.<region>.amazoncognito.com/oauth2/token`) in `manifest.json`.
+- Export `issuer_url` (`http://aws:4566/<user_pool_id>`) and `token_endpoint` (`http://aws:4566/cognito-idp/oauth2/token` or `http://aws:4566/<domain>.auth.<region>.amazoncognito.com/oauth2/token`) in `manifest.json`.

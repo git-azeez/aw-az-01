@@ -45,3 +45,10 @@ if [[ -f "${STATE_FILE}" ]]; then
     -state="${STATE_FILE}"
 fi
 popd >/dev/null
+
+PREFIX="$(jq -r '.resource_prefix' "${CONFIG_FILE}")"
+for lg in $(aws --endpoint-url "${AWS_ENDPOINT_URL}" logs describe-log-groups --query 'logGroups[].logGroupName' --output text 2>/dev/null || true); do
+  if [[ "${lg}" == *"${PREFIX}"* ]]; then
+    aws --endpoint-url "${AWS_ENDPOINT_URL}" logs delete-log-group --log-group-name "${lg}" >/dev/null 2>&1 || true
+  fi
+done

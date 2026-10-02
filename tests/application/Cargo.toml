@@ -1,5 +1,4 @@
 [workspace]
-resolver = "2"
 members = [
   "crates/common",
   "crates/api",
@@ -7,38 +6,41 @@ members = [
   "crates/outbox-relay",
   "crates/audit-archiver",
 ]
+resolver = "3"
 
 [workspace.package]
-version = "0.1.0"
-edition = "2021"
-license = "Apache-2.0"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
 
 [workspace.dependencies]
-anyhow = "1.0.97"
-axum = { version = "0.7.9", features = ["macros", "json"] }
-aws-config = { version = "1.5.18", default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"] }
-aws-credential-types = "1.2.2"
-aws-sdk-cloudwatchlogs = "1.74.0"
-aws-sdk-dynamodb = "1.68.0"
-aws-sdk-s3 = "1.79.0"
-aws-sdk-sqs = "1.62.0"
-base64 = "0.22.1"
-chrono = { version = "0.4.40", features = ["serde"] }
-futures = "0.3.31"
-hex = "0.4.3"
-http = "1.2.0"
-jsonwebtoken = "9.3.1"
-lambda_runtime = "0.13.0"
-redis = { version = "0.27.6", features = ["tokio-comp", "aio"] }
-reqwest = { version = "0.12.14", default-features = false, features = ["json", "rustls-tls"] }
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.140"
-sha2 = "0.10.8"
-sqlx = { version = "0.8.3", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
-thiserror = "2.0.12"
-tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "net"] }
-tower = "0.5.2"
-tower-http = { version = "0.6.2", features = ["trace"] }
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt", "json"] }
-uuid = { version = "1.16.0", features = ["serde", "v4"] }
+anyhow = "=1.0.98"
+aws-config = "=1.8.1"
+aws-credential-types = "=1.2.3"
+aws-sdk-dynamodb = "=1.82.0"
+aws-sdk-s3 = "=1.96.0"
+aws-sdk-sqs = "=1.74.0"
+axum = { version = "=0.8.4", features = ["json", "macros"] }
+chrono = { version = "=0.4.41", features = ["serde"] }
+clearledger = { path = "crates/common" }
+jsonwebtoken = "=9.3.1"
+lambda_runtime = "=0.13.0"
+redis = { version = "=0.32.2", default-features = false, features = ["tokio-rustls-comp", "connection-manager"] }
+reqwest = { version = "=0.12.22", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = "=1.0.140"
+sha2 = "=0.10.9"
+sqlx = { version = "=0.8.6", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "migrate", "macros"] }
+tokio = { version = "=1.47.0", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tower-http = { version = "=0.6.6", features = ["catch-panic"] }
+tracing = "=0.1.41"
+tracing-subscriber = { version = "=0.3.19", features = ["env-filter", "json"] }
+uuid = { version = "=1.17.0", features = ["serde", "v4"] }
+
+[profile.release]
+codegen-units = 16
+lto = false
+opt-level = 3
+panic = "abort"
+strip = "symbols"

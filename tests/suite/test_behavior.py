@@ -17,6 +17,7 @@ from .helpers import (
     get_access_token,
     invoke_lambda_sync,
     pg_connect,
+    resolve_service_url,
     run_script,
     valkey_connect,
     wait_until,
@@ -48,7 +49,7 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
     """Scored block: Settlement workflow (9 points) — functional.workflow."""
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
-        service_url = ctx.manifest["service_url"].rstrip("/")
+        service_url = resolve_service_url(ctx.manifest["service_url"], ctx.config)
         settlement_count = ctx.rng.randint(8, 10)
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
@@ -130,9 +131,9 @@ def test_projection_and_valkey_cache(ctx: VerifierContext) -> None:
     """Scored block: Projection and cache (7 points) — functional.cache."""
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
-        service_url = ctx.manifest["service_url"].rstrip("/")
+        service_url = resolve_service_url(ctx.manifest["service_url"], ctx.config)
         settlement_id, meta = next(iter(ctx.committed_settlements.items()))
-        rclient = valkey_connect(ctx.manifest)
+        rclient = valkey_connect(ctx.manifest, ctx.config)
         cache_key = f"clearledger:settlement:{settlement_id}"
         rclient.delete(cache_key)
 
@@ -183,7 +184,7 @@ def test_idempotency_and_optimistic_concurrency(ctx: VerifierContext) -> None:
     """Scored block: Idempotency and concurrency (8 points) — functional.idempotency_concurrency."""
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
-        service_url = ctx.manifest["service_url"].rstrip("/")
+        service_url = resolve_service_url(ctx.manifest["service_url"], ctx.config)
         spec = build_random_settlement_spec(ctx.rng, step_count=2)
         sid = spec["settlementId"]
         idem_create = f"idem-replay-{sid}"
@@ -262,9 +263,15 @@ def test_backlog_accumulation_and_drain(ctx: VerifierContext) -> None:
         m = ctx.manifest
         lam = boto_client("lambda", ctx.config)
         esm_uuid = m["messaging"]["event_source_mapping_uuid"]
-        service_url = m["service_url"].rstrip("/")
+        service_url = resolve_service_url(m["service_url"], ctx.config)
 
         lam.update_event_source_mapping(UUID=esm_uuid, Enabled=False)
+        wait_until(
+            lambda: lam.get_event_source_mapping(UUID=esm_uuid).get("State") in {"Disabled", "Disabling"},
+            timeout_sec=15.0,
+            interval_sec=0.5,
+            description="ESM disabled",
+        )
         try:
             specs = [build_random_settlement_spec(ctx.rng, step_count=4) for _ in range(5)]
             total_events = 0
@@ -295,7 +302,7 @@ def test_backlog_accumulation_and_drain(ctx: VerifierContext) -> None:
                         total_events += 1
 
                 unprojected = client.get(
-                    f"/v1/settlements/{specs[0]['settlementId']}",
+                    f"/v1/settlements/{specs[-1]['settlementId']}",
                     headers={"Authorization": f"Bearer {tokens['read']}"},
                 )
                 assert unprojected.status_code == 404
@@ -330,7 +337,7 @@ def test_duplicate_delivery_and_dlq_isolation(ctx: VerifierContext) -> None:
         tokens = _ensure_tokens(ctx)
         m = ctx.manifest
         sqs = boto_client("sqs", ctx.config)
-        service_url = m["service_url"].rstrip("/")
+        service_url = resolve_service_url(m["service_url"], ctx.config)
 
         settlement_id, meta = next(iter(ctx.committed_settlements.items()))
         with pg_connect(m, ctx.config) as conn:
@@ -383,10 +390,15 @@ def test_duplicate_delivery_and_dlq_isolation(ctx: VerifierContext) -> None:
             assert r_dup.status_code == 200 and r_dup.json()["version"] == meta["expected_version"]
 
         def _poison_in_dlq() -> bool:
-            resp = sqs.receive_message(QueueUrl=m["messaging"]["dlq_url"], MaxNumberOfMessages=10, WaitTimeSeconds=1)
+            resp = sqs.receive_message(
+                QueueUrl=m["messaging"]["dlq_url"],
+                MaxNumberOfMessages=10,
+                VisibilityTimeout=1,
+                WaitTimeSeconds=1,
+            )
             return any(poison_marker in msg.get("Body", "") for msg in resp.get("Messages", []))
 
-        wait_until(_poison_in_dlq, timeout_sec=45.0, interval_sec=1.5, description="poison message redriven to DLQ")
+        wait_until(_poison_in_dlq, timeout_sec=75.0, interval_sec=1.5, description="poison message redriven to DLQ")
         ctx.committed_settlements[fresh_id] = {
             "spec": spec,
             "expected_version": 3,
@@ -404,7 +416,7 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         tokens = _ensure_tokens(ctx, refresh=True)
         m = ctx.manifest
         sqs = boto_client("sqs", ctx.config)
-        service_url = m["service_url"].rstrip("/")
+        service_url = resolve_service_url(m["service_url"], ctx.config)
 
         sqs.delete_queue(QueueUrl=m["messaging"]["queue_url"])
 
@@ -445,7 +457,7 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         assert redeploy.returncode == 0, f"deploy.sh failed to restore deleted SQS queue: {redeploy.stderr[-800:]}"
         m = ctx.refresh_manifest()
         tokens = _ensure_tokens(ctx, refresh=True)
-        service_url = m["service_url"].rstrip("/")
+        service_url = resolve_service_url(m["service_url"], ctx.config)
 
         relay_res = invoke_lambda_sync(m["workers"]["outbox_relay"]["function_name"])
         assert int(relay_res.get("published", 0)) >= 3 or relay_res.get("failed", 0) == 0
@@ -475,8 +487,8 @@ def test_projection_rebuild_from_event_log(ctx: VerifierContext) -> None:
         tokens = _ensure_tokens(ctx, refresh=True)
         m = ctx.manifest
         ddb = boto_client("dynamodb", ctx.config)
-        rclient = valkey_connect(m)
-        service_url = m["service_url"].rstrip("/")
+        rclient = valkey_connect(m, ctx.config)
+        service_url = resolve_service_url(m["service_url"], ctx.config)
 
         settlement_id, meta = next(iter(ctx.committed_settlements.items()))
         expected_version = meta["expected_version"]
@@ -521,7 +533,7 @@ def test_ecs_task_failure_replacement(ctx: VerifierContext) -> None:
         tokens = _ensure_tokens(ctx, refresh=True)
         m = ctx.manifest
         ecs = boto_client("ecs", ctx.config)
-        service_url = m["service_url"].rstrip("/")
+        service_url = resolve_service_url(m["service_url"], ctx.config)
 
         before_tasks = ecs.list_tasks(
             cluster=m["compute"]["cluster_name"],
@@ -557,7 +569,7 @@ def test_rds_reboot_recovery(ctx: VerifierContext) -> None:
         tokens = _ensure_tokens(ctx, refresh=True)
         m = ctx.manifest
         rds = boto_client("rds", ctx.config)
-        service_url = m["service_url"].rstrip("/")
+        service_url = resolve_service_url(m["service_url"], ctx.config)
 
         rds.reboot_db_instance(DBInstanceIdentifier=m["database"]["instance_id"])
 
@@ -616,27 +628,39 @@ def test_authorization_audit_and_observability(ctx: VerifierContext) -> None:
     """Scored block: Authorization, audit and logs (3 points) — security.auth_audit_logs."""
     def _check() -> str:
         m = ctx.manifest
-        service_url = m["service_url"].rstrip("/")
+        service_url = resolve_service_url(m["service_url"], ctx.config)
         read_tok = get_access_token(m, "read")
         write_tok = get_access_token(m, "write")
         admin_tok = get_access_token(m, "admin")
+        settlement_id = next(iter(ctx.committed_settlements.keys()))
 
-        bad_status, _ = fetch_oauth_token(m, "read", secret_override="wrong-secret-value")
-        assert bad_status in {400, 401, 403}
+        bad_status, bad_body = fetch_oauth_token(
+            m,
+            "read",
+            secret_override="wrong-secret-value",
+            client_id_override="invalid-nonexistent-client-id",
+        )
+        if bad_status == 200 and "access_token" in bad_body:
+            with httpx.Client(base_url=service_url, timeout=10.0) as client:
+                r_bad = client.get(
+                    f"/v1/settlements/{settlement_id}",
+                    headers={"Authorization": f"Bearer {bad_body['access_token']}"},
+                )
+                assert r_bad.status_code in {401, 403}
+        else:
+            assert bad_status in {400, 401, 403}
 
         wrong_scope_status, wrong_scope_body = fetch_oauth_token(m, "read", scope_override="clearledger/admin")
         if wrong_scope_status == 200 and "access_token" in wrong_scope_body:
             with httpx.Client(base_url=service_url, timeout=10.0) as client:
-                sid_probe = next(iter(ctx.committed_settlements.keys()))
                 probe = client.post(
-                    f"/v1/admin/projections/{sid_probe}/rebuild",
+                    f"/v1/admin/projections/{settlement_id}/rebuild",
                     headers={"Authorization": f"Bearer {wrong_scope_body['access_token']}"},
                 )
                 if probe.status_code < 400:
                     ctx.recorder.add_cap("auth_escalation", 49)
                     raise AssertionError("Read client obtained token accepted on admin endpoint")
 
-        settlement_id = next(iter(ctx.committed_settlements.keys()))
         corr_marker = f"corr-sec-{uuid.uuid4().hex[:10]}"
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:

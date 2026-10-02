@@ -62,7 +62,8 @@ variable "archiver_image_id" {
 }
 
 locals {
-  prefix = var.resource_prefix
+  prefix            = var.resource_prefix
+  aws_endpoint_host = split(":", replace(replace(var.aws_endpoint_url, "https://", ""), "http://", ""))[0]
   common_tags = {
     ClearLedgerDeployment = var.resource_prefix
     ManagedBy             = "terraform"

@@ -19,6 +19,7 @@ from .helpers import (
     load_baseline,
     load_config,
     load_manifest,
+    resolve_service_url,
     run_script,
     snapshot_inventory,
     wait_until,
@@ -108,7 +109,7 @@ def ctx() -> VerifierContext:
     _RECORDER.set_gate("manifest_valid", manifest_ok, manifest_note)
     assert manifest_ok, f"manifest.json validation failed: {manifest_note}"
 
-    service_url = manifest["service_url"].rstrip("/")
+    service_url = resolve_service_url(manifest["service_url"], config)
 
     def _check_ready() -> bool:
         with httpx.Client(timeout=5.0) as client:

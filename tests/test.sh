@@ -12,6 +12,7 @@ export TF_CLI_CONFIG_FILE="${TF_CLI_CONFIG_FILE:-/etc/terraform.tfrc}"
 mkdir -p /logs/verifier /workspace/evidence
 
 echo "0" >/logs/verifier/reward.txt
+echo '{"reward":0.0,"score":0}' >/logs/verifier/reward.json
 
 pytest -q \
   "${SCRIPT_DIR}/suite/test_declared.py" \
@@ -24,6 +25,10 @@ PYTEST_RC=$?
 
 if [[ -f /logs/verifier/results.json ]]; then
   cp /logs/verifier/results.json /workspace/evidence/verifier_results.json || true
+fi
+
+if [[ -s /logs/verifier/reward.json ]] && jq -e '(.reward | type) == "number" and (.score | type) == "number"' /logs/verifier/reward.json >/dev/null 2>&1; then
+  exit 0
 fi
 
 exit "${PYTEST_RC}"

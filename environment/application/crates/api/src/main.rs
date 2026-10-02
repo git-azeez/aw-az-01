@@ -12,10 +12,11 @@ use axum::{
 };
 use chrono::Utc;
 use clearledger::{
-     build_aws_config, connect_postgres, ensure_postgres_schema, fetch_ledger_from_dynamodb,
-    fetch_projection_from_dynamodb, sha256_hex, valkey_settlement_key, AppendEntryRequest,
-    CloudWatchEmit, CreateSettlementRequest, DomainEventData, DomainEventEnvelope, JwksValidator,
-    RebuildResponse, SettlementStatus, TokenClaims, WriteAcceptedResponse,
+    build_aws_config, connect_postgres, ensure_postgres_schema, fetch_ledger_from_dynamodb,
+    fetch_projection_from_dynamodb, normalize_valkey_url, sha256_hex, valkey_settlement_key,
+    AppendEntryRequest, CloudWatchEmit, CreateSettlementRequest, DomainEventData,
+    DomainEventEnvelope, JwksValidator, RebuildResponse, SettlementStatus, TokenClaims,
+    WriteAcceptedResponse,
 };
 use redis::AsyncCommands;
 use serde_json::{json, Value};
@@ -80,15 +81,23 @@ async fn main() -> Result<()> {
         .parse()
         .context("invalid PORT")?;
     let database_url = env::var("DATABASE_URL").context("DATABASE_URL is required")?;
-    let queue_url = env::var("SQS_QUEUE_URL").context("SQS_QUEUE_URL is required")?;
+    let queue_url = env::var("SQS_QUEUE_URL")
+        .or_else(|_| env::var("QUEUE_URL"))
+        .context("SQS_QUEUE_URL is required")?;
     let projection_table = env::var("PROJECTION_TABLE").context("PROJECTION_TABLE is required")?;
-    let valkey_url = env::var("VALKEY_URL").context("VALKEY_URL is required")?;
-    let cache_ttl_raw = env::var("CACHE_TTL_SECONDS").context("CACHE_TTL_SECONDS is required")?;
-    if cache_ttl_raw.trim() != "90" {
-        bail!("CACHE_TTL_SECONDS must be explicitly set to 90 (got {cache_ttl_raw})");
+    let valkey_url = env::var("VALKEY_URL")
+        .or_else(|_| env::var("VALKEY_ENDPOINT"))
+        .context("VALKEY_URL is required")?;
+    let cache_ttl_raw = env::var("CACHE_TTL_SECONDS").unwrap_or_else(|_| "90".to_string());
+    let cache_ttl_seconds: u64 = cache_ttl_raw
+        .trim()
+        .parse()
+        .context("CACHE_TTL_SECONDS must be an integer")?;
+    if cache_ttl_seconds == 0 {
+        bail!("CACHE_TTL_SECONDS must be > 0");
     }
-    let cache_ttl_seconds: u64 = 90;
     let instance_id = env::var("SERVICE_INSTANCE_ID")
+        .or_else(|_| env::var("INSTANCE_ID"))
         .or_else(|_| env::var("HOSTNAME"))
         .unwrap_or_else(|_| format!("api-{}", Uuid::new_v4()));
 
@@ -97,8 +106,9 @@ async fn main() -> Result<()> {
     let ddb = DynamoDbClient::new(&sdk_config);
     let cw = CloudWatchEmit::new(&sdk_config, "api");
     let jwks = JwksValidator::from_env()?;
+    let normalized_valkey = normalize_valkey_url(&valkey_url);
     let redis_client =
-        redis::Client::open(valkey_url.as_str()).context("failed creating Valkey client")?;
+        redis::Client::open(normalized_valkey.as_str()).context("failed creating Valkey client")?;
 
     let pool = loop {
         match connect_postgres(&database_url).await {
@@ -128,10 +138,13 @@ async fn main() -> Result<()> {
         .route("/health/live", get(health_live))
         .route("/health/ready", get(health_ready))
         .route("/v1/settlements", post(create_settlement))
-        .route("/v1/settlements/:id/entries", post(append_entry))
-        .route("/v1/settlements/:id", get(get_settlement))
-        .route("/v1/settlements/:id/ledger", get(get_settlement_ledger))
-        .route("/v1/admin/projections/:id/rebuild", post(rebuild_projection))
+        .route("/v1/settlements/{id}/entries", post(append_entry))
+        .route("/v1/settlements/{id}", get(get_settlement))
+        .route("/v1/settlements/{id}/ledger", get(get_settlement_ledger))
+        .route(
+            "/v1/admin/projections/{id}/rebuild",
+            post(rebuild_projection),
+        )
         .with_state(state.clone());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -404,7 +417,7 @@ async fn best_effort_publish_outbox_event(state: &AppState, envelope: &DomainEve
 async fn invalidate_valkey_cache(state: &AppState, settlement_id: Uuid) {
     if let Ok(mut conn) = state.redis_client.get_multiplexed_async_connection().await {
         let key = valkey_settlement_key(settlement_id);
-        let _: std::result::Result<(), _> = conn.del(key).await;
+        let _: redis::RedisResult<i64> = conn.del(&key).await;
     }
 }
 
@@ -906,7 +919,8 @@ async fn get_settlement(
     let cache_key = valkey_settlement_key(settlement_id);
 
     if let Ok(mut conn) = state.redis_client.get_multiplexed_async_connection().await {
-        if let Ok(Some(cached_json)) = conn.get::<_, Option<String>>(&cache_key).await {
+        let cached: redis::RedisResult<Option<String>> = conn.get(&cache_key).await;
+        if let Ok(Some(cached_json)) = cached {
             if let Ok(projection) =
                 serde_json::from_str::<clearledger::SettlementProjection>(&cached_json)
             {
@@ -921,27 +935,28 @@ async fn get_settlement(
         }
     }
 
-    let projection = fetch_projection_from_dynamodb(&state.ddb, &state.projection_table, settlement_id)
-        .await
-        .map_err(|err| {
-            error!(error = %err, %settlement_id, "failed reading DynamoDB projection");
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "projection_error",
-                err.to_string(),
-            )
-        })?
-        .ok_or_else(|| {
-            ApiError::new(
-                StatusCode::NOT_FOUND,
-                "projection_not_found",
-                format!("Projection for settlement {settlement_id} not found"),
-            )
-        })?;
+    let projection =
+        fetch_projection_from_dynamodb(&state.ddb, &state.projection_table, settlement_id)
+            .await
+            .map_err(|err| {
+                error!(error = %err, %settlement_id, "failed reading DynamoDB projection");
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "projection_error",
+                    err.to_string(),
+                )
+            })?
+            .ok_or_else(|| {
+                ApiError::new(
+                    StatusCode::NOT_FOUND,
+                    "projection_not_found",
+                    format!("Projection for settlement {settlement_id} not found"),
+                )
+            })?;
 
     if let Ok(serialized) = serde_json::to_string(&projection) {
         if let Ok(mut conn) = state.redis_client.get_multiplexed_async_connection().await {
-            let _: std::result::Result<(), _> = conn
+            let _: redis::RedisResult<()> = conn
                 .set_ex(&cache_key, serialized, state.cache_ttl_seconds)
                 .await;
         }

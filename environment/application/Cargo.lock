@@ -822,6 +822,7 @@ dependencies = [
  "anyhow",
  "aws-config",
  "aws-credential-types",
+ "aws-sdk-dynamodb",
  "axum",
  "chrono",
  "jsonwebtoken",
@@ -829,6 +830,8 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
+ "sqlx",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -846,11 +849,13 @@ dependencies = [
  "chrono",
  "clearledger",
  "redis",
+ "serde",
  "serde_json",
  "sqlx",
  "tokio",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -860,6 +865,7 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "aws-sdk-s3",
+ "chrono",
  "clearledger",
  "lambda_runtime",
  "serde_json",
@@ -867,6 +873,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -876,12 +883,14 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "aws-sdk-sqs",
+ "chrono",
  "clearledger",
  "lambda_runtime",
  "serde_json",
  "sqlx",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -891,12 +900,15 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "aws-sdk-dynamodb",
+ "chrono",
  "clearledger",
  "lambda_runtime",
  "redis",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

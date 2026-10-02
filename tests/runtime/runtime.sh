@@ -28,20 +28,31 @@ build_runtime_image() {
 
   mkdir -p "${workdir}/rootfs/usr/local/bin" \
            "${workdir}/rootfs/var/runtime" \
+           "${workdir}/rootfs/app" \
            "${workdir}/rootfs/etc/ssl/certs" \
+           "${workdir}/rootfs/tmp" \
            "${workdir}/rootfs/lib" \
            "${workdir}/rootfs/lib64" \
            "${workdir}/rootfs/usr/lib"
+  chmod 1777 "${workdir}/rootfs/tmp"
 
   cp "${bin_path}" "${workdir}/rootfs${entrypoint}"
   chmod 0755 "${workdir}/rootfs${entrypoint}"
   cp /etc/ssl/certs/ca-certificates.crt "${workdir}/rootfs/etc/ssl/certs/ca-certificates.crt"
+  [[ -f /etc/nsswitch.conf ]] && cp /etc/nsswitch.conf "${workdir}/rootfs/etc/nsswitch.conf"
+  touch "${workdir}/rootfs/etc/hosts" "${workdir}/rootfs/etc/resolv.conf" "${workdir}/rootfs/etc/hostname"
 
   while read -r lib; do
     [[ -z "${lib}" ]] && continue
     mkdir -p "${workdir}/rootfs$(dirname "${lib}")"
     cp -L "${lib}" "${workdir}/rootfs${lib}"
   done < <(ldd "${bin_path}" | awk '{for (i = 1; i <= NF; i++) if ($i ~ /^\//) print $i}' | sort -u)
+
+  for extra_lib in /lib/x86_64-linux-gnu/libnss_*.so* /lib/x86_64-linux-gnu/libresolv*.so* /usr/lib/x86_64-linux-gnu/libnss_*.so* /usr/lib/x86_64-linux-gnu/libresolv*.so*; do
+    [[ -e "${extra_lib}" ]] || continue
+    mkdir -p "${workdir}/rootfs$(dirname "${extra_lib}")"
+    cp -L "${extra_lib}" "${workdir}/rootfs${extra_lib}"
+  done
 
   tar -C "${workdir}/rootfs" -cf "${workdir}/layer.tar" .
   local diff_id
@@ -53,6 +64,9 @@ build_runtime_image() {
   "os": "linux",
   "config": {
     "Entrypoint": ["${entrypoint}"],
+    "ExposedPorts": {
+      "8080/tcp": {}
+    },
     "Env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
@@ -87,7 +101,7 @@ JSON
 JSON
 
   tar -C "${workdir}" -cf "${workdir}/image.tar" "${config_hash}.json" layer.tar manifest.json
-  curl --unix-socket /var/run/docker.sock -fsS -X POST \
+  curl.real --unix-socket /var/run/docker.sock -fsS -X POST \
     -H "Content-Type: application/x-tar" \
     --data-binary @"${workdir}/image.tar" \
     "http://localhost/images/load" >/dev/null

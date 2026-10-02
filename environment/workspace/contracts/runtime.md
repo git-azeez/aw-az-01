@@ -90,3 +90,10 @@ All protected endpoints validate Bearer JWTs issued by the Cognito User Pool aga
 - `clearledger/admin`: permitted only on `POST /v1/admin/projections/{id}/rebuild`.
 
 Missing or invalid tokens return `401 Unauthorized`; valid tokens lacking the exact endpoint scope return `403 Forbidden`.
+
+## 6. Recovery Drills and Observability
+
+- **Backlog & DLQ**: When the projector event source mapping is disabled, API writes commit to PostgreSQL and enqueue on SQS while `GET /v1/settlements/{id}` returns `404` until re-enabled. Duplicate event deliveries are ignored idempotently; invalid envelopes are retried and routed to the DLQ after `maxReceiveCount = 4`.
+- **Outbox Recovery**: If the main SQS queue is deleted, `POST /v1/settlements` and `POST /v1/settlements/{id}/entries` still commit to `clearledger.settlements`, `clearledger.events`, and `clearledger.outbox` (`published_at IS NULL`). Re-running `deploy.sh` restores the queue, and invoking `outbox_relay` drains pending outbox rows to SQS.
+- **Projection Rebuild & Fault Recovery**: If `SETTLEMENT#<id>` items are deleted from DynamoDB and `clearledger:settlement:<id>` is evicted from Valkey, `POST /v1/admin/projections/{id}/rebuild` republishes all events from `clearledger.events` (`requeued = <version>`) to restore the projection. Stopping an ECS task must not interrupt API availability and ECS must launch a replacement task (`desired_count = 2`). Rebooting the RDS instance must preserve all committed settlements.
+- **Structured Logs**: All four workloads emit JSON log lines containing `correlationId` (propagated from `X-Correlation-Id`) to their configured CloudWatch Log Groups without leaking `db_password` or Cognito `client_secret` values.

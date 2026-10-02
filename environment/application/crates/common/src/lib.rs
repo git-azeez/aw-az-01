@@ -8,12 +8,12 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
-use aws_sdk_cloudwatchlogs::{types::InputLogEvent, Client as CloudWatchLogsClient};
 use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoDbClient};
 use chrono::{DateTime, Utc};
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use tokio::sync::RwLock;
@@ -44,7 +44,7 @@ impl SettlementStatus {
         }
     }
 
-    pub fn from_str(value: &str) -> Result<Self> {
+    pub fn parse(value: &str) -> Result<Self> {
         match value {
             "INITIATED" => Ok(Self::Initiated),
             "VALIDATED" => Ok(Self::Validated),
@@ -227,44 +227,120 @@ pub fn validate_envelope(envelope: &DomainEventEnvelope) -> Result<()> {
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    hex::encode(hasher.finalize())
+    format!("{:x}", hasher.finalize())
+}
+
+pub fn aws_endpoint_url() -> String {
+    env::var("AWS_ENDPOINT_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "http://aws:4566".to_string())
+}
+
+pub fn aws_endpoint_host() -> String {
+    let ep = aws_endpoint_url();
+    let without_scheme = ep
+        .strip_prefix("http://")
+        .or_else(|| ep.strip_prefix("https://"))
+        .unwrap_or(&ep);
+    without_scheme
+        .split('/')
+        .next()
+        .unwrap_or("aws:4566")
+        .split(':')
+        .next()
+        .unwrap_or("aws")
+        .to_string()
+}
+
+pub fn normalize_database_url(raw: &str) -> String {
+    let proxy_host = aws_endpoint_host();
+    if let Some((prefix, rest)) = raw.rsplit_once('@') {
+        if let Some((host_port, path_part)) = rest.split_once('/') {
+            let (host, port) = host_port.split_once(':').unwrap_or((host_port, "5432"));
+            if host.contains(".amazonaws.com")
+                || host.contains(".rds.")
+                || host.ends_with(".local")
+                || host.ends_with(".internal")
+            {
+                return format!("{prefix}@{proxy_host}:{port}/{path_part}");
+            }
+        }
+    }
+    raw.to_string()
+}
+
+pub fn normalize_valkey_url(raw: &str) -> String {
+    let proxy_host = aws_endpoint_host();
+    let with_scheme = if raw.starts_with("redis://") || raw.starts_with("rediss://") {
+        raw.to_string()
+    } else {
+        format!("redis://{raw}")
+    };
+    if let Some(rest) = with_scheme.strip_prefix("redis://") {
+        let (host_port, suffix) = match rest.split_once('/') {
+            Some((hp, s)) => (hp, format!("/{s}")),
+            None => (rest, String::new()),
+        };
+        let (host, port) = host_port.split_once(':').unwrap_or((host_port, "6379"));
+        if host.contains(".amazonaws.com")
+            || host.contains(".cache.")
+            || host.ends_with(".local")
+            || host.ends_with(".internal")
+        {
+            return format!("redis://{proxy_host}:{port}{suffix}");
+        }
+    }
+    with_scheme
 }
 
 pub async fn build_aws_config() -> aws_config::SdkConfig {
     let region = env::var("AWS_REGION")
         .or_else(|_| env::var("AWS_DEFAULT_REGION"))
         .unwrap_or_else(|_| "us-east-1".to_string());
-    let endpoint = env::var("AWS_ENDPOINT_URL").ok().filter(|v| !v.trim().is_empty());
+    let endpoint = aws_endpoint_url();
     let access_key = env::var("AWS_ACCESS_KEY_ID").unwrap_or_else(|_| "test".to_string());
     let secret_key = env::var("AWS_SECRET_ACCESS_KEY").unwrap_or_else(|_| "test".to_string());
 
-    let mut loader = aws_config::defaults(BehaviorVersion::latest())
+    aws_config::defaults(BehaviorVersion::latest())
         .region(Region::new(region))
+        .endpoint_url(endpoint)
         .credentials_provider(Credentials::new(
             access_key,
             secret_key,
             env::var("AWS_SESSION_TOKEN").ok(),
             None,
             "clearledger-static",
-        ));
-
-    if let Some(ep) = endpoint {
-        loader = loader.endpoint_url(ep);
-    }
-    loader.load().await
+        ))
+        .load()
+        .await
 }
 
 pub async fn connect_postgres(database_url: &str) -> Result<PgPool> {
-    let pool = PgPoolOptions::new()
+    let normalized = normalize_database_url(database_url);
+    match PgPoolOptions::new()
         .max_connections(10)
         .acquire_timeout(Duration::from_secs(10))
-        .connect(database_url)
+        .connect(&normalized)
         .await
-        .context("failed to connect to PostgreSQL")?;
-    Ok(pool)
+    {
+        Ok(pool) => Ok(pool),
+        Err(first_err) if normalized != database_url => PgPoolOptions::new()
+            .max_connections(10)
+            .acquire_timeout(Duration::from_secs(10))
+            .connect(database_url)
+            .await
+            .with_context(|| format!("failed to connect to PostgreSQL ({first_err})")),
+        Err(err) => Err(err).context("failed to connect to PostgreSQL"),
+    }
 }
 
 pub async fn ensure_postgres_schema(pool: &PgPool) -> Result<()> {
+    let mut lock_conn = pool.acquire().await?;
+    sqlx::query("SELECT pg_advisory_lock(1842910441)")
+        .execute(&mut *lock_conn)
+        .await?;
+
     let ddl = [
         "CREATE SCHEMA IF NOT EXISTS clearledger",
         r#"
@@ -330,13 +406,23 @@ pub async fn ensure_postgres_schema(pool: &PgPool) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_clearledger_events_settlement_version ON clearledger.events (settlement_id, aggregate_version)",
     ];
 
+    let mut ddl_result = Ok(());
     for statement in ddl {
-        sqlx::query(statement)
+        if let Err(err) = sqlx::query(statement)
             .execute(pool)
             .await
-            .with_context(|| format!("failed executing DDL: {statement}"))?;
+            .with_context(|| format!("failed executing DDL: {statement}"))
+        {
+            ddl_result = Err(err);
+            break;
+        }
     }
-    Ok(())
+
+    let _ = sqlx::query("SELECT pg_advisory_unlock(1842910441)")
+        .execute(&mut *lock_conn)
+        .await;
+
+    ddl_result
 }
 
 pub fn projection_pk(settlement_id: Uuid) -> String {
@@ -604,7 +690,7 @@ pub async fn fetch_projection_from_dynamodb(
             .with_context(|| format!("invalid integer attribute {k}"))
     };
 
-    let status = SettlementStatus::from_str(&get_s("status")?)?;
+    let status = SettlementStatus::parse(&get_s("status")?)?;
     let updated_at = DateTime::parse_from_rfc3339(&get_s("updated_at")?)
         .context("invalid updated_at timestamp")?
         .with_timezone(&Utc);
@@ -768,7 +854,7 @@ impl TokenClaims {
 
 #[derive(Clone)]
 pub struct JwksValidator {
-    issuer: String,
+    accepted_issuers: Vec<String>,
     jwks_url: String,
     allowed_clients: Vec<String>,
     http: HttpClient,
@@ -777,10 +863,41 @@ pub struct JwksValidator {
 
 impl JwksValidator {
     pub fn from_env() -> Result<Self> {
-        let issuer = env::var("AUTH_ISSUER").context("AUTH_ISSUER is required")?;
-        let jwks_url = env::var("AUTH_JWKS_URL")
-            .unwrap_or_else(|_| format!("{}/.well-known/jwks.json", issuer.trim_end_matches('/')));
+        let issuer = env::var("AUTH_ISSUER")
+            .or_else(|_| env::var("COGNITO_ISSUER"))
+            .context("AUTH_ISSUER is required")?;
+        let trimmed_issuer = issuer.trim_end_matches('/').to_string();
+        let pool_id = trimmed_issuer
+            .rsplit('/')
+            .next()
+            .unwrap_or(&trimmed_issuer)
+            .to_string();
+        let ep = aws_endpoint_url();
+        let ep_trimmed = ep.trim_end_matches('/');
+
+        let mut accepted_issuers = vec![trimmed_issuer.clone()];
+        let localhost_iss = format!("http://localhost:4566/{pool_id}");
+        if !accepted_issuers.contains(&localhost_iss) {
+            accepted_issuers.push(localhost_iss);
+        }
+        let aws_iss = format!("{ep_trimmed}/{pool_id}");
+        if !accepted_issuers.contains(&aws_iss) {
+            accepted_issuers.push(aws_iss);
+        }
+
+        let raw_jwks = env::var("AUTH_JWKS_URL")
+            .or_else(|_| env::var("COGNITO_JWKS_URL"))
+            .unwrap_or_else(|_| format!("{ep_trimmed}/{pool_id}/.well-known/jwks.json"));
+        let jwks_url = if raw_jwks.starts_with("http://localhost:4566/") {
+            raw_jwks.replacen("http://localhost:4566", ep_trimmed, 1)
+        } else if raw_jwks.starts_with("http://127.0.0.1:4566/") {
+            raw_jwks.replacen("http://127.0.0.1:4566", ep_trimmed, 1)
+        } else {
+            raw_jwks
+        };
+
         let allowed_clients = env::var("AUTH_AUDIENCES")
+            .or_else(|_| env::var("COGNITO_AUDIENCES"))
             .unwrap_or_default()
             .split(',')
             .map(|s| s.trim().to_string())
@@ -788,7 +905,7 @@ impl JwksValidator {
             .collect::<Vec<_>>();
 
         Ok(Self {
-            issuer,
+            accepted_issuers,
             jwks_url,
             allowed_clients,
             http: HttpClient::builder()
@@ -846,7 +963,7 @@ impl JwksValidator {
 
         let mut validation = Validation::new(Algorithm::RS256);
         validation.validate_aud = false;
-        validation.set_issuer(&[self.issuer.as_str()]);
+        validation.set_issuer(&self.accepted_issuers);
 
         let decoded = decode::<TokenClaims>(token, &decoding_key, &validation)
             .context("JWT signature or claims verification failed")?;
@@ -871,57 +988,79 @@ impl JwksValidator {
 
 #[derive(Clone)]
 pub struct CloudWatchEmit {
-    client: CloudWatchLogsClient,
+    http: HttpClient,
+    endpoint: String,
     log_group: Option<String>,
     log_stream: String,
 }
 
 impl CloudWatchEmit {
-    pub fn new(sdk_config: &aws_config::SdkConfig, default_stream_prefix: &str) -> Self {
+    pub fn new(_sdk_config: &aws_config::SdkConfig, default_stream_prefix: &str) -> Self {
         let log_group = env::var("CLOUDWATCH_LOG_GROUP")
             .ok()
             .filter(|v| !v.trim().is_empty());
         let instance = env::var("SERVICE_INSTANCE_ID")
             .or_else(|_| env::var("HOSTNAME"))
             .unwrap_or_else(|_| default_stream_prefix.to_string());
+        let http = HttpClient::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap_or_default();
         Self {
-            client: CloudWatchLogsClient::new(sdk_config),
+            http,
+            endpoint: aws_endpoint_url(),
             log_group,
             log_stream: format!("{default_stream_prefix}-{instance}"),
         }
     }
 
+    async fn call_logs(&self, target: &str, body: serde_json::Value) {
+        let _ = self
+            .http
+            .post(&self.endpoint)
+            .header("Content-Type", "application/x-amz-json-1.1")
+            .header("X-Amz-Target", target)
+            .header("X-Amz-Date", "20260101T000000Z")
+            .header(
+                "Authorization",
+                "AWS4-HMAC-SHA256 Credential=test/20260101/us-east-1/logs/aws4_request, SignedHeaders=content-type;host;x-amz-date;x-amz-target, Signature=0000000000000000000000000000000000000000000000000000000000000000",
+            )
+            .json(&body)
+            .send()
+            .await;
+    }
+
     pub async fn emit_json(&self, value: serde_json::Value) {
+        let message = value.to_string();
+        tracing::info!(target: "clearledger_audit", raw_event = %message, "telemetry_event");
         let Some(group) = &self.log_group else {
             return;
         };
-        let _ = self
-            .client
-            .create_log_group()
-            .log_group_name(group)
-            .send()
-            .await;
-        let _ = self
-            .client
-            .create_log_stream()
-            .log_group_name(group)
-            .log_stream_name(&self.log_stream)
-            .send()
-            .await;
-        if let Ok(event) = InputLogEvent::builder()
-            .timestamp(Utc::now().timestamp_millis())
-            .message(value.to_string())
-            .build()
-        {
-            let _ = self
-                .client
-                .put_log_events()
-                .log_group_name(group)
-                .log_stream_name(&self.log_stream)
-                .log_events(event)
-                .send()
-                .await;
-        }
+        self.call_logs(
+            "Logs_20140328.CreateLogGroup",
+            json!({ "logGroupName": group }),
+        )
+        .await;
+        self.call_logs(
+            "Logs_20140328.CreateLogStream",
+            json!({
+                "logGroupName": group,
+                "logStreamName": &self.log_stream,
+            }),
+        )
+        .await;
+        self.call_logs(
+            "Logs_20140328.PutLogEvents",
+            json!({
+                "logGroupName": group,
+                "logStreamName": &self.log_stream,
+                "logEvents": [{
+                    "timestamp": Utc::now().timestamp_millis(),
+                    "message": message,
+                }],
+            }),
+        )
+        .await;
     }
 }
 

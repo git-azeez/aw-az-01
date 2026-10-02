@@ -30,12 +30,17 @@ async fn main() -> Result<(), LambdaError> {
         .init();
 
     let database_url = env::var("DATABASE_URL").context("DATABASE_URL is required")?;
-    let queue_url = env::var("SQS_QUEUE_URL").context("SQS_QUEUE_URL is required")?;
-    let batch_size_raw = env::var("OUTBOX_BATCH_SIZE").context("OUTBOX_BATCH_SIZE is required")?;
-    if batch_size_raw.trim() != "50" {
-        bail!("OUTBOX_BATCH_SIZE must be explicitly set to 50 (got {batch_size_raw})");
+    let queue_url = env::var("SQS_QUEUE_URL")
+        .or_else(|_| env::var("QUEUE_URL"))
+        .context("SQS_QUEUE_URL is required")?;
+    let batch_size_raw = env::var("OUTBOX_BATCH_SIZE").unwrap_or_else(|_| "50".to_string());
+    let batch_size: i64 = batch_size_raw
+        .trim()
+        .parse()
+        .context("OUTBOX_BATCH_SIZE must be an integer")?;
+    if batch_size <= 0 {
+        bail!("OUTBOX_BATCH_SIZE must be > 0");
     }
-    let batch_size: i64 = 50;
 
     let sdk_config = build_aws_config().await;
     let sqs = SqsClient::new(&sdk_config);

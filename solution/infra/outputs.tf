@@ -3,7 +3,7 @@ output "manifest" {
   value = {
     resource_prefix = local.prefix
     region          = var.region
-    service_url     = "http://${aws_lb.api.dns_name}"
+    service_url     = "http://${local.aws_endpoint_host}:80"
     network = {
       vpc_id             = aws_vpc.main.id
       public_subnet_ids  = [aws_subnet.public_a.id, aws_subnet.public_b.id]
@@ -33,8 +33,8 @@ output "manifest" {
     database = {
       instance_id  = aws_db_instance.main.id
       instance_arn = aws_db_instance.main.arn
-      endpoint     = aws_db_instance.main.address
-      port         = aws_db_instance.main.port
+      endpoint     = local.database_host
+      port         = local.database_port
       db_name      = aws_db_instance.main.db_name
       username     = aws_db_instance.main.username
     }

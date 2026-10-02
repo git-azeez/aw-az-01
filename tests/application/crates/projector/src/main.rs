@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use aws_sdk_dynamodb::Client as DynamoDbClient;
 use chrono::Utc;
 use clearledger::{
-    apply_event_to_dynamodb, build_aws_config, valkey_settlement_key, CloudWatchEmit,
-    DomainEventEnvelope,
+    apply_event_to_dynamodb, build_aws_config, normalize_valkey_url, valkey_settlement_key,
+    CloudWatchEmit, DomainEventEnvelope,
 };
 use lambda_runtime::{run, service_fn, Error as LambdaError, LambdaEvent};
 use redis::AsyncCommands;
@@ -44,13 +44,20 @@ async fn main() -> Result<(), LambdaError> {
         .json()
         .init();
 
-    let table_name = env::var("PROJECTION_TABLE").context("PROJECTION_TABLE is required")?;
-    let valkey_url = env::var("VALKEY_URL").ok().filter(|v| !v.trim().is_empty());
+    let table_name = env::var("PROJECTION_TABLE")
+        .or_else(|_| env::var("DYNAMODB_TABLE"))
+        .context("PROJECTION_TABLE is required")?;
+    let valkey_url = env::var("VALKEY_URL")
+        .or_else(|_| env::var("VALKEY_ENDPOINT"))
+        .ok()
+        .filter(|v| !v.trim().is_empty());
 
     let sdk_config = build_aws_config().await;
     let ddb = DynamoDbClient::new(&sdk_config);
     let cw = CloudWatchEmit::new(&sdk_config, "projector");
-    let redis_client = valkey_url.and_then(|url| redis::Client::open(url).ok());
+    let redis_client = valkey_url
+        .map(|url| normalize_valkey_url(&url))
+        .and_then(|url| redis::Client::open(url).ok());
 
     let state = Arc::new(ProjectorState {
         ddb,
@@ -122,7 +129,7 @@ async fn handle_event(state: Arc<ProjectorState>, payload: Value) -> Result<Valu
                 if let Some(client) = &state.redis_client {
                     if let Ok(mut conn) = client.get_multiplexed_async_connection().await {
                         let key = valkey_settlement_key(envelope.aggregate_id);
-                        let _: std::result::Result<(), _> = conn.del(key).await;
+                        let _: redis::RedisResult<i64> = conn.del(&key).await;
                     }
                 }
                 info!(

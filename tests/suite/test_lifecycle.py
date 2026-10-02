@@ -9,6 +9,7 @@ from .helpers import (
     diff_inventory,
     get_access_token,
     pg_connect,
+    resolve_service_url,
     run_script,
     snapshot_inventory,
     wait_until,
@@ -55,7 +56,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
 
         read_tok = get_access_token(after_manifest, "read")
         sample_sid, sample_meta = next(iter(ctx.committed_settlements.items()))
-        service_url = after_manifest["service_url"].rstrip("/")
+        service_url = resolve_service_url(after_manifest["service_url"], ctx.config)
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             resp = client.get(
                 f"/v1/settlements/{sample_sid}",

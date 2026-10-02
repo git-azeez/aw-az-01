@@ -13,7 +13,7 @@ Read runtime inputs from `/workspace/config/config.json`:
 - `api_image`, `projector_image`, `relay_image`, `archiver_image`: container image references
 - `api_image_id`, `projector_image_id`, `relay_image_id`, `archiver_image_id`: image digest identifiers
 
-Every taggable AWS resource created by your configuration must carry the tag `ClearLedgerDeployment = <resource_prefix>` and have its name or identifier prefixed with `<resource_prefix>`.
+Every taggable AWS resource created by your configuration must carry the tag `ClearLedgerDeployment = <resource_prefix>` (at least 25 tagged resources) and have its name or identifier prefixed with `<resource_prefix>`. All cloud resources and IAM policies must be declared in Terraform/OpenTofu (`aws_vpc`, `aws_subnet`, `aws_internet_gateway`, `aws_route_table`, `aws_security_group`, `aws_lb`, `aws_lb_target_group`, `aws_lb_listener`, `aws_ecs_cluster`, `aws_ecs_task_definition`, `aws_ecs_service`, `aws_db_subnet_group`, `aws_db_instance`, `aws_dynamodb_table`, `aws_elasticache_subnet_group`, `aws_elasticache_cluster`, `aws_s3_bucket`, `aws_s3_bucket_versioning`, `aws_s3_bucket_server_side_encryption_configuration`, `aws_s3_bucket_public_access_block`, `aws_sqs_queue`, `aws_lambda_function`, `aws_lambda_event_source_mapping`, `aws_scheduler_schedule`, `aws_cognito_user_pool`, `aws_cognito_resource_server`, `aws_cognito_user_pool_client`, `aws_iam_role`, `aws_iam_role_policy`, `aws_kms_key`, `aws_kms_alias`, `aws_cloudwatch_log_group`) rather than created via imperative `aws` CLI commands in `deploy.sh`.
 
 ## Service Specifications
 
@@ -37,9 +37,10 @@ Read the individual service contracts in `/workspace/contracts/services/` for th
 ## Submission Scripts and Manifest
 
 1. `/workspace/submission/deploy.sh`:
-   - Must be executable and idempotent.
+   - Must be executable and idempotent (timeout: 720s).
    - Runs `terraform` or `tofu` against `/workspace/submission/infra` with state saved at `/workspace/submission/infra/terraform.tfstate`.
-   - Writes `/workspace/submission/manifest.json` conforming strictly to `/workspace/contracts/schemas/manifest.schema.json`.
+   - Writes `/workspace/submission/manifest.json` (max 1 MiB) conforming strictly to `/workspace/contracts/schemas/manifest.schema.json`.
    - Polls `GET <service_url>/health/ready` until the API returns HTTP `200`.
+   - Re-running `deploy.sh` must preserve the RDS instance, DynamoDB table, and S3 bucket without data loss, and must recreate any deleted resource (such as the main SQS queue) during fault recovery.
 2. `/workspace/submission/destroy.sh`:
-   - Must be executable and cleanly destroy all resources created for `resource_prefix` while leaving any pre-existing baseline resources untouched.
+   - Must be executable (timeout: 900s) and cleanly destroy all resources created for `resource_prefix` while leaving all pre-existing baseline resources untouched.

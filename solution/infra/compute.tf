@@ -63,9 +63,9 @@ resource "aws_ecs_cluster" "main" {
 }
 
 locals {
-  cognito_issuer = "${var.aws_endpoint_url}/${aws_cognito_user_pool.main.id}"
-  cognito_jwks   = "${var.aws_endpoint_url}/${aws_cognito_user_pool.main.id}/.well-known/jwks.json"
-  cognito_token  = "${var.aws_endpoint_url}/${aws_cognito_user_pool_domain.main.domain}.auth.${var.region}.amazoncognito.com/oauth2/token"
+  cognito_issuer = "${trimsuffix(var.aws_endpoint_url, "/")}/${aws_cognito_user_pool.main.id}"
+  cognito_jwks   = "${trimsuffix(var.aws_endpoint_url, "/")}/${aws_cognito_user_pool.main.id}/.well-known/jwks.json"
+  cognito_token  = "${trimsuffix(var.aws_endpoint_url, "/")}/cognito-idp/oauth2/token"
   audiences = join(",", [
     aws_cognito_user_pool_client.read.id,
     aws_cognito_user_pool_client.write.id,

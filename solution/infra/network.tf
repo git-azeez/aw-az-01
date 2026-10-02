@@ -129,6 +129,10 @@ resource "aws_security_group" "alb" {
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-alb-sg"
   })
+
+  lifecycle {
+    ignore_changes = [ingress, egress]
+  }
 }
 
 resource "aws_security_group" "ecs" {
@@ -155,6 +159,10 @@ resource "aws_security_group" "ecs" {
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-ecs-sg"
   })
+
+  lifecycle {
+    ignore_changes = [ingress, egress]
+  }
 }
 
 resource "aws_security_group" "rds" {
@@ -181,6 +189,10 @@ resource "aws_security_group" "rds" {
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-rds-sg"
   })
+
+  lifecycle {
+    ignore_changes = [ingress, egress]
+  }
 }
 
 resource "aws_security_group" "valkey" {
@@ -207,4 +219,8 @@ resource "aws_security_group" "valkey" {
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-valkey-sg"
   })
+
+  lifecycle {
+    ignore_changes = [ingress, egress]
+  }
 }

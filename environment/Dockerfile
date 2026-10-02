@@ -1,13 +1,20 @@
 # syntax=docker/dockerfile:1.7
 
-FROM rust:1.86-bookworm@sha256:300ec56abce8cc9448ddea2172747d048ed902a3090e6b57babb2bf19f754081 AS rust-builder
+FROM --platform=linux/amd64 mirror.gcr.io/library/rust:1.88.0-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 AS rust-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      clang \
+      cmake \
+      make \
+      perl \
+      pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/application
 COPY application/Cargo.toml application/Cargo.lock ./
 COPY application/crates ./crates
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/application/target \
-    cargo build --release --locked --bins && \
+    cargo build --release --workspace --bins && \
     mkdir -p /out && \
     cp target/release/clearledger-api \
        target/release/clearledger-projector \
@@ -15,9 +22,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
        target/release/clearledger-audit-archiver \
        /out/
 
-FROM hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd AS terraform-cli
+FROM --platform=linux/amd64 hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd AS terraform-cli
 
-FROM python:3.12-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3 AS main
+FROM --platform=linux/amd64 mirror.gcr.io/library/python:3.12.11-slim-bookworm@sha256:54fd2da9fc88eed6ef2ef3fa6fdeeb8fd9fad2bd3ce8fb3ac0db32a85f10c0f9 AS main
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -42,7 +49,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       postgresql-client \
       procps \
       ripgrep \
-      skopeo \
       tar \
       unzip \
       vim-tiny \
