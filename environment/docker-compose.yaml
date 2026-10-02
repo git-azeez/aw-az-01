@@ -1,0 +1,38 @@
+services:
+  main:
+    command: ["sleep", "infinity"]
+    user: "10001:10001"
+    networks:
+      - agent
+      - egress
+    cap_drop:
+      - ALL
+    # apt in Harbor's agent installer drops privileges to `_apt`.
+    cap_add:
+      - SETUID
+      - SETGID
+      # Harbor collects task.toml `artifacts` by running `tar` as root in THIS
+      # container, and drops the WHOLE artifact if one file is unreadable. Root
+      # holds only the capabilities listed here, so without this it cannot read
+      # a mode-0600 file the agent wrote (a generated *.tfvars.json, a key) and
+      # a separate verifier env grades an empty workspace as 0. The agent runs
+      # non-root with an empty capability set and gains nothing from this.
+      - DAC_READ_SEARCH
+    # DinD agent egress; extend NO_PROXY for added sidecars and aliases.
+    environment:
+      HTTP_PROXY: http://172.20.0.1:18080
+      http_proxy: http://172.20.0.1:18080
+      HTTPS_PROXY: http://172.20.0.1:18080
+      NO_PROXY: localhost,127.0.0.1,::1
+      no_proxy: localhost,127.0.0.1,::1
+      CURL_CA_BUNDLE: /etc/daytona-netleash-ca.crt
+      SSL_CERT_FILE: /etc/daytona-netleash-ca.crt
+      REQUESTS_CA_BUNDLE: /etc/daytona-netleash-ca.crt
+      NODE_EXTRA_CA_CERTS: /etc/daytona-netleash-ca.crt
+    volumes:
+      - /etc/daytona/netleash/ca.crt:/etc/daytona-netleash-ca.crt:ro
+
+networks:
+  agent:
+    internal: true
+  egress:
