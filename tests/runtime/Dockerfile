@@ -95,12 +95,12 @@ RUN useradd -m -u 1000 -s /bin/bash agent && \
     useradd -m -u 1001 -s /bin/bash verifier
 
 COPY --from=rust-builder /out /opt/clearledger/bin
-COPY runtime/workspace/contracts /opt/clearledger/contracts
+COPY runtime/manifest.schema.json runtime/events.schema.json /opt/clearledger/schemas/
 COPY runtime/runtime.sh /opt/clearledger/runtime.sh
 RUN chmod +x /opt/clearledger/runtime.sh /opt/clearledger/bin/*
 
-RUN mkdir -p /workspace/contracts /workspace/config /workspace/submission/infra /workspace/evidence /logs/verifier && \
-    cp -R /opt/clearledger/contracts/. /workspace/contracts/ && \
+RUN mkdir -p /workspace/contracts/schemas /workspace/config /workspace/submission/infra /workspace/evidence /logs/verifier && \
+    cp -R /opt/clearledger/schemas/. /workspace/contracts/schemas/ && \
     chown -R agent:agent /workspace && \
     chown -R verifier:verifier /logs/verifier
 

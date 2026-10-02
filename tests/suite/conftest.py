@@ -140,11 +140,8 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     module_order = {
         "test_declared.py": 0,
         "test_live.py": 1,
-        "test_functional.py": 2,
-        "test_async.py": 3,
-        "test_recovery.py": 4,
-        "test_security.py": 5,
-        "test_lifecycle.py": 6,
+        "test_behavior.py": 2,
+        "test_lifecycle.py": 3,
     }
     items.sort(key=lambda item: module_order.get(Path(str(item.fspath)).name, 99))
 

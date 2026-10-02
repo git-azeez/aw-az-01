@@ -173,9 +173,8 @@ projector_id="$(build_runtime_image "${projector_image}" /opt/clearledger/bin/cl
 relay_id="$(build_runtime_image "${relay_image}" /opt/clearledger/bin/clearledger-outbox-relay /var/runtime/bootstrap)"
 archiver_id="$(build_runtime_image "${archiver_image}" /opt/clearledger/bin/clearledger-audit-archiver /var/runtime/bootstrap)"
 
-mkdir -p /workspace/contracts /workspace/config /workspace/submission/infra /workspace/evidence /logs/verifier
-rm -rf /workspace/contracts/*
-cp -R /opt/clearledger/contracts/. /workspace/contracts/
+mkdir -p /workspace/contracts/schemas /workspace/config /workspace/submission/infra /workspace/evidence /logs/verifier
+cp -R /opt/clearledger/schemas/. /workspace/contracts/schemas/
 
 prefix="cl-$(openssl rand -hex 3)"
 password="Cl$(openssl rand -hex 5)!"

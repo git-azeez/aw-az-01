@@ -1,0 +1,305 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clearledger.internal/schemas/manifest.schema.json",
+  "title": "ClearLedgerSubmissionManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "resource_prefix",
+    "region",
+    "service_url",
+    "network",
+    "ingress",
+    "compute",
+    "database",
+    "messaging",
+    "workers",
+    "projections",
+    "cache",
+    "audit",
+    "schedules",
+    "auth",
+    "iam",
+    "kms",
+    "logs"
+  ],
+  "properties": {
+    "resource_prefix": { "type": "string", "minLength": 4 },
+    "region": { "type": "string", "const": "us-east-1" },
+    "service_url": { "type": "string", "pattern": "^http://" },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vpc_id", "public_subnet_ids", "private_subnet_ids", "security_group_ids"],
+      "properties": {
+        "vpc_id": { "type": "string", "minLength": 4 },
+        "public_subnet_ids": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 4 }
+        },
+        "private_subnet_ids": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 4 }
+        },
+        "security_group_ids": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["alb", "ecs", "rds", "valkey"],
+          "properties": {
+            "alb": { "type": "string", "minLength": 4 },
+            "ecs": { "type": "string", "minLength": 4 },
+            "rds": { "type": "string", "minLength": 4 },
+            "valkey": { "type": "string", "minLength": 4 }
+          }
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alb_arn", "alb_dns_name", "listener_arn", "target_group_arn", "container_port"],
+      "properties": {
+        "alb_arn": { "type": "string", "minLength": 8 },
+        "alb_dns_name": { "type": "string", "minLength": 3 },
+        "listener_arn": { "type": "string", "minLength": 8 },
+        "target_group_arn": { "type": "string", "minLength": 8 },
+        "container_port": { "type": "integer", "const": 8080 }
+      }
+    },
+    "compute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cluster_arn",
+        "cluster_name",
+        "service_arn",
+        "service_name",
+        "task_definition_arn",
+        "desired_count"
+      ],
+      "properties": {
+        "cluster_arn": { "type": "string", "minLength": 8 },
+        "cluster_name": { "type": "string", "minLength": 4 },
+        "service_arn": { "type": "string", "minLength": 8 },
+        "service_name": { "type": "string", "minLength": 4 },
+        "task_definition_arn": { "type": "string", "minLength": 8 },
+        "desired_count": { "type": "integer", "minimum": 2 }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instance_id", "instance_arn", "endpoint", "port", "db_name", "username"],
+      "properties": {
+        "instance_id": { "type": "string", "minLength": 4 },
+        "instance_arn": { "type": "string", "minLength": 8 },
+        "endpoint": { "type": "string", "minLength": 3 },
+        "port": { "type": "integer", "minimum": 1 },
+        "db_name": { "type": "string", "minLength": 3 },
+        "username": { "type": "string", "minLength": 3 }
+      }
+    },
+    "messaging": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "queue_name",
+        "queue_url",
+        "queue_arn",
+        "dlq_name",
+        "dlq_url",
+        "dlq_arn",
+        "event_source_mapping_uuid",
+        "max_receive_count"
+      ],
+      "properties": {
+        "queue_name": { "type": "string", "minLength": 4 },
+        "queue_url": { "type": "string", "pattern": "^http" },
+        "queue_arn": { "type": "string", "minLength": 8 },
+        "dlq_name": { "type": "string", "minLength": 4 },
+        "dlq_url": { "type": "string", "pattern": "^http" },
+        "dlq_arn": { "type": "string", "minLength": 8 },
+        "event_source_mapping_uuid": { "type": "string", "minLength": 4 },
+        "max_receive_count": { "type": "integer", "const": 4 }
+      }
+    },
+    "workers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projector", "outbox_relay", "audit_archiver"],
+      "properties": {
+        "projector": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["function_name", "function_arn"],
+          "properties": {
+            "function_name": { "type": "string", "minLength": 4 },
+            "function_arn": { "type": "string", "minLength": 8 }
+          }
+        },
+        "outbox_relay": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["function_name", "function_arn"],
+          "properties": {
+            "function_name": { "type": "string", "minLength": 4 },
+            "function_arn": { "type": "string", "minLength": 8 }
+          }
+        },
+        "audit_archiver": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["function_name", "function_arn"],
+          "properties": {
+            "function_name": { "type": "string", "minLength": 4 },
+            "function_arn": { "type": "string", "minLength": 8 }
+          }
+        }
+      }
+    },
+    "projections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["table_name", "table_arn", "gsi_name"],
+      "properties": {
+        "table_name": { "type": "string", "minLength": 4 },
+        "table_arn": { "type": "string", "minLength": 8 },
+        "gsi_name": { "type": "string", "const": "AccountIndex" }
+      }
+    },
+    "cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cluster_id", "engine", "endpoint", "port"],
+      "properties": {
+        "cluster_id": { "type": "string", "minLength": 4 },
+        "engine": { "type": "string", "const": "valkey" },
+        "endpoint": { "type": "string", "minLength": 3 },
+        "port": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bucket_name", "bucket_arn", "prefix"],
+      "properties": {
+        "bucket_name": { "type": "string", "minLength": 4 },
+        "bucket_arn": { "type": "string", "minLength": 8 },
+        "prefix": { "type": "string", "const": "ledger-audit/" }
+      }
+    },
+    "schedules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outbox_schedule_name", "outbox_schedule_arn", "archive_schedule_name", "archive_schedule_arn"],
+      "properties": {
+        "outbox_schedule_name": { "type": "string", "minLength": 4 },
+        "outbox_schedule_arn": { "type": "string", "minLength": 8 },
+        "archive_schedule_name": { "type": "string", "minLength": 4 },
+        "archive_schedule_arn": { "type": "string", "minLength": 8 }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "user_pool_id",
+        "user_pool_arn",
+        "issuer_url",
+        "token_endpoint",
+        "resource_server_identifier",
+        "clients"
+      ],
+      "properties": {
+        "user_pool_id": { "type": "string", "minLength": 4 },
+        "user_pool_arn": { "type": "string", "minLength": 8 },
+        "issuer_url": { "type": "string", "pattern": "^http" },
+        "token_endpoint": { "type": "string", "pattern": "^http" },
+        "resource_server_identifier": { "type": "string", "const": "clearledger" },
+        "clients": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["read", "write", "admin"],
+          "properties": {
+            "read": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["client_id", "client_secret", "scope"],
+              "properties": {
+                "client_id": { "type": "string", "minLength": 4 },
+                "client_secret": { "type": "string", "minLength": 4 },
+                "scope": { "type": "string", "const": "clearledger/read" }
+              }
+            },
+            "write": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["client_id", "client_secret", "scope"],
+              "properties": {
+                "client_id": { "type": "string", "minLength": 4 },
+                "client_secret": { "type": "string", "minLength": 4 },
+                "scope": { "type": "string", "const": "clearledger/write" }
+              }
+            },
+            "admin": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["client_id", "client_secret", "scope"],
+              "properties": {
+                "client_id": { "type": "string", "minLength": 4 },
+                "client_secret": { "type": "string", "minLength": 4 },
+                "scope": { "type": "string", "const": "clearledger/admin" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "iam": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ecs_execution_role_arn",
+        "ecs_task_role_arn",
+        "projector_role_arn",
+        "relay_role_arn",
+        "archiver_role_arn",
+        "scheduler_role_arn"
+      ],
+      "properties": {
+        "ecs_execution_role_arn": { "type": "string", "minLength": 8 },
+        "ecs_task_role_arn": { "type": "string", "minLength": 8 },
+        "projector_role_arn": { "type": "string", "minLength": 8 },
+        "relay_role_arn": { "type": "string", "minLength": 8 },
+        "archiver_role_arn": { "type": "string", "minLength": 8 },
+        "scheduler_role_arn": { "type": "string", "minLength": 8 }
+      }
+    },
+    "kms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["database_arn", "messaging_arn", "projection_arn", "audit_arn"],
+      "properties": {
+        "database_arn": { "type": "string", "minLength": 8 },
+        "messaging_arn": { "type": "string", "minLength": 8 },
+        "projection_arn": { "type": "string", "minLength": 8 },
+        "audit_arn": { "type": "string", "minLength": 8 }
+      }
+    },
+    "logs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api_log_group", "projector_log_group", "relay_log_group", "archiver_log_group"],
+      "properties": {
+        "api_log_group": { "type": "string", "minLength": 4 },
+        "projector_log_group": { "type": "string", "minLength": 4 },
+        "relay_log_group": { "type": "string", "minLength": 4 },
+        "archiver_log_group": { "type": "string", "minLength": 4 }
+      }
+    }
+  }
+}
