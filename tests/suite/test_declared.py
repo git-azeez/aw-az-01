@@ -113,6 +113,7 @@ def test_iac_discipline(ctx: VerifierContext) -> None:
 
 
 def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
+    """Scored block: Declared compute and ingress (2 points) — declared.compute_ingress."""
     def _check() -> str:
         state = load_tfstate()
         items = _collect_resources(state)
@@ -196,6 +197,7 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
 
 
 def test_declared_data_and_async(ctx: VerifierContext) -> None:
+    """Scored block: Declared data and messaging (2 points) — declared.data_async."""
     def _check() -> str:
         state = load_tfstate()
         items = _collect_resources(state)
@@ -312,6 +314,7 @@ def test_declared_data_and_async(ctx: VerifierContext) -> None:
 
 
 def test_declared_security(ctx: VerifierContext) -> None:
+    """Scored block: Declared security (3 points) — declared.security."""
     def _check() -> str:
         state = load_tfstate()
         items = _collect_resources(state)

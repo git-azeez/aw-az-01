@@ -27,6 +27,7 @@ def _run_block(ctx: VerifierContext, block_id: str, fn, cap_on_fail: tuple[str, 
 
 
 def test_reapply_idempotence(ctx: VerifierContext) -> None:
+    """Scored block: Stable deployment (7 points) — lifecycle.reapply_idempotence."""
     def _check() -> str:
         before_manifest = ctx.manifest
         before_db_endpoint = before_manifest["database"]["endpoint"]
@@ -69,6 +70,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
 
 
 def test_destroy_clean(ctx: VerifierContext) -> None:
+    """Scored block: Clean destroy (8 points) — lifecycle.clean_destroy."""
     def _check() -> str:
         destroy_sh = SUBMISSION_DIR / "destroy.sh"
         result = run_script(destroy_sh, timeout_sec=900)

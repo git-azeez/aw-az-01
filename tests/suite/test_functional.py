@@ -37,6 +37,7 @@ def _ensure_tokens(ctx: VerifierContext) -> dict[str, str]:
 
 
 def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
+    """Scored block: Settlement workflow (9 points) — functional.workflow."""
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
         service_url = ctx.manifest["service_url"].rstrip("/")
@@ -137,6 +138,7 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
 
 
 def test_projection_and_valkey_cache(ctx: VerifierContext) -> None:
+    """Scored block: Projection and cache (7 points) — functional.cache."""
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
         service_url = ctx.manifest["service_url"].rstrip("/")
@@ -200,6 +202,7 @@ def test_projection_and_valkey_cache(ctx: VerifierContext) -> None:
 
 
 def test_idempotency_and_optimistic_concurrency(ctx: VerifierContext) -> None:
+    """Scored block: Idempotency and concurrency (8 points) — functional.idempotency_concurrency."""
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
         service_url = ctx.manifest["service_url"].rstrip("/")

@@ -39,6 +39,7 @@ def _ensure_tokens(ctx: VerifierContext) -> dict[str, str]:
 
 
 def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
+    """Scored block: Outbox recovery (6 points) — recovery.outbox_recovery."""
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
         m = ctx.manifest
@@ -125,6 +126,7 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
 
 
 def test_projection_rebuild_from_event_log(ctx: VerifierContext) -> None:
+    """Scored block: Projection rebuild (5 points) — recovery.projection_rebuild."""
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
         m = ctx.manifest
@@ -187,6 +189,7 @@ def test_projection_rebuild_from_event_log(ctx: VerifierContext) -> None:
 
 
 def test_ecs_task_failure_replacement(ctx: VerifierContext) -> None:
+    """Scored block: ECS task replacement (5 points) — recovery.ecs_task_replacement."""
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
         m = ctx.manifest
@@ -236,6 +239,7 @@ def test_ecs_task_failure_replacement(ctx: VerifierContext) -> None:
 
 
 def test_rds_reboot_recovery(ctx: VerifierContext) -> None:
+    """Scored block: RDS reboot recovery (4 points) — recovery.rds_reboot."""
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
         m = ctx.manifest

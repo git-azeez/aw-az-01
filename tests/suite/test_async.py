@@ -36,6 +36,7 @@ def _ensure_tokens(ctx: VerifierContext) -> dict[str, str]:
 
 
 def test_backlog_accumulation_and_drain(ctx: VerifierContext) -> None:
+    """Scored block: Backlog recovery (7 points) — async.backlog_recovery."""
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
         m = ctx.manifest
@@ -114,6 +115,7 @@ def test_backlog_accumulation_and_drain(ctx: VerifierContext) -> None:
 
 
 def test_duplicate_delivery_and_dlq_isolation(ctx: VerifierContext) -> None:
+    """Scored block: Duplicate and invalid messages (6 points) — async.duplicate_and_dlq."""
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
         m = ctx.manifest

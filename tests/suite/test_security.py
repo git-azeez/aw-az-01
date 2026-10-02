@@ -30,6 +30,7 @@ def _run_block(ctx: VerifierContext, block_id: str, fn, cap_on_fail: tuple[str, 
 
 
 def test_authorization_audit_and_observability(ctx: VerifierContext) -> None:
+    """Scored block: Authorization, audit and logs (3 points) — security.auth_audit_logs."""
     def _check() -> str:
         m = ctx.manifest
         service_url = m["service_url"].rstrip("/")

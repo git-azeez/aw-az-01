@@ -94,6 +94,7 @@ def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
 
 
 def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
+    """Scored block: Live data and event graph (5 points) — live.data_event_graph."""
     def _check() -> str:
         m = ctx.manifest
         rds = boto_client("rds", ctx.config)
@@ -186,6 +187,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
 
 
 def test_live_security(ctx: VerifierContext) -> None:
+    """Scored block: Live security graph (5 points) — live.security."""
     def _check() -> str:
         m = ctx.manifest
         iam = boto_client("iam", ctx.config)
