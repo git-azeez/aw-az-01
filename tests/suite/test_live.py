@@ -18,6 +18,7 @@ def _run_block(ctx: VerifierContext, block_id: str, fn) -> None:
 
 
 def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
+    """Scored block: Live ingress and compute (5 points) — live.compute_ingress."""
     def _check() -> str:
         m = ctx.manifest
         ec2 = boto_client("ec2", ctx.config)

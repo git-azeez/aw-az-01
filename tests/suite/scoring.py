@@ -6,25 +6,120 @@ from pathlib import Path
 from typing import Any
 
 BLOCKS: dict[str, dict[str, Any]] = {
-    "declared.iac_discipline": {"section": "declared", "weight": 3},
-    "declared.compute_ingress": {"section": "declared", "weight": 2},
-    "declared.data_async": {"section": "declared", "weight": 2},
-    "declared.security": {"section": "declared", "weight": 3},
-    "live.compute_ingress": {"section": "live", "weight": 5},
-    "live.data_event_graph": {"section": "live", "weight": 5},
-    "live.security": {"section": "live", "weight": 5},
-    "functional.workflow": {"section": "functional", "weight": 9},
-    "functional.cache": {"section": "functional", "weight": 7},
-    "functional.idempotency_concurrency": {"section": "functional", "weight": 8},
-    "async.backlog_recovery": {"section": "async", "weight": 7},
-    "async.duplicate_and_dlq": {"section": "async", "weight": 6},
-    "recovery.outbox_recovery": {"section": "recovery", "weight": 6},
-    "recovery.projection_rebuild": {"section": "recovery", "weight": 5},
-    "recovery.ecs_task_replacement": {"section": "recovery", "weight": 5},
-    "recovery.rds_reboot": {"section": "recovery", "weight": 4},
-    "security.auth_audit_logs": {"section": "security", "weight": 3},
-    "lifecycle.reapply_idempotence": {"section": "lifecycle", "weight": 7},
-    "lifecycle.clean_destroy": {"section": "lifecycle", "weight": 8},
+    "declared.iac_discipline": {
+        "section": "declared",
+        "category": "Architecture and deployment",
+        "title": "Infrastructure managed with Terraform or OpenTofu",
+        "weight": 3,
+    },
+    "declared.compute_ingress": {
+        "section": "declared",
+        "category": "Architecture and deployment",
+        "title": "Declared compute and ingress",
+        "weight": 2,
+    },
+    "declared.data_async": {
+        "section": "declared",
+        "category": "Architecture and deployment",
+        "title": "Declared data and messaging",
+        "weight": 2,
+    },
+    "declared.security": {
+        "section": "declared",
+        "category": "Security and observability",
+        "title": "Declared security",
+        "weight": 3,
+    },
+    "live.compute_ingress": {
+        "section": "live",
+        "category": "Architecture and deployment",
+        "title": "Live ingress and compute",
+        "weight": 5,
+    },
+    "live.data_event_graph": {
+        "section": "live",
+        "category": "Architecture and deployment",
+        "title": "Live data and event graph",
+        "weight": 5,
+    },
+    "live.security": {
+        "section": "live",
+        "category": "Security and observability",
+        "title": "Live security graph",
+        "weight": 5,
+    },
+    "functional.workflow": {
+        "section": "functional",
+        "category": "Core product behavior",
+        "title": "Settlement workflow",
+        "weight": 9,
+    },
+    "functional.cache": {
+        "section": "functional",
+        "category": "Core product behavior",
+        "title": "Projection and cache",
+        "weight": 7,
+    },
+    "functional.idempotency_concurrency": {
+        "section": "functional",
+        "category": "Core product behavior",
+        "title": "Idempotency and concurrency",
+        "weight": 8,
+    },
+    "async.backlog_recovery": {
+        "section": "async",
+        "category": "Asynchronous processing",
+        "title": "Backlog recovery",
+        "weight": 7,
+    },
+    "async.duplicate_and_dlq": {
+        "section": "async",
+        "category": "Asynchronous processing",
+        "title": "Duplicate and invalid messages",
+        "weight": 6,
+    },
+    "recovery.outbox_recovery": {
+        "section": "recovery",
+        "category": "Recovery",
+        "title": "Outbox recovery",
+        "weight": 6,
+    },
+    "recovery.projection_rebuild": {
+        "section": "recovery",
+        "category": "Recovery",
+        "title": "Projection rebuild",
+        "weight": 5,
+    },
+    "recovery.ecs_task_replacement": {
+        "section": "recovery",
+        "category": "Recovery",
+        "title": "ECS task replacement",
+        "weight": 5,
+    },
+    "recovery.rds_reboot": {
+        "section": "recovery",
+        "category": "Recovery",
+        "title": "RDS reboot recovery",
+        "weight": 4,
+    },
+    "security.auth_audit_logs": {
+        "section": "security",
+        "category": "Security and observability",
+        "title": "Authorization, audit and logs",
+        "weight": 3,
+    },
+    "lifecycle.reapply_idempotence": {
+        "section": "lifecycle",
+        "category": "Lifecycle",
+        "title": "Stable deployment",
+        "weight": 7,
+    },
+    "lifecycle.clean_destroy": {
+        "section": "lifecycle",
+        "category": "Lifecycle",
+        "title": "Clean destroy",
+        "weight": 8,
+    },
 }
 
 
@@ -46,6 +141,8 @@ class ScoreRecorder:
         for block_id, meta in BLOCKS.items():
             self.results[block_id] = {
                 "section": meta["section"],
+                "category": meta["category"],
+                "title": meta["title"],
                 "weight": meta["weight"],
                 "passed": False,
                 "earned": 0,
@@ -66,6 +163,8 @@ class ScoreRecorder:
         meta = BLOCKS[block_id]
         self.results[block_id] = {
             "section": meta["section"],
+            "category": meta["category"],
+            "title": meta["title"],
             "weight": meta["weight"],
             "passed": bool(passed),
             "earned": meta["weight"] if passed else 0,

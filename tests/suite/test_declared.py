@@ -35,6 +35,7 @@ def _run_block(ctx: VerifierContext, block_id: str, fn) -> None:
 
 
 def test_iac_discipline(ctx: VerifierContext) -> None:
+    """Scored block: Infrastructure managed with Terraform or OpenTofu (3 points) — declared.iac_discipline."""
     def _check() -> str:
         proc = subprocess.run(
             ["terraform", "validate", "-no-color"],
