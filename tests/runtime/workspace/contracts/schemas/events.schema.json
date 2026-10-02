@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clearledger.internal/schemas/events.schema.json",
+  "title": "ClearLedgerDomainEventEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "eventType",
+    "aggregateType",
+    "aggregateId",
+    "aggregateVersion",
+    "occurredAt",
+    "correlationId",
+    "idempotencyKey",
+    "data"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "eventType": {
+      "type": "string",
+      "enum": ["SettlementInitiated", "LedgerEntryRecorded"]
+    },
+    "aggregateType": {
+      "type": "string",
+      "const": "settlement"
+    },
+    "aggregateId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "aggregateVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlationId": {
+      "type": "string",
+      "minLength": 4
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 8
+    },
+    "data": {
+      "type": "object",
+      "required": ["kind", "accountId", "status", "clearingStage"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["settlementInitiated", "ledgerEntryRecorded"]
+        },
+        "accountId": {
+          "type": "string",
+          "minLength": 3
+        },
+        "reference": {
+          "type": "string"
+        },
+        "debitParty": {
+          "type": "string"
+        },
+        "creditParty": {
+          "type": "string"
+        },
+        "entryId": {
+          "type": ["string", "null"],
+          "format": "uuid"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "INITIATED",
+            "VALIDATED",
+            "RESERVED",
+            "CLEARED",
+            "SETTLED",
+            "RECONCILED",
+            "DISPUTED"
+          ]
+        },
+        "clearingStage": {
+          "type": "string",
+          "minLength": 2
+        },
+        "memo": {
+          "type": ["string", "null"]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,23 @@
+[package]
+name = "clearledger-audit-archiver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "clearledger-audit-archiver"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+aws-sdk-cloudwatchlogs.workspace = true
+aws-sdk-s3.workspace = true
+chrono.workspace = true
+clearledger = { path = "../common" }
+lambda_runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

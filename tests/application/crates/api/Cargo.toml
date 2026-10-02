@@ -1,0 +1,29 @@
+[package]
+name = "clearledger-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "clearledger-api"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+aws-sdk-cloudwatchlogs.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-sqs.workspace = true
+chrono.workspace = true
+clearledger = { path = "../common" }
+http.workspace = true
+redis.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true

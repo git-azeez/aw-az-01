@@ -1,18 +1,48 @@
 schema_version = "1.1"
+artifacts = [
+  { source = "/workspace/submission", destination = "submission", exclude = [
+    ".terraform",
+    "*/.terraform",
+    "*/.terraform/**",
+    "**/.terraform",
+    "**/.terraform/**",
+    "infra/.terraform",
+    "infra/.terraform/**",
+    "*/terraform.tfstate",
+    "*/terraform.tfstate.*",
+    "*/config.auto.tfvars.json",
+    "*/.terraform.tfstate.lock.info",
+  ] },
+  { source = "/workspace/evidence", destination = "evidence" },
+]
 
 [task]
-name = "devcloud/aw-az-01"
-description = ""
-authors = []
-keywords = []
+name = "devcloud/clearledger-settlement"
+description = "Build and operate a resilient event-sourced financial clearing and settlement ledger platform on an AWS-compatible control plane using Terraform or OpenTofu."
+keywords = [
+  "cloud-infrastructure",
+  "terraform",
+  "opentofu",
+  "aws",
+  "ecs",
+  "lambda",
+  "sqs",
+  "rds",
+  "dynamodb",
+  "valkey",
+  "kms",
+  "cognito",
+  "eventbridge-scheduler",
+  "resilience",
+]
+authors = [{ name = "Azeez", email = "azeez@micro1.ai" }]
 
 [metadata]
 source = "devcloudbenchmark"
 environment_id = "devcloud"
-task_id = ""
-instance_id = "aw-az-01"
-# Choose one category from the Dev Cloud taxonomy.
-category = ""
+task_id = "2"
+instance_id = "reliability_and_recovery_clearledger_settlement"
+category = "reliability_and_recovery"
 difficulty = "hard"
 version = "0.1.0"
 
@@ -31,7 +61,7 @@ cpus = 4
 memory_mb = 8192
 storage_mb = 30720
 gpus = 0
-network_mode = "public"
+allow_internet = true
 
 [environment]
 build_timeout_sec = 3600.0
@@ -39,4 +69,4 @@ cpus = 4
 memory_mb = 8192
 storage_mb = 30720
 gpus = 0
-network_mode = "public"
+allow_internet = true

@@ -1,0 +1,936 @@
+use std::{
+    collections::HashMap,
+    env,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+use anyhow::{anyhow, bail, Context, Result};
+use aws_config::{BehaviorVersion, Region};
+use aws_credential_types::Credentials;
+use aws_sdk_cloudwatchlogs::{types::InputLogEvent, Client as CloudWatchLogsClient};
+use aws_sdk_dynamodb::{types::AttributeValue, Client as DynamoDbClient};
+use chrono::{DateTime, Utc};
+use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+use reqwest::Client as HttpClient;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use sqlx::{postgres::PgPoolOptions, PgPool};
+use tokio::sync::RwLock;
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SettlementStatus {
+    Initiated,
+    Validated,
+    Reserved,
+    Cleared,
+    Settled,
+    Reconciled,
+    Disputed,
+}
+
+impl SettlementStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Initiated => "INITIATED",
+            Self::Validated => "VALIDATED",
+            Self::Reserved => "RESERVED",
+            Self::Cleared => "CLEARED",
+            Self::Settled => "SETTLED",
+            Self::Reconciled => "RECONCILED",
+            Self::Disputed => "DISPUTED",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "INITIATED" => Ok(Self::Initiated),
+            "VALIDATED" => Ok(Self::Validated),
+            "RESERVED" => Ok(Self::Reserved),
+            "CLEARED" => Ok(Self::Cleared),
+            "SETTLED" => Ok(Self::Settled),
+            "RECONCILED" => Ok(Self::Reconciled),
+            "DISPUTED" => Ok(Self::Disputed),
+            other => bail!("unsupported settlement status: {other}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSettlementRequest {
+    pub settlement_id: Uuid,
+    pub account_id: String,
+    pub reference: String,
+    pub debit_party: String,
+    pub credit_party: String,
+    pub expected_version: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppendEntryRequest {
+    pub entry_id: Uuid,
+    pub status: SettlementStatus,
+    pub clearing_stage: String,
+    #[serde(default)]
+    pub memo: Option<String>,
+    pub occurred_at: DateTime<Utc>,
+    pub expected_version: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WriteAcceptedResponse {
+    pub settlement_id: Uuid,
+    pub event_id: Uuid,
+    pub version: i32,
+    pub accepted: bool,
+    pub idempotent_replay: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettlementProjection {
+    pub settlement_id: Uuid,
+    pub account_id: String,
+    pub reference: String,
+    pub debit_party: String,
+    pub credit_party: String,
+    pub status: SettlementStatus,
+    pub clearing_stage: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_entry_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_memo: Option<String>,
+    pub version: i32,
+    pub entry_count: i32,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettlementLedgerItem {
+    pub event_id: Uuid,
+    pub version: i32,
+    pub event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_id: Option<Uuid>,
+    pub status: String,
+    pub clearing_stage: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memo: Option<String>,
+    pub occurred_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettlementLedgerResponse {
+    pub settlement_id: Uuid,
+    pub version: i32,
+    pub events: Vec<SettlementLedgerItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebuildResponse {
+    pub settlement_id: Uuid,
+    pub requeued: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DomainEventEnvelope {
+    pub schema_version: String,
+    pub event_id: Uuid,
+    pub event_type: String,
+    pub aggregate_type: String,
+    pub aggregate_id: Uuid,
+    pub aggregate_version: i32,
+    pub occurred_at: DateTime<Utc>,
+    pub correlation_id: String,
+    pub idempotency_key: String,
+    pub data: DomainEventData,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DomainEventData {
+    pub kind: String,
+    pub account_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub debit_party: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credit_party: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_id: Option<Uuid>,
+    pub status: SettlementStatus,
+    pub clearing_stage: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memo: Option<String>,
+}
+
+pub fn validate_envelope(envelope: &DomainEventEnvelope) -> Result<()> {
+    if envelope.schema_version != "1.0" {
+        bail!("invalid schemaVersion: {}", envelope.schema_version);
+    }
+    if envelope.aggregate_type != "settlement" {
+        bail!("invalid aggregateType: {}", envelope.aggregate_type);
+    }
+    if envelope.aggregate_version < 1 {
+        bail!("aggregateVersion must be >= 1");
+    }
+    if envelope.correlation_id.trim().len() < 4 {
+        bail!("correlationId too short");
+    }
+    if envelope.idempotency_key.trim().len() < 8 {
+        bail!("idempotencyKey too short");
+    }
+    if envelope.data.account_id.trim().len() < 3 {
+        bail!("accountId too short");
+    }
+    if envelope.data.clearing_stage.trim().len() < 2 {
+        bail!("clearingStage too short");
+    }
+    match envelope.event_type.as_str() {
+        "SettlementInitiated" => {
+            if envelope.aggregate_version != 1 {
+                bail!("SettlementInitiated must have aggregateVersion == 1");
+            }
+            if envelope.data.kind != "settlementInitiated" {
+                bail!("SettlementInitiated requires data.kind == settlementInitiated");
+            }
+            if envelope.data.status != SettlementStatus::Initiated {
+                bail!("SettlementInitiated requires INITIATED status");
+            }
+        }
+        "LedgerEntryRecorded" => {
+            if envelope.aggregate_version < 2 {
+                bail!("LedgerEntryRecorded must have aggregateVersion >= 2");
+            }
+            if envelope.data.kind != "ledgerEntryRecorded" {
+                bail!("LedgerEntryRecorded requires data.kind == ledgerEntryRecorded");
+            }
+            if envelope.data.entry_id.is_none() {
+                bail!("LedgerEntryRecorded requires entryId");
+            }
+        }
+        other => bail!("unsupported eventType: {other}"),
+    }
+    Ok(())
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
+}
+
+pub async fn build_aws_config() -> aws_config::SdkConfig {
+    let region = env::var("AWS_REGION")
+        .or_else(|_| env::var("AWS_DEFAULT_REGION"))
+        .unwrap_or_else(|_| "us-east-1".to_string());
+    let endpoint = env::var("AWS_ENDPOINT_URL").ok().filter(|v| !v.trim().is_empty());
+    let access_key = env::var("AWS_ACCESS_KEY_ID").unwrap_or_else(|_| "test".to_string());
+    let secret_key = env::var("AWS_SECRET_ACCESS_KEY").unwrap_or_else(|_| "test".to_string());
+
+    let mut loader = aws_config::defaults(BehaviorVersion::latest())
+        .region(Region::new(region))
+        .credentials_provider(Credentials::new(
+            access_key,
+            secret_key,
+            env::var("AWS_SESSION_TOKEN").ok(),
+            None,
+            "clearledger-static",
+        ));
+
+    if let Some(ep) = endpoint {
+        loader = loader.endpoint_url(ep);
+    }
+    loader.load().await
+}
+
+pub async fn connect_postgres(database_url: &str) -> Result<PgPool> {
+    let pool = PgPoolOptions::new()
+        .max_connections(10)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect(database_url)
+        .await
+        .context("failed to connect to PostgreSQL")?;
+    Ok(pool)
+}
+
+pub async fn ensure_postgres_schema(pool: &PgPool) -> Result<()> {
+    let ddl = [
+        "CREATE SCHEMA IF NOT EXISTS clearledger",
+        r#"
+        CREATE TABLE IF NOT EXISTS clearledger.settlements (
+            settlement_id UUID PRIMARY KEY,
+            account_id TEXT NOT NULL,
+            reference TEXT NOT NULL,
+            debit_party TEXT NOT NULL,
+            credit_party TEXT NOT NULL,
+            current_status TEXT NOT NULL,
+            current_stage TEXT NOT NULL,
+            last_entry_id UUID NULL,
+            last_memo TEXT NULL,
+            version INTEGER NOT NULL,
+            entry_count INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        "#,
+        r#"
+        CREATE TABLE IF NOT EXISTS clearledger.events (
+            seq BIGSERIAL PRIMARY KEY,
+            event_id UUID NOT NULL UNIQUE,
+            settlement_id UUID NOT NULL REFERENCES clearledger.settlements(settlement_id) ON DELETE CASCADE,
+            aggregate_version INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            correlation_id TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            occurred_at TIMESTAMPTZ NOT NULL,
+            payload JSONB NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (settlement_id, aggregate_version)
+        )
+        "#,
+        r#"
+        CREATE TABLE IF NOT EXISTS clearledger.outbox (
+            seq BIGSERIAL PRIMARY KEY,
+            event_id UUID NOT NULL UNIQUE,
+            settlement_id UUID NOT NULL,
+            aggregate_version INTEGER NOT NULL,
+            correlation_id TEXT NOT NULL,
+            payload JSONB NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            published_at TIMESTAMPTZ NULL,
+            archived_at TIMESTAMPTZ NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NULL
+        )
+        "#,
+        r#"
+        CREATE TABLE IF NOT EXISTS clearledger.idempotency_keys (
+            scope TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            request_hash TEXT NOT NULL,
+            status_code INTEGER NOT NULL,
+            response_body JSONB NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (scope, idempotency_key)
+        )
+        "#,
+        "CREATE INDEX IF NOT EXISTS idx_clearledger_outbox_unpublished ON clearledger.outbox (seq) WHERE published_at IS NULL",
+        "CREATE INDEX IF NOT EXISTS idx_clearledger_outbox_unarchived ON clearledger.outbox (seq) WHERE published_at IS NOT NULL AND archived_at IS NULL",
+        "CREATE INDEX IF NOT EXISTS idx_clearledger_events_settlement_version ON clearledger.events (settlement_id, aggregate_version)",
+    ];
+
+    for statement in ddl {
+        sqlx::query(statement)
+            .execute(pool)
+            .await
+            .with_context(|| format!("failed executing DDL: {statement}"))?;
+    }
+    Ok(())
+}
+
+pub fn projection_pk(settlement_id: Uuid) -> String {
+    format!("SETTLEMENT#{settlement_id}")
+}
+
+pub fn projection_state_sk() -> &'static str {
+    "STATE"
+}
+
+pub fn projection_event_sk(version: i32) -> String {
+    format!("EVENT#{version:08}")
+}
+
+pub fn valkey_settlement_key(settlement_id: Uuid) -> String {
+    format!("clearledger:settlement:{settlement_id}")
+}
+
+pub async fn apply_event_to_dynamodb(
+    ddb: &DynamoDbClient,
+    table_name: &str,
+    envelope: &DomainEventEnvelope,
+) -> Result<bool> {
+    validate_envelope(envelope)?;
+    let pk = projection_pk(envelope.aggregate_id);
+    let event_sk = projection_event_sk(envelope.aggregate_version);
+    let envelope_json = serde_json::to_string(envelope)?;
+
+    let mut event_item = HashMap::new();
+    event_item.insert("PK".to_string(), AttributeValue::S(pk.clone()));
+    event_item.insert("SK".to_string(), AttributeValue::S(event_sk));
+    event_item.insert(
+        "settlement_id".to_string(),
+        AttributeValue::S(envelope.aggregate_id.to_string()),
+    );
+    event_item.insert(
+        "event_id".to_string(),
+        AttributeValue::S(envelope.event_id.to_string()),
+    );
+    event_item.insert(
+        "version".to_string(),
+        AttributeValue::N(envelope.aggregate_version.to_string()),
+    );
+    event_item.insert(
+        "event_type".to_string(),
+        AttributeValue::S(envelope.event_type.clone()),
+    );
+    event_item.insert(
+        "status".to_string(),
+        AttributeValue::S(envelope.data.status.as_str().to_string()),
+    );
+    event_item.insert(
+        "clearing_stage".to_string(),
+        AttributeValue::S(envelope.data.clearing_stage.clone()),
+    );
+    event_item.insert(
+        "occurred_at".to_string(),
+        AttributeValue::S(envelope.occurred_at.to_rfc3339()),
+    );
+    event_item.insert(
+        "correlation_id".to_string(),
+        AttributeValue::S(envelope.correlation_id.clone()),
+    );
+    event_item.insert("envelope".to_string(), AttributeValue::S(envelope_json));
+    if let Some(entry_id) = envelope.data.entry_id {
+        event_item.insert(
+            "entry_id".to_string(),
+            AttributeValue::S(entry_id.to_string()),
+        );
+    }
+    if let Some(memo) = &envelope.data.memo {
+        event_item.insert("memo".to_string(), AttributeValue::S(memo.clone()));
+    }
+
+    ddb.put_item()
+        .table_name(table_name)
+        .set_item(Some(event_item))
+        .send()
+        .await
+        .context("failed to put event item in DynamoDB")?;
+
+    let existing = ddb
+        .get_item()
+        .table_name(table_name)
+        .key("PK", AttributeValue::S(pk.clone()))
+        .key("SK", AttributeValue::S(projection_state_sk().to_string()))
+        .consistent_read(true)
+        .send()
+        .await
+        .context("failed reading current projection state from DynamoDB")?
+        .item;
+
+    let current_version = existing
+        .as_ref()
+        .and_then(|item| item.get("version"))
+        .and_then(|v| v.as_n().ok())
+        .and_then(|n| n.parse::<i32>().ok())
+        .unwrap_or(0);
+
+    if envelope.aggregate_version <= current_version {
+        return Ok(false);
+    }
+
+    let account_id = existing
+        .as_ref()
+        .and_then(|item| item.get("account_id"))
+        .and_then(|v| v.as_s().ok())
+        .cloned()
+        .unwrap_or_else(|| envelope.data.account_id.clone());
+
+    let reference = envelope
+        .data
+        .reference
+        .clone()
+        .or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|item| item.get("reference"))
+                .and_then(|v| v.as_s().ok())
+                .cloned()
+        })
+        .unwrap_or_else(|| "UNKNOWN".to_string());
+
+    let debit_party = envelope
+        .data
+        .debit_party
+        .clone()
+        .or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|item| item.get("debit_party"))
+                .and_then(|v| v.as_s().ok())
+                .cloned()
+        })
+        .unwrap_or_else(|| "UNKNOWN".to_string());
+
+    let credit_party = envelope
+        .data
+        .credit_party
+        .clone()
+        .or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|item| item.get("credit_party"))
+                .and_then(|v| v.as_s().ok())
+                .cloned()
+        })
+        .unwrap_or_else(|| "UNKNOWN".to_string());
+
+    let entry_count = if envelope.aggregate_version <= 1 {
+        0
+    } else {
+        envelope.aggregate_version - 1
+    };
+
+    let mut state_item = HashMap::new();
+    state_item.insert("PK".to_string(), AttributeValue::S(pk));
+    state_item.insert(
+        "SK".to_string(),
+        AttributeValue::S(projection_state_sk().to_string()),
+    );
+    state_item.insert(
+        "GSI1PK".to_string(),
+        AttributeValue::S(format!("ACCOUNT#{account_id}")),
+    );
+    state_item.insert(
+        "GSI1SK".to_string(),
+        AttributeValue::S(format!("SETTLEMENT#{}", envelope.aggregate_id)),
+    );
+    state_item.insert(
+        "settlement_id".to_string(),
+        AttributeValue::S(envelope.aggregate_id.to_string()),
+    );
+    state_item.insert("account_id".to_string(), AttributeValue::S(account_id));
+    state_item.insert("reference".to_string(), AttributeValue::S(reference));
+    state_item.insert("debit_party".to_string(), AttributeValue::S(debit_party));
+    state_item.insert("credit_party".to_string(), AttributeValue::S(credit_party));
+    state_item.insert(
+        "status".to_string(),
+        AttributeValue::S(envelope.data.status.as_str().to_string()),
+    );
+    state_item.insert(
+        "clearing_stage".to_string(),
+        AttributeValue::S(envelope.data.clearing_stage.clone()),
+    );
+    state_item.insert(
+        "version".to_string(),
+        AttributeValue::N(envelope.aggregate_version.to_string()),
+    );
+    state_item.insert(
+        "entry_count".to_string(),
+        AttributeValue::N(entry_count.to_string()),
+    );
+    state_item.insert(
+        "updated_at".to_string(),
+        AttributeValue::S(envelope.occurred_at.to_rfc3339()),
+    );
+
+    if let Some(entry_id) = envelope.data.entry_id {
+        state_item.insert(
+            "last_entry_id".to_string(),
+            AttributeValue::S(entry_id.to_string()),
+        );
+    } else if let Some(prev_entry) = existing
+        .as_ref()
+        .and_then(|item| item.get("last_entry_id"))
+        .and_then(|v| v.as_s().ok())
+    {
+        state_item.insert(
+            "last_entry_id".to_string(),
+            AttributeValue::S(prev_entry.clone()),
+        );
+    }
+
+    if let Some(memo) = &envelope.data.memo {
+        state_item.insert("last_memo".to_string(), AttributeValue::S(memo.clone()));
+    } else if let Some(prev_memo) = existing
+        .as_ref()
+        .and_then(|item| item.get("last_memo"))
+        .and_then(|v| v.as_s().ok())
+    {
+        state_item.insert("last_memo".to_string(), AttributeValue::S(prev_memo.clone()));
+    }
+
+    ddb.put_item()
+        .table_name(table_name)
+        .set_item(Some(state_item))
+        .send()
+        .await
+        .context("failed to put STATE projection in DynamoDB")?;
+
+    Ok(true)
+}
+
+pub async fn fetch_projection_from_dynamodb(
+    ddb: &DynamoDbClient,
+    table_name: &str,
+    settlement_id: Uuid,
+) -> Result<Option<SettlementProjection>> {
+    let output = ddb
+        .get_item()
+        .table_name(table_name)
+        .key("PK", AttributeValue::S(projection_pk(settlement_id)))
+        .key("SK", AttributeValue::S(projection_state_sk().to_string()))
+        .consistent_read(true)
+        .send()
+        .await
+        .context("failed reading projection item from DynamoDB")?;
+
+    let Some(item) = output.item else {
+        return Ok(None);
+    };
+
+    let get_s = |k: &str| -> Result<String> {
+        item.get(k)
+            .and_then(|v| v.as_s().ok())
+            .cloned()
+            .ok_or_else(|| anyhow!("missing string attribute {k}"))
+    };
+    let get_n = |k: &str| -> Result<i32> {
+        item.get(k)
+            .and_then(|v| v.as_n().ok())
+            .ok_or_else(|| anyhow!("missing number attribute {k}"))?
+            .parse::<i32>()
+            .with_context(|| format!("invalid integer attribute {k}"))
+    };
+
+    let status = SettlementStatus::from_str(&get_s("status")?)?;
+    let updated_at = DateTime::parse_from_rfc3339(&get_s("updated_at")?)
+        .context("invalid updated_at timestamp")?
+        .with_timezone(&Utc);
+    let last_entry_id = item
+        .get("last_entry_id")
+        .and_then(|v| v.as_s().ok())
+        .and_then(|s| Uuid::parse_str(s).ok());
+    let last_memo = item
+        .get("last_memo")
+        .and_then(|v| v.as_s().ok())
+        .cloned();
+
+    Ok(Some(SettlementProjection {
+        settlement_id,
+        account_id: get_s("account_id")?,
+        reference: get_s("reference")?,
+        debit_party: get_s("debit_party")?,
+        credit_party: get_s("credit_party")?,
+        status,
+        clearing_stage: get_s("clearing_stage")?,
+        last_entry_id,
+        last_memo,
+        version: get_n("version")?,
+        entry_count: get_n("entry_count")?,
+        updated_at,
+    }))
+}
+
+pub async fn fetch_ledger_from_dynamodb(
+    ddb: &DynamoDbClient,
+    table_name: &str,
+    settlement_id: Uuid,
+) -> Result<Option<SettlementLedgerResponse>> {
+    let output = ddb
+        .query()
+        .table_name(table_name)
+        .consistent_read(true)
+        .key_condition_expression("PK = :pk AND begins_with(SK, :prefix)")
+        .expression_attribute_values(":pk", AttributeValue::S(projection_pk(settlement_id)))
+        .expression_attribute_values(":prefix", AttributeValue::S("EVENT#".to_string()))
+        .scan_index_forward(true)
+        .send()
+        .await
+        .context("failed querying settlement ledger from DynamoDB")?;
+
+    let items = output.items.unwrap_or_default();
+    if items.is_empty() {
+        return Ok(None);
+    }
+
+    let mut events = Vec::with_capacity(items.len());
+    let mut max_version = 0;
+
+    for item in items {
+        let version = item
+            .get("version")
+            .and_then(|v| v.as_n().ok())
+            .and_then(|s| s.parse::<i32>().ok())
+            .unwrap_or(1);
+        if version > max_version {
+            max_version = version;
+        }
+        let event_id = item
+            .get("event_id")
+            .and_then(|v| v.as_s().ok())
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .unwrap_or_else(Uuid::nil);
+        let event_type = item
+            .get("event_type")
+            .and_then(|v| v.as_s().ok())
+            .cloned()
+            .unwrap_or_else(|| "LedgerEntryRecorded".to_string());
+        let entry_id = item
+            .get("entry_id")
+            .and_then(|v| v.as_s().ok())
+            .and_then(|s| Uuid::parse_str(s).ok());
+        let status = item
+            .get("status")
+            .and_then(|v| v.as_s().ok())
+            .cloned()
+            .unwrap_or_else(|| "INITIATED".to_string());
+        let clearing_stage = item
+            .get("clearing_stage")
+            .and_then(|v| v.as_s().ok())
+            .cloned()
+            .unwrap_or_default();
+        let memo = item.get("memo").and_then(|v| v.as_s().ok()).cloned();
+        let occurred_at = item
+            .get("occurred_at")
+            .and_then(|v| v.as_s().ok())
+            .cloned()
+            .unwrap_or_default();
+
+        events.push(SettlementLedgerItem {
+            event_id,
+            version,
+            event_type,
+            entry_id,
+            status,
+            clearing_stage,
+            memo,
+            occurred_at,
+        });
+    }
+
+    events.sort_by_key(|e| e.version);
+    Ok(Some(SettlementLedgerResponse {
+        settlement_id,
+        version: max_version,
+        events,
+    }))
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct JwksDocument {
+    keys: Vec<JwkKey>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct JwkKey {
+    kid: String,
+    n: String,
+    e: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TokenClaims {
+    pub iss: String,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub aud: Option<serde_json::Value>,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub token_use: Option<String>,
+    pub exp: usize,
+}
+
+impl TokenClaims {
+    pub fn has_scope(&self, required_scope: &str) -> bool {
+        self.scope
+            .as_deref()
+            .map(|s| s.split_whitespace().any(|part| part == required_scope))
+            .unwrap_or(false)
+    }
+
+    pub fn client_identifier(&self) -> Option<String> {
+        if let Some(cid) = &self.client_id {
+            return Some(cid.clone());
+        }
+        match &self.aud {
+            Some(serde_json::Value::String(s)) => Some(s.clone()),
+            Some(serde_json::Value::Array(arr)) => {
+                arr.first().and_then(|v| v.as_str()).map(|s| s.to_string())
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct JwksValidator {
+    issuer: String,
+    jwks_url: String,
+    allowed_clients: Vec<String>,
+    http: HttpClient,
+    cache: Arc<RwLock<Option<(Instant, HashMap<String, (String, String)>)>>>,
+}
+
+impl JwksValidator {
+    pub fn from_env() -> Result<Self> {
+        let issuer = env::var("AUTH_ISSUER").context("AUTH_ISSUER is required")?;
+        let jwks_url = env::var("AUTH_JWKS_URL")
+            .unwrap_or_else(|_| format!("{}/.well-known/jwks.json", issuer.trim_end_matches('/')));
+        let allowed_clients = env::var("AUTH_AUDIENCES")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+
+        Ok(Self {
+            issuer,
+            jwks_url,
+            allowed_clients,
+            http: HttpClient::builder()
+                .timeout(Duration::from_secs(5))
+                .build()?,
+            cache: Arc::new(RwLock::new(None)),
+        })
+    }
+
+    async fn get_key_components(&self, kid: &str) -> Result<(String, String)> {
+        {
+            let guard = self.cache.read().await;
+            if let Some((fetched_at, keys)) = guard.as_ref() {
+                if fetched_at.elapsed() < Duration::from_secs(300) {
+                    if let Some(found) = keys.get(kid) {
+                        return Ok(found.clone());
+                    }
+                }
+            }
+        }
+
+        let resp: JwksDocument = self
+            .http
+            .get(&self.jwks_url)
+            .send()
+            .await
+            .with_context(|| format!("failed fetching JWKS from {}", self.jwks_url))?
+            .error_for_status()
+            .context("JWKS endpoint returned error status")?
+            .json()
+            .await
+            .context("invalid JWKS JSON document")?;
+
+        let mut map = HashMap::new();
+        for key in resp.keys {
+            map.insert(key.kid, (key.n, key.e));
+        }
+
+        let found = map
+            .get(kid)
+            .cloned()
+            .ok_or_else(|| anyhow!("kid {kid} not found in JWKS"))?;
+
+        let mut guard = self.cache.write().await;
+        *guard = Some((Instant::now(), map));
+        Ok(found)
+    }
+
+    pub async fn verify(&self, token: &str) -> Result<TokenClaims> {
+        let header = decode_header(token).context("invalid JWT header")?;
+        let kid = header.kid.ok_or_else(|| anyhow!("JWT header missing kid"))?;
+        let (n, e) = self.get_key_components(&kid).await?;
+        let decoding_key =
+            DecodingKey::from_rsa_components(&n, &e).context("invalid RSA JWK components")?;
+
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.validate_aud = false;
+        validation.set_issuer(&[self.issuer.as_str()]);
+
+        let decoded = decode::<TokenClaims>(token, &decoding_key, &validation)
+            .context("JWT signature or claims verification failed")?;
+
+        let claims = decoded.claims;
+        if let Some(token_use) = &claims.token_use {
+            if token_use != "access" {
+                bail!("invalid token_use: {token_use}");
+            }
+        }
+        if !self.allowed_clients.is_empty() {
+            let Some(cid) = claims.client_identifier() else {
+                bail!("token missing client_id/aud claim");
+            };
+            if !self.allowed_clients.iter().any(|allowed| allowed == &cid) {
+                bail!("client_id {cid} is not in allowed audiences");
+            }
+        }
+        Ok(claims)
+    }
+}
+
+#[derive(Clone)]
+pub struct CloudWatchEmit {
+    client: CloudWatchLogsClient,
+    log_group: Option<String>,
+    log_stream: String,
+}
+
+impl CloudWatchEmit {
+    pub fn new(sdk_config: &aws_config::SdkConfig, default_stream_prefix: &str) -> Self {
+        let log_group = env::var("CLOUDWATCH_LOG_GROUP")
+            .ok()
+            .filter(|v| !v.trim().is_empty());
+        let instance = env::var("SERVICE_INSTANCE_ID")
+            .or_else(|_| env::var("HOSTNAME"))
+            .unwrap_or_else(|_| default_stream_prefix.to_string());
+        Self {
+            client: CloudWatchLogsClient::new(sdk_config),
+            log_group,
+            log_stream: format!("{default_stream_prefix}-{instance}"),
+        }
+    }
+
+    pub async fn emit_json(&self, value: serde_json::Value) {
+        let Some(group) = &self.log_group else {
+            return;
+        };
+        let _ = self
+            .client
+            .create_log_group()
+            .log_group_name(group)
+            .send()
+            .await;
+        let _ = self
+            .client
+            .create_log_stream()
+            .log_group_name(group)
+            .log_stream_name(&self.log_stream)
+            .send()
+            .await;
+        if let Ok(event) = InputLogEvent::builder()
+            .timestamp(Utc::now().timestamp_millis())
+            .message(value.to_string())
+            .build()
+        {
+            let _ = self
+                .client
+                .put_log_events()
+                .log_group_name(group)
+                .log_stream_name(&self.log_stream)
+                .log_events(event)
+                .send()
+                .await;
+        }
+    }
+}
+
+pub fn parse_ndjson_batch_key(prefix: &str, first_seq: i64, last_seq: i64, body: &[u8]) -> String {
+    let clean_prefix = prefix.trim_matches('/');
+    let digest = &sha256_hex(body)[..16];
+    if clean_prefix.is_empty() {
+        format!("batch-{first_seq:08}-{last_seq:08}-{digest}.ndjson")
+    } else {
+        format!("{clean_prefix}/batch-{first_seq:08}-{last_seq:08}-{digest}.ndjson")
+    }
+}
