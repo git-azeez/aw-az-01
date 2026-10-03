@@ -115,11 +115,6 @@ resource "aws_cognito_user_pool" "main" {
   tags = local.common_tags
 }
 
-resource "aws_cognito_user_pool_domain" "main" {
-  domain       = "${local.prefix}-auth"
-  user_pool_id = aws_cognito_user_pool.main.id
-}
-
 resource "aws_cognito_resource_server" "clearledger" {
   identifier   = "clearledger"
   name         = "${local.prefix}-clearledger"
