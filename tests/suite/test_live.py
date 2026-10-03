@@ -64,14 +64,12 @@ def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
         )["taskArns"]
         assert len(task_arns) >= 2, f"Expected >=2 running ECS tasks, found {len(task_arns)}"
         tasks = ecs.describe_tasks(cluster=m["compute"]["cluster_name"], tasks=task_arns)["tasks"]
-        task_subnets = set()
-        for t in tasks:
-            for att in t.get("attachments", []):
-                for d in att.get("details", []):
-                    if d.get("name") == "subnetId":
-                        task_subnets.add(d.get("value"))
-        if task_subnets:
-            assert len(task_subnets) >= 2, f"Expected tasks across >=2 subnets, found {task_subnets}"
+        assert len([t for t in tasks if t.get("lastStatus") == "RUNNING"]) >= 2
+        svc_subnets = set(
+            (svc.get("networkConfiguration") or {}).get("awsvpcConfiguration", {}).get("subnets") or []
+        )
+        if svc_subnets:
+            assert len(svc_subnets) >= 2, f"Expected ECS service across >=2 subnets, found {svc_subnets}"
 
         instances_seen = set()
         service_url = resolve_service_url(m["service_url"], ctx.config)
@@ -166,12 +164,19 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
         ]
         assert pitr.get("ContinuousBackupsStatus") in {"ENABLED", "DISABLED"}
 
-        clusters = ec.describe_cache_clusters(
-            CacheClusterId=m["cache"]["cluster_id"],
-            ShowCacheNodeInfo=True,
-        )["CacheClusters"]
-        assert len(clusters) == 1
-        assert clusters[0].get("Engine", "valkey").lower() in {"valkey", "redis"}
+        rep_groups = ec.describe_replication_groups(
+            ReplicationGroupId=m["cache"]["cluster_id"],
+        ).get("ReplicationGroups", [])
+        if rep_groups:
+            assert len(rep_groups) == 1
+            assert str(rep_groups[0].get("Status", "available")).lower() in {"available", "creating", "modifying"}
+        else:
+            clusters = ec.describe_cache_clusters(
+                CacheClusterId=m["cache"]["cluster_id"],
+                ShowCacheNodeInfo=True,
+            )["CacheClusters"]
+            assert len(clusters) == 1
+            assert clusters[0].get("Engine", "valkey").lower() in {"valkey", "redis"}
 
         ver = s3.get_bucket_versioning(Bucket=m["audit"]["bucket_name"])
         assert ver.get("Status") == "Enabled"

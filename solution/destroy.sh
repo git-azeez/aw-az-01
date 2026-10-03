@@ -39,11 +39,22 @@ pushd "${INFRA_DIR}" >/dev/null
 "${IAC_BIN}" init -input=false -no-color >/dev/null
 
 if [[ -f "${STATE_FILE}" ]]; then
+  set +e
   "${IAC_BIN}" destroy \
     -input=false \
     -auto-approve \
     -no-color \
     -state="${STATE_FILE}"
+  first_rc=$?
+  set -e
+  if (( first_rc != 0 )); then
+    "${IAC_BIN}" apply -refresh-only -input=false -auto-approve -no-color -state="${STATE_FILE}" || true
+    "${IAC_BIN}" destroy \
+      -input=false \
+      -auto-approve \
+      -no-color \
+      -state="${STATE_FILE}"
+  fi
 fi
 popd >/dev/null
 

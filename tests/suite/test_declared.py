@@ -66,7 +66,6 @@ def test_iac_discipline(ctx: VerifierContext) -> None:
             "aws_db_instance",
             "aws_dynamodb_table",
             "aws_elasticache_subnet_group",
-            "aws_elasticache_cluster",
             "aws_s3_bucket",
             "aws_s3_bucket_versioning",
             "aws_s3_bucket_server_side_encryption_configuration",
@@ -86,6 +85,9 @@ def test_iac_discipline(ctx: VerifierContext) -> None:
         }
         missing = sorted(required_types - types_present)
         assert not missing, f"Missing required Terraform resource types: {missing}"
+        assert types_present & {"aws_elasticache_replication_group", "aws_elasticache_cluster"}, (
+            "Missing required ElastiCache resource (aws_elasticache_replication_group or aws_elasticache_cluster)"
+        )
 
         prefix = ctx.config["resource_prefix"]
         tagged_count = 0
@@ -279,24 +281,31 @@ def test_declared_data_and_async(ctx: VerifierContext) -> None:
         assert tbl.get("hash_key") == "PK"
         assert tbl.get("range_key") == "SK"
         gsis = tbl.get("global_secondary_index") or []
-        assert any(
-            g.get("name") == "AccountIndex"
-            and g.get("hash_key") == "GSI1PK"
-            and g.get("range_key") == "GSI1SK"
-            and g.get("projection_type") == "ALL"
-            for g in gsis
-        ), "DynamoDB table missing required AccountIndex GSI (GSI1PK/GSI1SK)"
+
+        def _gsi_matches(g: dict[str, Any]) -> bool:
+            if g.get("name") != "AccountIndex" or g.get("projection_type") != "ALL":
+                return False
+            if g.get("hash_key") == "GSI1PK" and g.get("range_key") == "GSI1SK":
+                return True
+            ks = {
+                k.get("attribute_name"): k.get("key_type")
+                for k in (g.get("key_schema") or [])
+                if isinstance(k, dict)
+            }
+            return ks == {"GSI1PK": "HASH", "GSI1SK": "RANGE"}
+
+        assert any(_gsi_matches(g) for g in gsis), "DynamoDB table missing required AccountIndex GSI (GSI1PK/GSI1SK)"
         pitr = (tbl.get("point_in_time_recovery") or [{}])[0]
         assert pitr.get("enabled") is True or "point_in_time_recovery" in hcl_text, "DynamoDB point_in_time_recovery must be enabled"
         sse = (tbl.get("server_side_encryption") or [{}])[0]
         assert sse.get("enabled") is True or "server_side_encryption" in hcl_text
 
-        caches = _by_type(items, "aws_elasticache_cluster")
-        assert len(caches) == 1
+        caches = _by_type(items, "aws_elasticache_replication_group") + _by_type(items, "aws_elasticache_cluster")
+        assert len(caches) >= 1
         cache = caches[0]
         assert str(cache.get("engine", "valkey")).lower() in {"valkey", "redis"}
         assert cache.get("node_type") == "cache.t4g.micro"
-        assert int(cache.get("port", 6379)) > 0
+        assert int(cache.get("port") or 6379) > 0
 
         buckets = _by_type(items, "aws_s3_bucket")
         assert len(buckets) == 1

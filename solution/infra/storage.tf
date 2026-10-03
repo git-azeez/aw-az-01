@@ -101,14 +101,19 @@ resource "aws_elasticache_subnet_group" "main" {
   })
 }
 
-resource "aws_elasticache_cluster" "valkey" {
-  cluster_id         = "${local.prefix}-valkey"
-  engine             = "redis"
-  node_type          = "cache.t4g.micro"
-  num_cache_nodes    = 1
-  port               = 6379
-  subnet_group_name  = aws_elasticache_subnet_group.main.name
-  security_group_ids = [aws_security_group.valkey.id]
+resource "aws_elasticache_replication_group" "valkey" {
+  replication_group_id       = "${local.prefix}-valkey"
+  description                = "ClearLedger settlement projection cache"
+  engine                     = "redis"
+  engine_version             = "7.2"
+  node_type                  = "cache.t4g.micro"
+  num_cache_clusters         = 1
+  port                       = 6379
+  subnet_group_name          = aws_elasticache_subnet_group.main.name
+  security_group_ids         = [aws_security_group.valkey.id]
+  transit_encryption_enabled = false
+  at_rest_encryption_enabled = true
+  automatic_failover_enabled = false
 
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-valkey"
@@ -118,7 +123,13 @@ resource "aws_elasticache_cluster" "valkey" {
     ignore_changes = [
       engine,
       engine_version,
+      at_rest_encryption_enabled,
+      num_cache_clusters,
       port,
+      subnet_group_name,
+      security_group_ids,
+      tags,
+      tags_all,
     ]
   }
 }
@@ -163,6 +174,6 @@ locals {
   database_port = aws_db_instance.main.port
   database_url  = "postgres://${var.db_username}:${var.db_password}@${local.database_host}:${local.database_port}/${var.db_name}"
   valkey_host   = local.aws_endpoint_host
-  valkey_port   = try(aws_elasticache_cluster.valkey.cache_nodes[0].port, aws_elasticache_cluster.valkey.port)
+  valkey_port   = coalesce(aws_elasticache_replication_group.valkey.port, 6379)
   valkey_url    = "redis://${local.valkey_host}:${local.valkey_port}"
 }

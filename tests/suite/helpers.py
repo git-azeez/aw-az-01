@@ -277,6 +277,8 @@ def snapshot_inventory(config: dict[str, Any] | None = None) -> dict[str, set[st
     }
     inv["elasticache_clusters"] = {
         c["CacheClusterId"] for c in ec.describe_cache_clusters().get("CacheClusters", [])
+    } | {
+        rg["ReplicationGroupId"] for rg in ec.describe_replication_groups().get("ReplicationGroups", [])
     }
     inv["cognito_pools"] = {
         p["Id"] for p in cognito.list_user_pools(MaxResults=60).get("UserPools", [])

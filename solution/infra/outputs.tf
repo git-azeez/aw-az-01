@@ -68,7 +68,7 @@ output "manifest" {
       gsi_name   = "AccountIndex"
     }
     cache = {
-      cluster_id = aws_elasticache_cluster.valkey.cluster_id
+      cluster_id = aws_elasticache_replication_group.valkey.id
       engine     = "valkey"
       endpoint   = local.valkey_host
       port       = local.valkey_port
