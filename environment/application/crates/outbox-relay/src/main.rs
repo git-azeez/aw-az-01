@@ -1,6 +1,6 @@
 use std::{env, sync::Arc};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use aws_sdk_sqs::Client as SqsClient;
 use chrono::Utc;
 use clearledger::{build_aws_config, connect_postgres, ensure_postgres_schema, CloudWatchEmit};
@@ -39,7 +39,7 @@ async fn main() -> Result<(), LambdaError> {
         .parse()
         .context("OUTBOX_BATCH_SIZE must be an integer")?;
     if batch_size <= 0 {
-        bail!("OUTBOX_BATCH_SIZE must be > 0");
+        return Err("OUTBOX_BATCH_SIZE must be > 0".into());
     }
 
     let sdk_config = build_aws_config().await;

@@ -1,6 +1,6 @@
 use std::{env, sync::Arc};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use chrono::Utc;
 use clearledger::{
@@ -36,7 +36,7 @@ async fn main() -> Result<(), LambdaError> {
     let bucket = env::var("AUDIT_BUCKET").context("AUDIT_BUCKET is required")?;
     let prefix = env::var("AUDIT_PREFIX").unwrap_or_else(|_| "ledger-audit/".to_string());
     if prefix.trim().is_empty() {
-        bail!("AUDIT_PREFIX must not be empty");
+        return Err("AUDIT_PREFIX must not be empty".into());
     }
     let batch_size: i64 = env::var("AUDIT_BATCH_SIZE")
         .unwrap_or_else(|_| "100".to_string())

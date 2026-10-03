@@ -11,9 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src/application
 COPY application/Cargo.toml application/Cargo.lock ./
 COPY application/crates ./crates
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/src/application/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/src/application/target,sharing=locked \
     cargo build --release --workspace --bins && \
     mkdir -p /out && \
     cp target/release/clearledger-api \
@@ -87,7 +87,7 @@ RUN python3 -m venv /opt/venv && \
       pytest==8.3.5 \
       pyyaml==6.0.2 \
       redis==5.2.1 \
-      "litellm[proxy]<1.92" \
+      "litellm<1.92" \
       mini-swe-agent
 
 RUN terraform -version && tofu version && aws --version && psql --version

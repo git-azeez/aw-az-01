@@ -11,9 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src/application
 COPY application/Cargo.toml application/Cargo.lock ./
 COPY application/crates ./crates
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/src/application/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/src/application/target,sharing=locked \
     cargo build --release --workspace --bins && \
     mkdir -p /out && \
     cp target/release/clearledger-api \
