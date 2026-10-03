@@ -145,6 +145,7 @@ RUN userdel -r node 2>/dev/null || true && \
     useradd -o -u 0 -g 0 -M -d /root -s /bin/bash verifier
 
 COPY --from=rust-builder /out /opt/clearledger/bin
+COPY runtime/manifest.schema.json runtime/events.schema.json /opt/clearledger/contracts/schemas/
 COPY runtime/manifest.schema.json runtime/events.schema.json /opt/clearledger/schemas/
 COPY runtime/runtime.sh /opt/clearledger/runtime.sh
 COPY test.sh /tests/test.sh
@@ -152,7 +153,7 @@ COPY suite /tests/suite
 RUN chmod +x /opt/clearledger/runtime.sh /opt/clearledger/bin/* /tests/test.sh
 
 RUN mkdir -p /workspace/contracts/schemas /workspace/config /workspace/submission/infra /workspace/evidence /logs/verifier && \
-    cp -R /opt/clearledger/schemas/. /workspace/contracts/schemas/ && \
+    cp -R /opt/clearledger/contracts/. /workspace/contracts/ && \
     chmod -R 777 /workspace /logs/verifier
 
 WORKDIR /workspace

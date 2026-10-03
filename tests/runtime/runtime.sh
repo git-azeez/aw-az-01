@@ -7,7 +7,7 @@ export AWS_REGION="${AWS_REGION:-us-east-1}"
 export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-test}"
 export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-test}"
 export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://aws:4566}"
-ROLE="${ROLE:-verifier}"
+ROLE="${ROLE:-agent}"
 
 wait_for_aws() {
   for _ in $(seq 1 90); do
@@ -59,9 +59,20 @@ build_runtime_image() {
   local diff_id
   diff_id="sha256:$(sha256sum "${workdir}/layer.tar" | awk '{print $1}')"
 
+  local daemon_arch image_arch
+  daemon_arch="$(curl.real --unix-socket /var/run/docker.sock -fsS "http://localhost/info" | jq -r '.Architecture // "x86_64"' || echo "x86_64")"
+  case "${daemon_arch}" in
+    aarch64|arm64)
+      image_arch="arm64"
+      ;;
+    *)
+      image_arch="amd64"
+      ;;
+  esac
+
   cat >"${workdir}/config.json" <<JSON
 {
-  "architecture": "amd64",
+  "architecture": "${image_arch}",
   "os": "linux",
   "config": {
     "Entrypoint": ["${entrypoint}"],
@@ -189,7 +200,13 @@ relay_id="$(build_runtime_image "${relay_image}" /opt/clearledger/bin/clearledge
 archiver_id="$(build_runtime_image "${archiver_image}" /opt/clearledger/bin/clearledger-audit-archiver /var/runtime/bootstrap)"
 
 mkdir -p /workspace/contracts/schemas /workspace/config /workspace/submission/infra /workspace/evidence /logs/verifier
-cp -R /opt/clearledger/schemas/. /workspace/contracts/schemas/
+if [[ -d /opt/clearledger/contracts ]]; then
+  rm -rf /workspace/contracts/*
+  cp -R /opt/clearledger/contracts/. /workspace/contracts/
+elif [[ -d /opt/clearledger/schemas ]]; then
+  mkdir -p /workspace/contracts/schemas
+  cp -R /opt/clearledger/schemas/. /workspace/contracts/schemas/
+fi
 
 prefix="cl-$(openssl rand -hex 3)"
 password="Cl$(openssl rand -hex 5)!"
@@ -217,6 +234,8 @@ if [[ "${ROLE}" == "verifier" ]]; then
   seed_baseline "${prefix}"
   cp /tmp/baseline.json /workspace/config/.baseline.json
   chmod 0644 /workspace/config/.baseline.json
+  chown -R 1001:1001 /workspace/contracts /workspace/config /workspace/submission /workspace/evidence /logs/verifier || true
+else
+  chown -R 1000:1000 /workspace/contracts /workspace/config /workspace/submission /workspace/evidence
+  chown -R 1001:1001 /logs/verifier || true
 fi
-
-chown -R 1001:1001 /workspace/contracts /workspace/config /workspace/submission /workspace/evidence /logs/verifier || true
