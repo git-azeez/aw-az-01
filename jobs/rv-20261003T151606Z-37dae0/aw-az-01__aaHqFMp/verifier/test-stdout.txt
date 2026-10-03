@@ -1,0 +1,74 @@
+..............F....                                                      [100%]
+=================================== FAILURES ===================================
+______________________ test_ecs_task_failure_replacement _______________________
+
+ctx = VerifierContext(config={'resource_prefix': 'cl-4effd2', 'region': 'us-east-1', 'aws_endpoint_url': 'http://aws:4566', ...agRSShvpbT05X79R42Rox30E4MnCEa12ryPDGqjJpghxUQXRjnofwjLoxb4F02XBDxcYt-0ouRFMvsPeo97OVq7sBvFa5I7cmhUS7CF87BwONWMy8ASg'})
+
+    def test_ecs_task_failure_replacement(ctx: VerifierContext) -> None:
+        """Scored block: ECS task replacement (5 points) — recovery.ecs_task_replacement."""
+        def _check() -> str:
+            tokens = _ensure_tokens(ctx, refresh=True)
+            m = ctx.manifest
+            ecs = boto_client("ecs", ctx.config)
+            service_url = resolve_service_url(m["service_url"], ctx.config)
+    
+            before_tasks = ecs.list_tasks(
+                cluster=m["compute"]["cluster_name"],
+                serviceName=m["compute"]["service_name"],
+                desiredStatus="RUNNING",
+            )["taskArns"]
+            assert len(before_tasks) >= 2
+            ecs.stop_task(cluster=m["compute"]["cluster_name"], task=before_tasks[0], reason="Verifier fault drill")
+    
+            settlement_id = next(iter(ctx.committed_settlements.keys()))
+            with httpx.Client(base_url=service_url, timeout=10.0) as client:
+                wait_until(lambda: client.get("/health/ready").status_code == 200, timeout_sec=30.0, interval_sec=1.0)
+                r_read = client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {tokens['read']}"})
+                assert r_read.status_code == 200
+    
+            def _replacement_running() -> bool:
+                current = ecs.list_tasks(
+                    cluster=m["compute"]["cluster_name"],
+                    serviceName=m["compute"]["service_name"],
+                    desiredStatus="RUNNING",
+                )["taskArns"]
+                return len(current) >= 2
+    
+            wait_until(_replacement_running, timeout_sec=60.0, interval_sec=1.5, description="ECS replacement task RUNNING")
+            return "Stopped running ECS task and verified uninterrupted service + task replacement"
+    
+>       _run_block(ctx, "recovery.ecs_task_replacement", _check)
+
+/tests/suite/test_behavior.py:563: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/tests/suite/test_behavior.py:29: in _run_block
+    detail = fn()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _check() -> str:
+        tokens = _ensure_tokens(ctx, refresh=True)
+        m = ctx.manifest
+        ecs = boto_client("ecs", ctx.config)
+        service_url = resolve_service_url(m["service_url"], ctx.config)
+    
+        before_tasks = ecs.list_tasks(
+            cluster=m["compute"]["cluster_name"],
+            serviceName=m["compute"]["service_name"],
+            desiredStatus="RUNNING",
+        )["taskArns"]
+        assert len(before_tasks) >= 2
+        ecs.stop_task(cluster=m["compute"]["cluster_name"], task=before_tasks[0], reason="Verifier fault drill")
+    
+        settlement_id = next(iter(ctx.committed_settlements.keys()))
+        with httpx.Client(base_url=service_url, timeout=10.0) as client:
+            wait_until(lambda: client.get("/health/ready").status_code == 200, timeout_sec=30.0, interval_sec=1.0)
+            r_read = client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {tokens['read']}"})
+>           assert r_read.status_code == 200
+E           assert 503 == 200
+E            +  where 503 = <Response [503 Service Unavailable]>.status_code
+
+/tests/suite/test_behavior.py:550: AssertionError
+----------------- generated xml file: /logs/verifier/junit.xml -----------------
+=========================== short test summary info ============================
+FAILED ../tests/suite/test_behavior.py::test_ecs_task_failure_replacement - a...
+1 failed, 18 passed in 711.12s (0:11:51)
