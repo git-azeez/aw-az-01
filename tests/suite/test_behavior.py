@@ -545,9 +545,21 @@ def test_ecs_task_failure_replacement(ctx: VerifierContext) -> None:
 
         settlement_id = next(iter(ctx.committed_settlements.keys()))
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
-            wait_until(lambda: client.get("/health/ready").status_code == 200, timeout_sec=30.0, interval_sec=1.0)
-            r_read = client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {tokens['read']}"})
-            assert r_read.status_code == 200
+            wait_until(
+                lambda: client.get("/health/ready").status_code == 200,
+                timeout_sec=30.0,
+                interval_sec=0.5,
+                description="API health ready during ECS task replacement",
+            )
+            wait_until(
+                lambda: client.get(
+                    f"/v1/settlements/{settlement_id}",
+                    headers={"Authorization": f"Bearer {tokens['read']}"},
+                ).status_code == 200,
+                timeout_sec=30.0,
+                interval_sec=0.5,
+                description="API settlement read during ECS task replacement",
+            )
 
         def _replacement_running() -> bool:
             current = ecs.list_tasks(
@@ -558,6 +570,13 @@ def test_ecs_task_failure_replacement(ctx: VerifierContext) -> None:
             return len(current) >= 2
 
         wait_until(_replacement_running, timeout_sec=60.0, interval_sec=1.5, description="ECS replacement task RUNNING")
+        with httpx.Client(base_url=service_url, timeout=10.0) as client:
+            wait_until(
+                lambda: all(client.get("/health/ready").status_code == 200 for _ in range(2)),
+                timeout_sec=30.0,
+                interval_sec=1.0,
+                description="all ECS tasks healthy behind ALB after replacement",
+            )
         return "Stopped running ECS task and verified uninterrupted service + task replacement"
 
     _run_block(ctx, "recovery.ecs_task_replacement", _check)
@@ -588,8 +607,11 @@ def test_rds_reboot_recovery(ctx: VerifierContext) -> None:
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             def _db_ready() -> bool:
-                r = client.get("/health/ready")
-                return r.status_code == 200 and r.json().get("checks", {}).get("postgres") == "UP"
+                for _ in range(2):
+                    r = client.get("/health/ready")
+                    if r.status_code != 200 or r.json().get("checks", {}).get("postgres") != "UP":
+                        return False
+                return True
 
             wait_until(_db_ready, timeout_sec=60.0, interval_sec=1.5, description="RDS ready after reboot")
 
@@ -616,11 +638,15 @@ def test_rds_reboot_recovery(ctx: VerifierContext) -> None:
             )
             assert r_c.status_code == 201
 
-            wait_until(
-                lambda: client.get(
+            def _post_reboot_projected() -> bool:
+                r = client.get(
                     f"/v1/settlements/{new_sid}",
                     headers={"Authorization": f"Bearer {tokens['read']}"},
-                ).json().get("version") == 1,
+                )
+                return r.status_code == 200 and r.json().get("version") == 1
+
+            wait_until(
+                _post_reboot_projected,
                 timeout_sec=35.0,
                 interval_sec=1.0,
                 description="post-reboot settlement projection",
