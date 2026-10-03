@@ -1,0 +1,159 @@
+{
+    "id": "e757f42f-d3d9-4e36-a7ba-a3a94644e6e4",
+    "task_name": "devcloud/clearledger-settlement",
+    "trial_name": "aw-az-01__uhH5KqC",
+    "trial_uri": "file:///Users/azeez/Azeez/microai/aw-az-01/jobs/rv-20261003T160252Z-148c51/aw-az-01__uhH5KqC",
+    "task_id": {
+        "path": "/Users/azeez/Azeez/microai/aw-az-01"
+    },
+    "source": null,
+    "task_checksum": "69b607100da6254c32587e8e8c746edc53338d30fdaa82f7679f1558a78a72fc",
+    "config": {
+        "task": {
+            "path": "/Users/azeez/Azeez/microai/aw-az-01",
+            "git_url": null,
+            "git_commit_id": null,
+            "name": null,
+            "ref": null,
+            "overwrite": false,
+            "download_dir": null,
+            "source": null
+        },
+        "trial_name": "aw-az-01__uhH5KqC",
+        "trials_dir": "/Users/azeez/Azeez/microai/aw-az-01/jobs/rv-20261003T160252Z-148c51",
+        "install_only": false,
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": null,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": null,
+            "import_path": "opencode_subscription_agent:SubscriptionOpenCode",
+            "model_name": "openrouter/z-ai/glm-5.2",
+            "n_concurrent": null,
+            "concurrency_group": null,
+            "skills": [],
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "resume_trajectory": false,
+            "load_trajectory": null,
+            "extra_allowed_hosts": [],
+            "kwargs": {
+                "opencode_config": {
+                    "permission": {
+                        "external_directory": {
+                            "/*": "allow"
+                        }
+                    },
+                    "provider": {
+                        "openrouter": {
+                            "models": {
+                                "z-ai/glm-5.2": {
+                                    "options": {
+                                        "provider": {
+                                            "sort": "throughput",
+                                            "max_price": {
+                                                "prompt": 2.0,
+                                                "completion": 5.0
+                                            },
+                                            "allow_fallbacks": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "env": {
+                "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}"
+            },
+            "mcp_servers": []
+        },
+        "user_agent": null,
+        "environment": {
+            "type": "docker",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "cpu_enforcement_policy": "auto",
+            "memory_enforcement_policy": "auto",
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "override_tpu": null,
+            "mounts": null,
+            "extra_docker_compose": [],
+            "kwargs": {},
+            "extra_allowed_hosts": []
+        },
+        "verifier": {
+            "override_timeout_sec": null,
+            "max_timeout_sec": null,
+            "env": {
+                "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}",
+                "REWARDKIT_JUDGE": "${REWARDKIT_JUDGE}"
+            },
+            "disable": false
+        },
+        "artifacts": [],
+        "extra_instruction_paths": [],
+        "extra_instructions": [],
+        "job_id": "d364edc7-c039-4186-8946-7ef3cc7ca0d0",
+        "source_trial": null
+    },
+    "agent_info": {
+        "name": "opencode",
+        "version": "1.17.8",
+        "model_info": {
+            "name": "z-ai/glm-5.2",
+            "provider": "openrouter"
+        }
+    },
+    "agent_result": {
+        "n_input_tokens": 3900107,
+        "n_cache_tokens": 3784960,
+        "n_output_tokens": 22837,
+        "cost_usd": 1.3164252699999994,
+        "model_usage": {
+            "openrouter/z-ai/glm-5.2": {
+                "n_input_tokens": 3900107,
+                "n_cache_tokens": 3784960,
+                "n_output_tokens": 22837,
+                "cost_usd": 1.3164252699999994
+            }
+        },
+        "rollout_details": null,
+        "metadata": null
+    },
+    "verifier_result": {
+        "rewards": {
+            "reward": 0.0,
+            "score": 0
+        }
+    },
+    "verifier_environment_mode": "separate",
+    "exception_info": null,
+    "started_at": "2026-10-03T16:02:53.345330Z",
+    "finished_at": "2026-10-03T16:34:05.509118Z",
+    "environment_setup": {
+        "started_at": "2026-10-03T16:02:53.439670Z",
+        "finished_at": "2026-10-03T16:03:13.986323Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-10-03T16:03:13.986513Z",
+        "finished_at": "2026-10-03T16:03:20.948973Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-10-03T16:03:20.949401Z",
+        "finished_at": "2026-10-03T16:33:25.145279Z"
+    },
+    "verifier": {
+        "started_at": "2026-10-03T16:33:28.201106Z",
+        "finished_at": "2026-10-03T16:34:05.508417Z"
+    },
+    "step_results": null
+}

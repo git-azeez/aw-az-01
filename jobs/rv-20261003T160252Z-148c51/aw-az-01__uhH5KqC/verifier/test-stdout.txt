@@ -1,0 +1,347 @@
+EEEEEEEEEEEEEEEEEEE                                                      [100%]
+==================================== ERRORS ====================================
+____________________ ERROR at setup of test_iac_discipline _____________________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+_____________ ERROR at setup of test_declared_compute_and_ingress ______________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+________________ ERROR at setup of test_declared_data_and_async ________________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+___________________ ERROR at setup of test_declared_security ___________________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+_______________ ERROR at setup of test_live_compute_and_ingress ________________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+_______________ ERROR at setup of test_live_data_and_event_graph _______________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+_____________________ ERROR at setup of test_live_security _____________________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+_____________ ERROR at setup of test_settlement_lifecycle_workflow _____________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+______________ ERROR at setup of test_projection_and_valkey_cache ______________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+________ ERROR at setup of test_idempotency_and_optimistic_concurrency _________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+____________ ERROR at setup of test_backlog_accumulation_and_drain _____________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+_________ ERROR at setup of test_duplicate_delivery_and_dlq_isolation __________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+_______ ERROR at setup of test_outbox_recovery_after_sqs_queue_deletion ________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+___________ ERROR at setup of test_projection_rebuild_from_event_log ___________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+_____________ ERROR at setup of test_ecs_task_failure_replacement ______________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+__________________ ERROR at setup of test_rds_reboot_recovery __________________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+_________ ERROR at setup of test_authorization_audit_and_observability _________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+__________________ ERROR at setup of test_reapply_idempotence __________________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+_____________________ ERROR at setup of test_destroy_clean _____________________
+
+    @pytest.fixture(scope="session")
+    def ctx() -> VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+>       assert layout_ok, layout_note
+E       AssertionError: Missing /workspace/submission/deploy.sh
+E       assert False
+
+/tests/suite/conftest.py:82: AssertionError
+----------------- generated xml file: /logs/verifier/junit.xml -----------------
+=========================== short test summary info ============================
+ERROR ../tests/suite/test_declared.py::test_iac_discipline - AssertionError: ...
+ERROR ../tests/suite/test_declared.py::test_declared_compute_and_ingress - As...
+ERROR ../tests/suite/test_declared.py::test_declared_data_and_async - Asserti...
+ERROR ../tests/suite/test_declared.py::test_declared_security - AssertionErro...
+ERROR ../tests/suite/test_live.py::test_live_compute_and_ingress - AssertionE...
+ERROR ../tests/suite/test_live.py::test_live_data_and_event_graph - Assertion...
+ERROR ../tests/suite/test_live.py::test_live_security - AssertionError: Missi...
+ERROR ../tests/suite/test_behavior.py::test_settlement_lifecycle_workflow - A...
+ERROR ../tests/suite/test_behavior.py::test_projection_and_valkey_cache - Ass...
+ERROR ../tests/suite/test_behavior.py::test_idempotency_and_optimistic_concurrency
+ERROR ../tests/suite/test_behavior.py::test_backlog_accumulation_and_drain - ...
+ERROR ../tests/suite/test_behavior.py::test_duplicate_delivery_and_dlq_isolation
+ERROR ../tests/suite/test_behavior.py::test_outbox_recovery_after_sqs_queue_deletion
+ERROR ../tests/suite/test_behavior.py::test_projection_rebuild_from_event_log
+ERROR ../tests/suite/test_behavior.py::test_ecs_task_failure_replacement - As...
+ERROR ../tests/suite/test_behavior.py::test_rds_reboot_recovery - AssertionEr...
+ERROR ../tests/suite/test_behavior.py::test_authorization_audit_and_observability
+ERROR ../tests/suite/test_lifecycle.py::test_reapply_idempotence - AssertionE...
+ERROR ../tests/suite/test_lifecycle.py::test_destroy_clean - AssertionError: ...
+19 errors in 1.89s

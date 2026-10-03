@@ -1,0 +1,52 @@
+{
+    "job_name": "rv-20261003T160252Z-148c51",
+    "jobs_dir": "/Users/azeez/Azeez/microai/aw-az-01/jobs",
+    "n_concurrent_trials": 5,
+    "verifier": {
+        "env": {
+            "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}",
+            "REWARDKIT_JUDGE": "${REWARDKIT_JUDGE}"
+        }
+    },
+    "agents": [
+        {
+            "import_path": "opencode_subscription_agent:SubscriptionOpenCode",
+            "model_name": "openrouter/z-ai/glm-5.2",
+            "kwargs": {
+                "opencode_config": {
+                    "permission": {
+                        "external_directory": {
+                            "/*": "allow"
+                        }
+                    },
+                    "provider": {
+                        "openrouter": {
+                            "models": {
+                                "z-ai/glm-5.2": {
+                                    "options": {
+                                        "provider": {
+                                            "sort": "throughput",
+                                            "max_price": {
+                                                "prompt": 2.0,
+                                                "completion": 5.0
+                                            },
+                                            "allow_fallbacks": true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "env": {
+                "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}"
+            }
+        }
+    ],
+    "tasks": [
+        {
+            "path": "/Users/azeez/Azeez/microai/aw-az-01"
+        }
+    ]
+}
