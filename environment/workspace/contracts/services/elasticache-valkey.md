@@ -1,9 +1,8 @@
 # ElastiCache for Valkey (`services/elasticache-valkey.md`)
 
 - Provision an ElastiCache subnet group (`aws_elasticache_subnet_group`) spanning the private subnets.
-- Provision a Valkey cluster (`aws_elasticache_cluster`) with:
-  - `engine = "valkey"`
-  - `engine_version = "8.0"` (or `8.*`)
+- Provision a Valkey cache cluster (`aws_elasticache_cluster`) with:
+  - `engine = "redis"` (Terraform `aws_elasticache_cluster` uses `"redis"` for the Valkey/Redis engine)
   - `node_type = "cache.t4g.micro"`
   - `num_cache_nodes = 1`
   - `port = 6379`

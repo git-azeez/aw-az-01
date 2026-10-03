@@ -82,8 +82,11 @@ def ctx() -> VerifierContext:
     assert layout_ok, layout_note
 
     deploy_sh = SUBMISSION_DIR / "deploy.sh"
-    deploy_sh.chmod(0o755)
-    (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+    try:
+        deploy_sh.chmod(0o755)
+        (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+    except OSError:
+        pass
 
     deploy_proc = run_script(deploy_sh, timeout_sec=720)
     deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()

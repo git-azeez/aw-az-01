@@ -11,6 +11,8 @@ export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://aws:4566}"
 export TF_CLI_CONFIG_FILE="${TF_CLI_CONFIG_FILE:-/etc/terraform.tfrc}"
 
 mkdir -p /logs/verifier /workspace/evidence
+chmod -R a+rwX /workspace/submission /workspace/evidence /logs/verifier 2>/dev/null || true
+chmod +x /workspace/submission/deploy.sh /workspace/submission/destroy.sh 2>/dev/null || true
 
 echo "0" >/logs/verifier/reward.txt
 echo '{"reward":0.0,"score":0}' >/logs/verifier/reward.json

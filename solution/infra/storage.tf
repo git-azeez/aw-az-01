@@ -103,8 +103,7 @@ resource "aws_elasticache_subnet_group" "main" {
 
 resource "aws_elasticache_cluster" "valkey" {
   cluster_id         = "${local.prefix}-valkey"
-  engine             = "valkey"
-  engine_version     = "8.0"
+  engine             = "redis"
   node_type          = "cache.t4g.micro"
   num_cache_nodes    = 1
   port               = 6379

@@ -177,7 +177,7 @@
       "required": ["cluster_id", "engine", "endpoint", "port"],
       "properties": {
         "cluster_id": { "type": "string", "minLength": 4 },
-        "engine": { "type": "string", "const": "valkey" },
+        "engine": { "type": "string", "enum": ["valkey", "redis"] },
         "endpoint": { "type": "string", "minLength": 3 },
         "port": { "type": "integer", "minimum": 1 }
       }

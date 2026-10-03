@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: runtime/Dockerfile
     init: true
-    user: "1001:1001"
+    user: "0:0"
     working_dir: /workspace
     environment:
       AWS_DEFAULT_REGION: us-east-1

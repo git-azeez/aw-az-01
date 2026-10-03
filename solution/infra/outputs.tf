@@ -69,7 +69,7 @@ output "manifest" {
     }
     cache = {
       cluster_id = aws_elasticache_cluster.valkey.cluster_id
-      engine     = aws_elasticache_cluster.valkey.engine
+      engine     = "valkey"
       endpoint   = local.valkey_host
       port       = local.valkey_port
     }
