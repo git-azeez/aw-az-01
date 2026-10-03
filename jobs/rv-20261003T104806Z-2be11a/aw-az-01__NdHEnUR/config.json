@@ -1,0 +1,48 @@
+{
+    "task": {
+        "path": "/Users/azeez/Azeez/microai/aw-az-01"
+    },
+    "trial_name": "aw-az-01__NdHEnUR",
+    "trials_dir": "/Users/azeez/Azeez/microai/aw-az-01/jobs/rv-20261003T104806Z-2be11a",
+    "agent": {
+        "import_path": "opencode_subscription_agent:SubscriptionOpenCode",
+        "model_name": "openrouter/z-ai/glm-5.2",
+        "kwargs": {
+            "opencode_config": {
+                "permission": {
+                    "external_directory": {
+                        "/*": "allow"
+                    }
+                },
+                "provider": {
+                    "openrouter": {
+                        "models": {
+                            "z-ai/glm-5.2": {
+                                "options": {
+                                    "provider": {
+                                        "sort": "throughput",
+                                        "max_price": {
+                                            "prompt": 2.0,
+                                            "completion": 5.0
+                                        },
+                                        "allow_fallbacks": true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "env": {
+            "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}"
+        }
+    },
+    "verifier": {
+        "env": {
+            "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}",
+            "REWARDKIT_JUDGE": "${REWARDKIT_JUDGE}"
+        }
+    },
+    "job_id": "3df17c6e-2dca-4ca5-aed5-07532e5b7048"
+}
