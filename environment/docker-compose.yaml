@@ -37,6 +37,7 @@ services:
     image: mirror.gcr.io/floci/floci:2.1.0@sha256:f5aa8c18302cedb4f2385f5c4e455b3efc77fee6bf7b6e5d1712b2817ba102db
     init: true
     environment:
+      FLOCI_RUN_AS_ROOT: "true"
       FLOCI_DOCKER_DOCKER_HOST: unix:///var/run/docker.sock
       FLOCI_DOCKER_RESOURCE_NAMESPACE: ${COMPOSE_PROJECT_NAME}
       FLOCI_HOSTNAME: aws
@@ -73,7 +74,7 @@ services:
         aliases:
           - aws
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:4566/_localstack/health"]
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 2s
       timeout: 2s
       retries: 30
