@@ -1,0 +1,20 @@
+{
+    "task": {
+        "path": "/Users/azeez/Azeez/microai/aw-az-01"
+    },
+    "trial_name": "aw-az-01__VURoKAy",
+    "trials_dir": "/Users/azeez/Azeez/microai/aw-az-01/jobs/rv-20261003T095805Z-4ee3d8",
+    "agent": {
+        "name": "oracle",
+        "env": {
+            "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}"
+        }
+    },
+    "verifier": {
+        "env": {
+            "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}",
+            "REWARDKIT_JUDGE": "${REWARDKIT_JUDGE}"
+        }
+    },
+    "job_id": "898f9ced-499f-445f-a79e-15251eeea10a"
+}
