@@ -160,7 +160,13 @@ if [[ ! -f "${SSL_CERT_FILE:-/etc/daytona-netleash-ca.crt}" ]] || [[ ! -s "${SSL
   export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
   unset NODE_EXTRA_CA_CERTS
 fi
-exec /opt/venv/bin/mini-swe-agent.real "$@"
+cleanup_children() {
+  pkill -9 -f "mini-swe-agent.real|terraform-provider|terraform.real|tofu.real" >/dev/null 2>&1 || true
+  exec >/dev/null 2>&1
+}
+trap cleanup_children EXIT
+timeout -k 15 1800 /opt/venv/bin/mini-swe-agent.real "$@"
+exit 0
 EOF
 
 RUN cat <<'EOF' >/opt/venv/bin/uv && chmod +x /opt/venv/bin/uv
@@ -200,7 +206,74 @@ if [[ ! -f "${SSL_CERT_FILE:-/etc/daytona-netleash-ca.crt}" ]] || [[ ! -s "${SSL
   export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
   unset NODE_EXTRA_CA_CERTS
 fi
-exec /usr/local/bin/opencode "$@"
+if [[ "${1:-}" == "--version" || "${1:-}" == "-v" || "${1:-}" == "version" ]]; then
+  exec /usr/local/bin/opencode "$@"
+fi
+export AWS_EC2_METADATA_DISABLED=true
+cleanup_children() {
+  pkill -9 -f "opencode-linux|/usr/local/bin/opencode|terraform-provider|terraform.real|tofu.real" >/dev/null 2>&1 || true
+  exec >/dev/null 2>&1
+}
+trap cleanup_children EXIT
+DEADLINE=$(( $(date +%s) + 1800 ))
+MODEL_ARG="openrouter/z-ai/glm-5.2"
+for arg in "$@"; do
+  case "$arg" in
+    --model=*) MODEL_ARG="${arg#--model=}" ;;
+  esac
+done
+run_with_idle_watchdog() {
+  local rem=$(( DEADLINE - $(date +%s) ))
+  if (( rem <= 15 )); then
+    return 0
+  fi
+  timeout -k 10 "$rem" /usr/local/bin/opencode "$@" &
+  local pid=$!
+  local last_size=-1
+  local idle_secs=0
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 5
+    if (( $(date +%s) >= DEADLINE )); then
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 2
+      kill -9 "$pid" 2>/dev/null || true
+      pkill -9 -f "opencode-linux|/usr/local/bin/opencode" >/dev/null 2>&1 || true
+      return 124
+    fi
+    local cur_size=0
+    if [[ -f /logs/agent/opencode.txt ]]; then
+      cur_size=$(stat -c%s /logs/agent/opencode.txt 2>/dev/null || echo 0)
+    fi
+    if [[ "$cur_size" == "$last_size" ]]; then
+      idle_secs=$(( idle_secs + 5 ))
+    else
+      last_size="$cur_size"
+      idle_secs=0
+    fi
+    if (( idle_secs >= 240 )); then
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 2
+      kill -9 "$pid" 2>/dev/null || true
+      pkill -9 -f "opencode-linux|/usr/local/bin/opencode" >/dev/null 2>&1 || true
+      wait "$pid" 2>/dev/null || true
+      return 125
+    fi
+  done
+  wait "$pid" 2>/dev/null || return $?
+  return 0
+}
+run_with_idle_watchdog "$@"
+rc=$?
+for attempt in 1 2; do
+  if (( rc == 125 && $(date +%s) + 60 < DEADLINE )); then
+    run_with_idle_watchdog --model="$MODEL_ARG" run --format=json --continue \
+      "The previous stream stalled. Check current workspace/submission state and finish any remaining verification steps."
+    rc=$?
+  else
+    break
+  fi
+done
+exit 0
 EOF
 
 RUN userdel -r node 2>/dev/null || true && \
@@ -217,9 +290,9 @@ COPY workspace/contracts /opt/clearledger/contracts
 COPY runtime.sh /opt/clearledger/runtime.sh
 RUN chmod +x /opt/clearledger/runtime.sh /opt/clearledger/bin/*
 
-RUN mkdir -p /workspace/contracts /workspace/config /workspace/submission/infra /workspace/evidence /logs/verifier && \
+RUN mkdir -p /workspace/contracts /workspace/config /workspace/submission/infra /workspace/evidence /logs/agent /logs/verifier && \
     cp -R /opt/clearledger/contracts/. /workspace/contracts/ && \
-    chown -R agent:agent /workspace && \
+    chown -R agent:agent /workspace /logs/agent && \
     chown -R verifier:verifier /logs/verifier
 
 WORKDIR /workspace
