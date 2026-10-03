@@ -31,7 +31,7 @@ output "manifest" {
       desired_count       = aws_ecs_service.api.desired_count
     }
     database = {
-      instance_id  = aws_db_instance.main.id
+      instance_id  = aws_db_instance.main.identifier
       instance_arn = aws_db_instance.main.arn
       endpoint     = local.database_host
       port         = local.database_port

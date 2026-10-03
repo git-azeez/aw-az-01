@@ -103,7 +103,20 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
         s3 = boto_client("s3", ctx.config)
         scheduler = boto_client("scheduler", ctx.config)
 
-        db_inst = rds.describe_db_instances(DBInstanceIdentifier=m["database"]["instance_id"])["DBInstances"][0]
+        raw_db_id = m["database"]["instance_id"]
+        arn_db_id = m["database"]["instance_arn"].rsplit(":", 1)[-1]
+        all_dbs = rds.describe_db_instances().get("DBInstances", [])
+        db_inst = next(
+            (
+                d
+                for d in all_dbs
+                if d.get("DBInstanceIdentifier") in {raw_db_id, arn_db_id}
+                or d.get("DbiResourceId") == raw_db_id
+                or d.get("DBInstanceArn") == m["database"]["instance_arn"]
+            ),
+            None,
+        )
+        assert db_inst is not None, f"RDS instance {raw_db_id} not found"
         assert db_inst["Engine"] == "postgres"
         assert db_inst.get("DBInstanceStatus") == "available"
 

@@ -571,7 +571,20 @@ def test_rds_reboot_recovery(ctx: VerifierContext) -> None:
         rds = boto_client("rds", ctx.config)
         service_url = resolve_service_url(m["service_url"], ctx.config)
 
-        rds.reboot_db_instance(DBInstanceIdentifier=m["database"]["instance_id"])
+        raw_db_id = m["database"]["instance_id"]
+        arn_db_id = m["database"]["instance_arn"].rsplit(":", 1)[-1]
+        all_dbs = rds.describe_db_instances().get("DBInstances", [])
+        db_id = next(
+            (
+                d["DBInstanceIdentifier"]
+                for d in all_dbs
+                if d.get("DBInstanceIdentifier") in {raw_db_id, arn_db_id}
+                or d.get("DbiResourceId") == raw_db_id
+                or d.get("DBInstanceArn") == m["database"]["instance_arn"]
+            ),
+            arn_db_id or raw_db_id,
+        )
+        rds.reboot_db_instance(DBInstanceIdentifier=db_id)
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             def _db_ready() -> bool:
