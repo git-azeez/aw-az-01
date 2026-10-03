@@ -1,0 +1,1293 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="19" failures="0" skipped="0" tests="19" time="133.105" timestamp="2026-10-03T05:06:01.847195+00:00" hostname="35058ecbae51"><testcase classname="test_declared" name="test_iac_discipline" time="132.285"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_declared" name="test_declared_compute_and_ingress" time="0.002"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_declared" name="test_declared_data_and_async" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_declared" name="test_declared_security" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_live" name="test_live_compute_and_ingress" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_live" name="test_live_data_and_event_graph" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_live" name="test_live_security" time="0.002"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_settlement_lifecycle_workflow" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_projection_and_valkey_cache" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_idempotency_and_optimistic_concurrency" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_backlog_accumulation_and_drain" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_duplicate_delivery_and_dlq_isolation" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_outbox_recovery_after_sqs_queue_deletion" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_projection_rebuild_from_event_log" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_ecs_task_failure_replacement" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_rds_reboot_recovery" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_authorization_audit_and_observability" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_lifecycle" name="test_reapply_idempotence" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_lifecycle" name="test_destroy_clean" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  &#10;  aws_lambda_function.audit_archiver: Creating...&#10;  aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]&#10;  aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  range_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  STDERR:&#10;  &#10;  Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.&#10;  &#10;    with aws_cognito_user_pool_domain.main,&#10;    on security.tf line 118, in resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot;:&#10;   118: resource &quot;aws_cognito_user_pool_domain&quot; &quot;main&quot; {&#10;  &#10;  &#10;  Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.&#10;  &#10;    with aws_elasticache_subnet_group.main,&#10;    on storage.tf line 95, in resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot;:&#10;    95: resource &quot;aws_elasticache_subnet_group&quot; &quot;main&quot; {&#10;  &#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         
+E         aws_lambda_function.audit_archiver: Creating...
+E         aws_lambda_function.audit_archiver: Creation complete after 5s [id=cl-eba3e6-audit-archiver]
+E         aws_lambda_function.outbox_relay: Creation complete after 5s [id=cl-eba3e6-outbox-relay]
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-eba3e6-scheduler-role:cl-eba3e6-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-eba3e6-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-eba3e6-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         range_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         STDERR:
+E         
+E         Error: creating Cognito User Pool Domain (cl-eba3e6-auth): operation error Cognito Identity Provider: CreateUserPoolDomain, https response error StatusCode: 400, RequestID: 90f28a57-552d-48b3-ab8b-02e383cffa75, api error UnsupportedOperation: Operation CreateUserPoolDomain is not supported.
+E         
+E           with aws_cognito_user_pool_domain.main,
+E           on security.tf line 118, in resource "aws_cognito_user_pool_domain" "main":
+E          118: resource "aws_cognito_user_pool_domain" "main" {
+E         
+E         
+E         Error: creating ElastiCache Subnet Group (cl-eba3e6-valkey-subnets): operation error ElastiCache: CreateCacheSubnetGroup, https response error StatusCode: 400, RequestID: 5c863cbf-c2af-43e1-87ac-79584fb1952d, api error UnsupportedOperation: Operation CreateCacheSubnetGroup is not supported.
+E         
+E           with aws_elasticache_subnet_group.main,
+E           on storage.tf line 95, in resource "aws_elasticache_subnet_group" "main":
+E           95: resource "aws_elasticache_subnet_group" "main" {
+E         
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase></testsuite></testsuites>
