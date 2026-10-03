@@ -22,40 +22,52 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
        target/release/clearledger-audit-archiver \
        /out/
 
-FROM --platform=linux/amd64 hashicorp/terraform:1.9.8@sha256:18f9986038bbaf02cf49db9c09261c778161c51dcc7fb7e355ae8938459428cd AS terraform-cli
-
-FROM --platform=linux/amd64 mirror.gcr.io/library/python:3.12.11-slim-bookworm@sha256:54fd2da9fc88eed6ef2ef3fa6fdeeb8fd9fad2bd3ce8fb3ac0db32a85f10c0f9 AS main
+FROM --platform=linux/amd64 mirror.gcr.io/library/node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS main
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PATH=/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
     AWS_DEFAULT_REGION=us-east-1 \
     AWS_REGION=us-east-1 \
     AWS_ACCESS_KEY_ID=test \
     AWS_SECRET_ACCESS_KEY=test \
     AWS_ENDPOINT_URL=http://aws:4566 \
-    TF_IN_AUTOMATION=1
+    TF_IN_AUTOMATION=1 \
+    TF_CLI_CONFIG_FILE=/etc/terraform.tfrc
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       bash \
       ca-certificates \
       curl \
+      fd-find \
       git \
       iproute2 \
       jq \
       less \
       netcat-openbsd \
       openssl \
+      patch \
       postgresql-client \
       procps \
+      psmisc \
+      python3 \
+      python3-pip \
+      python3-venv \
       ripgrep \
       tar \
       unzip \
       vim-tiny \
+      wget \
       xz-utils \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
-COPY --from=terraform-cli /bin/terraform /usr/local/bin/terraform
+RUN curl -fsSL https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip \
+      -o /tmp/terraform.zip && \
+    unzip -q /tmp/terraform.zip terraform -d /usr/local/bin && \
+    chmod +x /usr/local/bin/terraform && \
+    rm -f /tmp/terraform.zip
 
 RUN curl -fsSL https://github.com/opentofu/opentofu/releases/download/v1.8.4/tofu_1.8.4_linux_amd64.zip \
       -o /tmp/tofu.zip && \
@@ -63,12 +75,13 @@ RUN curl -fsSL https://github.com/opentofu/opentofu/releases/download/v1.8.4/tof
     chmod +x /usr/local/bin/tofu && \
     rm -f /tmp/tofu.zip
 
-RUN pip install --no-cache-dir \
+RUN python3 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir \
       awscli==1.38.1 \
       boto3==1.37.1 \
       httpx==0.28.1 \
       jsonschema==4.23.0 \
-      psycopg[binary]==3.2.6 \
+      "psycopg[binary]==3.2.6" \
       pytest==8.3.5 \
       pyyaml==6.0.2 \
       redis==5.2.1
@@ -79,6 +92,7 @@ RUN mkdir -p /opt/Terraform/cache/registry.terraform.io/hashicorp/aws/6.51.0/lin
     curl -fsSL https://releases.hashicorp.com/terraform-provider-aws/6.51.0/terraform-provider-aws_6.51.0_linux_amd64.zip \
       -o /tmp/provider.zip && \
     unzip -q /tmp/provider.zip -d /opt/Terraform/cache/registry.terraform.io/hashicorp/aws/6.51.0/linux_amd64 && \
+    ln -sfn /opt/Terraform/cache/registry.terraform.io /opt/Terraform/cache/registry.opentofu.org && \
     chmod -R a+rX /opt/Terraform/cache && \
     rm -f /tmp/provider.zip
 
@@ -86,16 +100,14 @@ RUN cat <<'EOF' >/etc/terraform.tfrc
 provider_installation {
   filesystem_mirror {
     path    = "/opt/Terraform/cache"
-    include = ["registry.terraform.io/hashicorp/*"]
+    include = ["registry.terraform.io/hashicorp/*", "registry.opentofu.org/hashicorp/*"]
   }
   direct {
-    exclude = ["registry.terraform.io/hashicorp/*"]
+    exclude = ["registry.terraform.io/hashicorp/*", "registry.opentofu.org/hashicorp/*"]
   }
 }
 disable_checkpoint = true
 EOF
-
-ENV TF_CLI_CONFIG_FILE=/etc/terraform.tfrc
 
 RUN mv /usr/local/bin/terraform /usr/local/bin/terraform.real && \
     cat <<'EOF' >/usr/local/bin/terraform && chmod +x /usr/local/bin/terraform
@@ -128,7 +140,8 @@ fi
 exec /usr/bin/curl.real "$@"
 EOF
 
-RUN useradd -m -u 1000 -s /bin/bash agent && \
+RUN userdel -r node 2>/dev/null || true && \
+    useradd -m -u 1000 -s /bin/bash agent && \
     useradd -m -u 1001 -s /bin/bash verifier
 
 COPY --from=rust-builder /out /opt/clearledger/bin

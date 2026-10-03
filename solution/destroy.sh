@@ -2,6 +2,7 @@
 set -euo pipefail
 
 unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+export PATH="/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 export NO_PROXY="localhost,127.0.0.1,::1,aws,runtime"
 export no_proxy="localhost,127.0.0.1,::1,aws,runtime"
 

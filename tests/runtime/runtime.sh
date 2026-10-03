@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export PATH="/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
 export AWS_REGION="${AWS_REGION:-us-east-1}"
 export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-test}"
