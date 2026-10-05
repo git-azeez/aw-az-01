@@ -1,0 +1,299 @@
+................F..                                                      [100%]
+=================================== FAILURES ===================================
+__________________ test_authorization_audit_and_observability __________________
+
+ctx = VerifierContext(config={'resource_prefix': 'cl-45409e', 'region': 'us-east-1', 'aws_endpoint_url': 'http://aws:4566', ...EdinXjBNkY8BJTXOUCwezrPrZQRwR4udd-z8FAxxFDNGOsWZwIE3LBW2-8qGjw_QjqIQS3hXrsfb5VpocZaeKisYNUoHjxZAwbBqjX-wHkd4gWGhErKA'})
+
+    def test_authorization_audit_and_observability(ctx: VerifierContext) -> None:
+        """Scored block: Authorization, audit and logs (3 points) — security.auth_audit_logs."""
+        def _check() -> str:
+            m = ctx.manifest
+            service_url = resolve_service_url(m["service_url"], ctx.config)
+            read_tok = get_access_token(m, "read")
+            write_tok = get_access_token(m, "write")
+            admin_tok = get_access_token(m, "admin")
+            settlement_id = next(iter(ctx.committed_settlements.keys()))
+    
+            bad_status, bad_body = fetch_oauth_token(
+                m,
+                "read",
+                secret_override="wrong-secret-value",
+                client_id_override="invalid-nonexistent-client-id",
+            )
+            if bad_status == 200 and "access_token" in bad_body:
+                with httpx.Client(base_url=service_url, timeout=10.0) as client:
+                    r_bad = client.get(
+                        f"/v1/settlements/{settlement_id}",
+                        headers={"Authorization": f"Bearer {bad_body['access_token']}"},
+                    )
+                    assert r_bad.status_code in {401, 403}
+            else:
+                assert bad_status in {400, 401, 403}
+    
+            wrong_scope_status, wrong_scope_body = fetch_oauth_token(m, "read", scope_override="clearledger/admin")
+            if wrong_scope_status == 200 and "access_token" in wrong_scope_body:
+                with httpx.Client(base_url=service_url, timeout=10.0) as client:
+                    probe = client.post(
+                        f"/v1/admin/projections/{settlement_id}/rebuild",
+                        headers={"Authorization": f"Bearer {wrong_scope_body['access_token']}"},
+                    )
+                    if probe.status_code < 400:
+                        ctx.recorder.add_cap("auth_escalation", 49)
+                        raise AssertionError("Read client obtained token accepted on admin endpoint")
+    
+            corr_marker = f"corr-sec-{uuid.uuid4().hex[:10]}"
+    
+            with httpx.Client(base_url=service_url, timeout=10.0) as client:
+                if client.get(f"/v1/settlements/{settlement_id}").status_code != 401:
+                    ctx.recorder.add_cap("auth_escalation", 49)
+                    raise AssertionError("Unauthenticated GET must return 401")
+                if client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": "Bearer forged.invalid.token"}).status_code != 401:
+                    ctx.recorder.add_cap("auth_escalation", 49)
+                    raise AssertionError("Forged token must return 401")
+    
+                sample_post = {
+                    "settlementId": str(uuid.uuid4()),
+                    "accountId": "acct-9999",
+                    "reference": "CLR-999999",
+                    "debitParty": "CITIUS33",
+                    "creditParty": "CHASUS33",
+                    "expectedVersion": 0,
+                }
+                checks = [
+                    client.post("/v1/settlements", headers={"Authorization": f"Bearer {read_tok}", "Idempotency-Key": f"idem-f1-{uuid.uuid4()}"}, json=sample_post).status_code,
+                    client.post(f"/v1/admin/projections/{settlement_id}/rebuild", headers={"Authorization": f"Bearer {read_tok}"}).status_code,
+                    client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {write_tok}"}).status_code,
+                    client.post(f"/v1/admin/projections/{settlement_id}/rebuild", headers={"Authorization": f"Bearer {write_tok}"}).status_code,
+                    client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {admin_tok}"}).status_code,
+                    client.post("/v1/settlements", headers={"Authorization": f"Bearer {admin_tok}", "Idempotency-Key": f"idem-f2-{uuid.uuid4()}"}, json=dict(sample_post, settlementId=str(uuid.uuid4()))).status_code,
+                ]
+                if any(code != 403 for code in checks):
+                    ctx.recorder.add_cap("auth_escalation", 49)
+                    raise AssertionError(f"Scope isolation matrix violated: {checks}")
+    
+                audit_sid = str(uuid.uuid4())
+                r_audit_create = client.post(
+                    "/v1/settlements",
+                    headers={
+                        "Authorization": f"Bearer {write_tok}",
+                        "Idempotency-Key": f"idem-audit-{audit_sid}",
+                        "X-Correlation-Id": corr_marker,
+                    },
+                    json={
+                        "settlementId": audit_sid,
+                        "accountId": "acct-7777",
+                        "reference": "CLR-777777",
+                        "debitParty": "CITIUS33",
+                        "creditParty": "CHASUS33",
+                        "expectedVersion": 0,
+                    },
+                )
+                assert r_audit_create.status_code == 201
+                ctx.committed_settlements[audit_sid] = {
+                    "spec": {"settlementId": audit_sid},
+                    "expected_version": 1,
+                    "last_status": "INITIATED",
+                    "last_stage": "INITIATED@CITIUS33",
+                }
+    
+            invoke_lambda_sync(m["workers"]["outbox_relay"]["function_name"])
+            invoke_lambda_sync(m["workers"]["audit_archiver"]["function_name"])
+    
+            s3 = boto_client("s3", ctx.config)
+            event_schema = json.loads((CONTRACTS_DIR / "schemas" / "events.schema.json").read_text())
+    
+            objects = wait_until(
+                lambda: s3.list_objects_v2(Bucket=m["audit"]["bucket_name"], Prefix=m["audit"]["prefix"]).get("Contents", []),
+                timeout_sec=30.0,
+                interval_sec=1.0,
+                description="S3 audit archive objects",
+            )
+            validated_records = 0
+            for obj in objects:
+                body = s3.get_object(Bucket=m["audit"]["bucket_name"], Key=obj["Key"])["Body"].read().decode()
+                for line in body.splitlines():
+                    if line.strip():
+                        jsonschema.validate(instance=json.loads(line), schema=event_schema)
+                        validated_records += 1
+            assert validated_records >= 10
+    
+            with pg_connect(m, ctx.config) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE archived_at IS NOT NULL")
+                    assert cur.fetchone()[0] >= 10
+    
+            logs = boto_client("logs", ctx.config)
+            secrets_to_scrub = [
+                ctx.config["db_password"],
+                m["auth"]["clients"]["read"]["client_secret"],
+                m["auth"]["clients"]["write"]["client_secret"],
+                m["auth"]["clients"]["admin"]["client_secret"],
+            ]
+            found_corr = False
+            for lg_key, lg_name in m["logs"].items():
+                events = logs.filter_log_events(logGroupName=lg_name, limit=100).get("events", [])
+                assert events, f"Expected structured log events in {lg_name} ({lg_key})"
+                for ev in events:
+                    msg = ev.get("message", "")
+                    for secret in secrets_to_scrub:
+                        if secret and len(secret) >= 4 and secret in msg:
+                            ctx.recorder.add_cap("auth_escalation", 49)
+                            raise AssertionError(f"Secret value leaked in CloudWatch log group {lg_name}")
+                    if corr_marker in msg:
+                        found_corr = True
+            assert found_corr, f"Correlation ID {corr_marker} not found in CloudWatch logs"
+    
+            return f"Verified strict scope isolation, {validated_records} S3 audit records, and secret-free structured logs"
+    
+>       _run_block(ctx, "security.auth_audit_logs", _check)
+
+/tests/suite/test_behavior.py:965: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/tests/suite/test_behavior.py:30: in _run_block
+    detail = fn()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _check() -> str:
+        m = ctx.manifest
+        service_url = resolve_service_url(m["service_url"], ctx.config)
+        read_tok = get_access_token(m, "read")
+        write_tok = get_access_token(m, "write")
+        admin_tok = get_access_token(m, "admin")
+        settlement_id = next(iter(ctx.committed_settlements.keys()))
+    
+        bad_status, bad_body = fetch_oauth_token(
+            m,
+            "read",
+            secret_override="wrong-secret-value",
+            client_id_override="invalid-nonexistent-client-id",
+        )
+        if bad_status == 200 and "access_token" in bad_body:
+            with httpx.Client(base_url=service_url, timeout=10.0) as client:
+                r_bad = client.get(
+                    f"/v1/settlements/{settlement_id}",
+                    headers={"Authorization": f"Bearer {bad_body['access_token']}"},
+                )
+                assert r_bad.status_code in {401, 403}
+        else:
+            assert bad_status in {400, 401, 403}
+    
+        wrong_scope_status, wrong_scope_body = fetch_oauth_token(m, "read", scope_override="clearledger/admin")
+        if wrong_scope_status == 200 and "access_token" in wrong_scope_body:
+            with httpx.Client(base_url=service_url, timeout=10.0) as client:
+                probe = client.post(
+                    f"/v1/admin/projections/{settlement_id}/rebuild",
+                    headers={"Authorization": f"Bearer {wrong_scope_body['access_token']}"},
+                )
+                if probe.status_code < 400:
+                    ctx.recorder.add_cap("auth_escalation", 49)
+                    raise AssertionError("Read client obtained token accepted on admin endpoint")
+    
+        corr_marker = f"corr-sec-{uuid.uuid4().hex[:10]}"
+    
+        with httpx.Client(base_url=service_url, timeout=10.0) as client:
+            if client.get(f"/v1/settlements/{settlement_id}").status_code != 401:
+                ctx.recorder.add_cap("auth_escalation", 49)
+                raise AssertionError("Unauthenticated GET must return 401")
+            if client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": "Bearer forged.invalid.token"}).status_code != 401:
+                ctx.recorder.add_cap("auth_escalation", 49)
+                raise AssertionError("Forged token must return 401")
+    
+            sample_post = {
+                "settlementId": str(uuid.uuid4()),
+                "accountId": "acct-9999",
+                "reference": "CLR-999999",
+                "debitParty": "CITIUS33",
+                "creditParty": "CHASUS33",
+                "expectedVersion": 0,
+            }
+            checks = [
+                client.post("/v1/settlements", headers={"Authorization": f"Bearer {read_tok}", "Idempotency-Key": f"idem-f1-{uuid.uuid4()}"}, json=sample_post).status_code,
+                client.post(f"/v1/admin/projections/{settlement_id}/rebuild", headers={"Authorization": f"Bearer {read_tok}"}).status_code,
+                client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {write_tok}"}).status_code,
+                client.post(f"/v1/admin/projections/{settlement_id}/rebuild", headers={"Authorization": f"Bearer {write_tok}"}).status_code,
+                client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {admin_tok}"}).status_code,
+                client.post("/v1/settlements", headers={"Authorization": f"Bearer {admin_tok}", "Idempotency-Key": f"idem-f2-{uuid.uuid4()}"}, json=dict(sample_post, settlementId=str(uuid.uuid4()))).status_code,
+            ]
+            if any(code != 403 for code in checks):
+                ctx.recorder.add_cap("auth_escalation", 49)
+                raise AssertionError(f"Scope isolation matrix violated: {checks}")
+    
+            audit_sid = str(uuid.uuid4())
+            r_audit_create = client.post(
+                "/v1/settlements",
+                headers={
+                    "Authorization": f"Bearer {write_tok}",
+                    "Idempotency-Key": f"idem-audit-{audit_sid}",
+                    "X-Correlation-Id": corr_marker,
+                },
+                json={
+                    "settlementId": audit_sid,
+                    "accountId": "acct-7777",
+                    "reference": "CLR-777777",
+                    "debitParty": "CITIUS33",
+                    "creditParty": "CHASUS33",
+                    "expectedVersion": 0,
+                },
+            )
+            assert r_audit_create.status_code == 201
+            ctx.committed_settlements[audit_sid] = {
+                "spec": {"settlementId": audit_sid},
+                "expected_version": 1,
+                "last_status": "INITIATED",
+                "last_stage": "INITIATED@CITIUS33",
+            }
+    
+        invoke_lambda_sync(m["workers"]["outbox_relay"]["function_name"])
+        invoke_lambda_sync(m["workers"]["audit_archiver"]["function_name"])
+    
+        s3 = boto_client("s3", ctx.config)
+        event_schema = json.loads((CONTRACTS_DIR / "schemas" / "events.schema.json").read_text())
+    
+        objects = wait_until(
+            lambda: s3.list_objects_v2(Bucket=m["audit"]["bucket_name"], Prefix=m["audit"]["prefix"]).get("Contents", []),
+            timeout_sec=30.0,
+            interval_sec=1.0,
+            description="S3 audit archive objects",
+        )
+        validated_records = 0
+        for obj in objects:
+            body = s3.get_object(Bucket=m["audit"]["bucket_name"], Key=obj["Key"])["Body"].read().decode()
+            for line in body.splitlines():
+                if line.strip():
+                    jsonschema.validate(instance=json.loads(line), schema=event_schema)
+                    validated_records += 1
+        assert validated_records >= 10
+    
+        with pg_connect(m, ctx.config) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE archived_at IS NOT NULL")
+                assert cur.fetchone()[0] >= 10
+    
+        logs = boto_client("logs", ctx.config)
+        secrets_to_scrub = [
+            ctx.config["db_password"],
+            m["auth"]["clients"]["read"]["client_secret"],
+            m["auth"]["clients"]["write"]["client_secret"],
+            m["auth"]["clients"]["admin"]["client_secret"],
+        ]
+        found_corr = False
+        for lg_key, lg_name in m["logs"].items():
+            events = logs.filter_log_events(logGroupName=lg_name, limit=100).get("events", [])
+            assert events, f"Expected structured log events in {lg_name} ({lg_key})"
+            for ev in events:
+                msg = ev.get("message", "")
+                for secret in secrets_to_scrub:
+                    if secret and len(secret) >= 4 and secret in msg:
+                        ctx.recorder.add_cap("auth_escalation", 49)
+                        raise AssertionError(f"Secret value leaked in CloudWatch log group {lg_name}")
+                if corr_marker in msg:
+                    found_corr = True
+>       assert found_corr, f"Correlation ID {corr_marker} not found in CloudWatch logs"
+E       AssertionError: Correlation ID corr-sec-158c55f950 not found in CloudWatch logs
+E       assert False
+
+/tests/suite/test_behavior.py:961: AssertionError
+----------------- generated xml file: /logs/verifier/junit.xml -----------------
+=========================== short test summary info ============================
+FAILED ../tests/suite/test_behavior.py::test_authorization_audit_and_observability
+1 failed, 18 passed in 713.00s (0:11:52)
