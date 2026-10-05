@@ -69,7 +69,7 @@ When a client calls `POST /v1/settlements`, the API opens a single SQL transacti
 2. The **immutable event row** in `clearledger.events` recording `SettlementInitiated`.
 3. The **transactional outbox row** in `clearledger.outbox` holding the serialized event envelope with `published_at = NULL`.
 
-Because all three inserts share one database transaction, PostgreSQL guarantees that we never commit a settlement without queuing its event in the outbox. Immediately after commit, the API performs a best-effort publish to the main SQS queue, marks `published_at` if SQS accepts the message, and returns `201 Created`. The Projector Lambda then consumes the SQS message, writes the initial state and event item into DynamoDB, and clears any stale Valkey entry.
+Because all three inserts share one database transaction, PostgreSQL guarantees that we never commit a settlement without queuing its event in the outbox. Immediately after commit, the API performs a best-effort publish to the main SQS queue, marks `published_at` if SQS accepts the message, and returns `201 Created`. The Projector Lambda then consumes the SQS message, writes the `EVENT#00000001` item and conditional `STATE` item into DynamoDB, and clears any stale Valkey entry.
 
 ```mermaid
 sequenceDiagram
@@ -94,7 +94,7 @@ sequenceDiagram
     API-->>ALB: 201 Created
     ALB-->>Client: 201 Created
     SQS->>Projector: Deliver event batch
-    Projector->>DDB: Put STATE item and EVENT#00000001 item
+    Projector->>DDB: Conditionally put STATE and EVENT#00000001
     Projector->>Valkey: Delete stale settlement cache key
 ```
 
@@ -102,7 +102,7 @@ sequenceDiagram
 
 Calling `POST /v1/settlements/{id}/entries` appends the next lifecycle transition (for example, `VALIDATED`, `RESERVED`, `CLEARED`, or `SETTLED`) without overwriting prior ledger entries. The caller passes an `Idempotency-Key` header and `expectedVersion`. Inside RDS PostgreSQL, the API locks the aggregate row, checks `clearledger.idempotency_keys` for an existing key, and verifies `expectedVersion`.
 
-That produces one of three deterministic outcomes: an idempotent replay (`200 OK` with `idempotentReplay: true`) if the exact request was already committed, a version increment (`202 Accepted`) that writes `LedgerEntryRecorded` and invalidates Valkey, or a `409 Conflict` if either the idempotency payload differs or `expectedVersion` is stale.
+That produces one of three deterministic outcomes: an idempotent replay (`200 OK` with `idempotentReplay: true`) if the exact request was already committed, a version increment (`202 Accepted`) that writes `LedgerEntryRecorded` and invalidates Valkey, or a `409 Conflict` if either the idempotency payload differs or `expectedVersion` is stale. When the Projector Lambda applies the event in DynamoDB, it writes `EVENT#<version>` with `attribute_not_exists(PK) AND attribute_not_exists(SK)` and updates `STATE` inside an optimistic concurrency loop guarded by `#version = :expected_version`. If standard SQS delivers messages out of order or concurrent Lambda invocations race on the same settlement, older versions never overwrite a newer projected state.
 
 ```mermaid
 sequenceDiagram
@@ -131,7 +131,7 @@ sequenceDiagram
         API-->>ALB: 202 Accepted
         ALB-->>Client: 202 Accepted
         SQS->>Projector: Deliver event
-        Projector->>DDB: Update STATE item and write EVENT#<version>
+        Projector->>DDB: Conditionally advance STATE and write EVENT#<version>
         Projector->>Valkey: Delete cached settlement key
     else FLOW 3 · VERSION OR PAYLOAD CONFLICT · Reject write
         RDS-->>API: Mismatch detected
@@ -276,7 +276,7 @@ sequenceDiagram
 
 ## Score
 
-The verifier evaluates the submission across **19 test blocks** grouped into **six categories** totaling **100 points**. A submission only passes when it achieves **100 / 100** and triggers no hard-gate score caps.
+The verifier evaluates the submission across **19 test blocks** grouped into **six categories** totaling **100 points**. A submission only passes when it satisfies all four prerequisite gates, achieves **100 / 100** across the scored blocks, and triggers no score caps.
 
 | Category | Points |
 |---|---:|
@@ -292,30 +292,39 @@ Here is what each scored test block checks and how points are distributed:
 
 | Category | Scored test block | What its experiments prove | Points |
 |---|---|---|---:|
-| Core product behavior | Settlement workflow | 8–12 randomized settlement lifecycles with 3–6 clearing/settlement entries each commit cleanly, project into DynamoDB, and return accurate state and ordered ledger histories through the ALB. | 9 |
+| Core product behavior | Settlement workflow | 8–10 randomized settlement lifecycles with 3–5 clearing/settlement entries each commit cleanly, project into DynamoDB, and return accurate state and ordered ledger histories through the ALB. | 9 |
 | Core product behavior | Projection and cache | Deleting the Valkey key causes the next `GET /v1/settlements/{id}` to return `X-ClearLedger-Source: projection` and repopulate Valkey so the following read returns `X-ClearLedger-Source: cache`; writes invalidate the cached key. | 7 |
-| Core product behavior | Idempotency and concurrency | Replaying the same `Idempotency-Key` 5–10 times commits only once (`idempotentReplay: true` on replays), reusing an `Idempotency-Key` with a different body returns `409`, and submitting a stale `expectedVersion` returns `409`. | 8 |
+| Core product behavior | Idempotency and concurrency | Sequential and 6-way concurrent replays of the same `Idempotency-Key` commit only once (`idempotentReplay: true` on replays), reusing an `Idempotency-Key` with a mutated payload returns `409`, a stale `expectedVersion` returns `409`, and a 5-way concurrent race on the same `expectedVersion` produces exactly one `202` winner and four `409` conflicts. | 8 |
 | Recovery | Outbox recovery | Deleting the main SQS queue does not block write acceptance in PostgreSQL (`GET` returns `404` while unprojected), and re-running `deploy.sh` plus invoking the outbox relay restores the queue and converges the DynamoDB projection. | 6 |
 | Recovery | Projection rebuild | Deleting the DynamoDB `STATE` and `EVENT#` items and Valkey key causes `GET` to return `404` until `POST /v1/admin/projections/{id}/rebuild` replays the PostgreSQL event log through SQS. | 5 |
 | Recovery | ECS task replacement | Stopping one running ECS task leaves `/health/ready` and existing settlement reads available via the remaining task while ECS schedules a replacement to return to 2 running tasks. | 5 |
 | Recovery | RDS reboot recovery | Rebooting the RDS PostgreSQL instance preserves all previously committed settlement records and allows new writes to succeed once the instance returns healthy. | 4 |
-| Architecture and deployment | Infrastructure managed with Terraform or OpenTofu | `terraform validate` succeeds and `infra/terraform.tfstate` manages all required AWS resource types and tagged resources for the deployment prefix. | 3 |
-| Architecture and deployment | Declared compute and ingress | State declares the 2-AZ VPC, public/private subnets, 4 security groups (`alb`, `ecs`, `rds`, `valkey`), internet-facing ALB + HTTP listener + `/health/ready` target group, and ECS Fargate service (`desired_count >= 2`, `CACHE_TTL_SECONDS = 90`). | 2 |
-| Architecture and deployment | Declared data and messaging | State declares RDS PostgreSQL 16 (`db.t4g.micro`), SQS main queue (`visibility_timeout = 3`, `wait_time = 2`, `retention = 172800`) + DLQ (`retention = 1209600`, `maxReceiveCount = 4`), 3 container Lambdas (`OUTBOX_BATCH_SIZE = 50`, `AUDIT_PREFIX = ledger-audit/`), SQS ESM (`batch_size = 5`, `ReportBatchItemFailures`), 2 EventBridge schedules, DynamoDB (`PK`/`SK`, `AccountIndex` GSI, PITR, KMS), Valkey 8 (`cache.t4g.micro`), and S3 (versioning, KMS, public access block). | 2 |
-| Architecture and deployment | Live ingress and compute | Live AWS inspection confirms the ALB, listener, target group, ECS cluster/service (`2` running tasks across `2` AZs), and `X-ClearLedger-Instance` header distribution match `manifest.json`. | 5 |
-| Architecture and deployment | Live data and event graph | Live AWS inspection confirms RDS, SQS queue attributes and redrive policy, Lambda functions and ESM, EventBridge schedules, DynamoDB `AccountIndex` GSI + PITR + SSE, Valkey node, and S3 versioning/encryption/public-access blocks match `manifest.json`. | 5 |
+| Architecture and deployment | Infrastructure managed with Terraform or OpenTofu | Validation (`terraform validate` or `tofu validate`) succeeds and `infra/terraform.tfstate` manages all required AWS resource types and tagged resources for the deployment prefix without imperative CLI creation in `deploy.sh`. | 3 |
+| Architecture and deployment | Declared compute and ingress | State declares the 2-AZ VPC, public/private subnets, 4 security groups (`alb`, `ecs`, `rds`, `valkey`), internet-facing ALB + HTTP listener + `/health/ready` target group, and ECS Fargate service/task definition (`desired_count >= 2`, `CACHE_TTL_SECONDS = 90`, and exact `ecs_execution` / `ecs_task` role bindings). | 2 |
+| Architecture and deployment | Declared data and messaging | Resolved state and parsed IaC configuration declare RDS PostgreSQL 16 (`db.t4g.micro`, encrypted with `database` KMS key), SQS main queue (`visibility_timeout = 3`, `wait_time = 2`, `retention = 172800`) + DLQ (`retention = 1209600`, `maxReceiveCount = 4`, both encrypted with `messaging` KMS key), 3 container Lambdas bound to their respective IAM roles (`OUTBOX_BATCH_SIZE = 50`, `AUDIT_PREFIX = ledger-audit/`), SQS ESM (`batch_size = 5`, `ReportBatchItemFailures`), 2 EventBridge schedules bound to the `scheduler` role, DynamoDB (`PK`/`SK`, `AccountIndex` GSI, `point_in_time_recovery = true`, SSE with `projection` KMS key), Valkey (`cache.t4g.micro`), and S3 (`Enabled` versioning, `aws:kms` SSE with `audit` KMS key, public access block). | 2 |
+| Architecture and deployment | Live ingress and compute | Live AWS inspection confirms the ALB, listener, target group, ECS cluster/service (`2` running tasks across `2` AZs), live task definition role attachments (`executionRoleArn` and `taskRoleArn`), and `/health/ready` responses match `manifest.json`. | 5 |
+| Architecture and deployment | Live data and event graph | Live AWS inspection confirms RDS, SQS queue and DLQ KMS encryption (`messaging` key) and redrive policy, Lambda container configurations and attached IAM roles, EventBridge schedules and target roles, DynamoDB `AccountIndex` GSI + `ENABLED` continuous backups (PITR), Valkey node, and S3 versioning, `aws:kms` bucket encryption (`audit` key), and public-access blocks. | 5 |
 | Lifecycle | Stable deployment | Re-running `deploy.sh` converges cleanly with the same RDS endpoint and preserves all committed settlement records. | 7 |
-| Lifecycle | Clean destroy | Running `destroy.sh` exits `0`, removes every resource created for the trial's `resource_prefix`, and leaves all baseline resources untouched. | 8 |
-| Asynchronous processing | Backlog recovery | Disabling the SQS event source mapping causes 20–35 rapid ledger entries across 5 settlements to queue in SQS (`GET` returns `404` while disabled) and drain cleanly in version order once re-enabled. | 7 |
-| Asynchronous processing | Duplicate and invalid messages | Re-sending an already applied event envelope to SQS is ignored idempotently without bumping the version, while a poison message is retried and routed to the DLQ after 4 receives. | 6 |
-| Security and observability | Declared security | State declares 6 distinct IAM roles with least-privilege policies, 4 customer-managed KMS keys (`enable_key_rotation = true`, `deletion_window_in_days >= 10`) and aliases, Cognito user pool/domain/resource server/3 scoped clients, and 4 CloudWatch Log Groups (`retention_in_days >= 14`). | 3 |
-| Security and observability | Live security graph | Live AWS inspection verifies the 6 IAM roles and wildcard-free policies, 4 enabled KMS keys with rotation, Cognito scopes (`clearledger/read`, `clearledger/write`, `clearledger/admin`), and 4 CloudWatch Log Groups. | 5 |
-| Security and observability | Authorization, audit and logs | Every endpoint enforces strict non-hierarchical OAuth2 scope checks (`401` missing token, `403` wrong scope), the archiver writes valid `ledger-audit/batch-*.ndjson` envelopes to S3, and CloudWatch Logs record correlation IDs without leaking database passwords or client secrets. | 3 |
+| Lifecycle | Clean destroy | Running `destroy.sh` exits `0`, leaves `terraform.tfstate` with zero managed resources, removes every AWS resource created for the trial's `resource_prefix`, and leaves all pre-existing baseline resources untouched. | 8 |
+| Asynchronous processing | Backlog recovery | Disabling the SQS event source mapping causes 25 rapid ledger entries across 5 settlements to queue in SQS (`GET` returns `404` while disabled) and drain cleanly in version order once re-enabled. | 7 |
+| Asynchronous processing | Duplicate and invalid messages | Duplicate and stale (`v1`) SQS deliveries, deterministic out-of-order delivery (`v3` followed by `v1` and `v2`), and 6-way concurrent projector invocations racing scrambled event batches never regress the projected version or state in DynamoDB, while poison messages are isolated to the DLQ after 4 receives. | 6 |
+| Security and observability | Declared security | State declares 6 distinct IAM roles with service-specific trust policies and least-privilege resource-scoped permissions, 4 customer-managed KMS keys (`enable_key_rotation = true`, `deletion_window_in_days` between `10` and `30`) with 4 KMS aliases, Cognito user pool/resource server/3 scoped clients, and 4 CloudWatch Log Groups (`retention_in_days >= 14`). | 3 |
+| Security and observability | Live security graph | Live AWS inspection verifies the 6 IAM roles, trust policies, effective positive/negative permissions and `simulate_principal_policy` decisions, 4 enabled KMS keys with active key rotation and aliases, Cognito scopes (`clearledger/read`, `clearledger/write`, `clearledger/admin`), and 4 CloudWatch Log Groups (`retentionInDays >= 14`). | 5 |
+| Security and observability | Authorization, audit and logs | Every endpoint enforces strict non-hierarchical OAuth2 scope checks (`401` missing/forged token, `403` wrong scope), the archiver writes valid `ledger-audit/batch-*.ndjson` envelopes to S3, and CloudWatch Logs record correlation IDs without leaking database passwords or client secrets. | 3 |
 | **Total** |  |  | **100** |
 
-### Hard Gates and Score Caps
+### Prerequisite Gates and Score Caps
 
-In addition to the point weights above, the verifier applies three score caps if critical invariants are broken:
-- **Accepted write loss or corruption (`score cap: 49`)**: Applied if any settlement creation or ledger entry write that returned HTTP `201`/`202` is lost or corrupted in PostgreSQL or the rebuilt projection.
-- **Critical authorization escalation (`score cap: 49`)**: Applied if an unauthenticated request or an under-scoped token (`read`, `write`, or `admin` outside its permitted routes) succeeds, or if credentials are leaked in CloudWatch Logs.
-- **Teardown resource leak (`score cap: 79`)**: Applied if `destroy.sh` fails, leaves behind trial resources in the AWS account, or removes pre-existing baseline resources.
+Before running the 19 scored test blocks, `tests/suite/conftest.py` and `tests/suite/scoring.py` evaluate four prerequisite gates. If any prerequisite gate fails, the run halts and the final score is set to **`0`**:
+
+1. **`submission_layout`**: `/workspace/submission/deploy.sh`, `/workspace/submission/destroy.sh`, and `/workspace/submission/infra/` (containing `.tf` or `.tofu` files) must exist.
+2. **`deploy_succeeded`**: Running `/workspace/submission/deploy.sh` must exit `0` within 720 seconds and produce `/workspace/submission/infra/terraform.tfstate`.
+3. **`manifest_valid`**: `/workspace/submission/manifest.json` must exist (`<= 1 MiB`), validate against `/workspace/contracts/schemas/manifest.schema.json`, and match the configured `resource_prefix`.
+4. **`service_reachable`**: `GET /health/live` and `GET /health/ready` against `manifest.service_url` must return HTTP `200`.
+
+In addition to the prerequisite gates and point weights above, the verifier applies three score caps if critical runtime or lifecycle invariants are violated:
+
+- **Accepted write loss or corruption (`accepted_write_loss`, score cap: `49`)**: Applied if any settlement creation or ledger entry write that returned HTTP `201`/`202` is lost or corrupted in PostgreSQL or the rebuilt projection during normal workflow execution, SQS outage recovery, or RDS reboot recovery.
+- **Critical authorization escalation (`auth_escalation`, score cap: `49`)**: Applied if an unauthenticated request or an under-scoped token (`read`, `write`, or `admin` outside its permitted routes) is accepted, or if database passwords or OAuth client secrets are leaked in CloudWatch Logs.
+- **Teardown resource leak (`cleanup_leak`, score cap: `79`)**: Applied if `destroy.sh` exits non-zero, leaves managed resources in `terraform.tfstate` or leaked trial resources in the AWS account, or deletes/disables any pre-existing baseline resource.
+

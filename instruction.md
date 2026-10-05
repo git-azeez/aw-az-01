@@ -29,11 +29,12 @@ Place your deliverables in `/workspace/submission/`:
 ├── destroy.sh
 ├── manifest.json
 └── infra/
-    └── *.tf
+    └── *.tf (or *.tofu)
 ```
 
 What each file is responsible for:
 
 - `deploy.sh` initializes and applies the Terraform/OpenTofu configuration in `/workspace/submission/infra` with local state (`infra/terraform.tfstate`), writes `/workspace/submission/manifest.json` (max 1 MiB) from your Terraform outputs, and polls `GET /health/ready` until the service responds with HTTP 200. Re-running `deploy.sh` must converge cleanly without replacing the RDS instance or losing committed rows, and running it after a fault test deletes a resource (such as the main SQS queue) must recreate and re-wire that resource. Timeout: 720 seconds; max combined stdout/stderr: 8 MiB.
-- `destroy.sh` destroys all AWS resources created for the current `resource_prefix` while leaving any pre-existing baseline resources untouched. Timeout: 900 seconds; max combined stdout/stderr: 8 MiB.
-- `infra/` contains your `.tf` files. All scored AWS resources and IAM policies must be managed in `infra/terraform.tfstate`, not created imperatively via `aws` CLI commands inside shell scripts.
+- `destroy.sh` destroys all AWS resources created for the current `resource_prefix` through Terraform or OpenTofu while leaving any pre-existing baseline resources untouched. Timeout: 900 seconds; max combined stdout/stderr: 8 MiB.
+- `infra/` contains your `.tf` or `.tofu` files. All required AWS resources and IAM policies must be managed in `infra/terraform.tfstate`, not created imperatively via `aws` CLI commands inside shell scripts.
+

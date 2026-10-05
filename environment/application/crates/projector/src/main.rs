@@ -123,14 +123,14 @@ async fn handle_event(state: Arc<ProjectorState>, payload: Value) -> Result<Valu
             Ok(updated) => {
                 if updated {
                     applied += 1;
+                    if let Some(client) = &state.redis_client {
+                        if let Ok(mut conn) = client.get_multiplexed_async_connection().await {
+                            let key = valkey_settlement_key(envelope.aggregate_id);
+                            let _: redis::RedisResult<i64> = conn.del(&key).await;
+                        }
+                    }
                 } else {
                     duplicates += 1;
-                }
-                if let Some(client) = &state.redis_client {
-                    if let Ok(mut conn) = client.get_multiplexed_async_connection().await {
-                        let key = valkey_settlement_key(envelope.aggregate_id);
-                        let _: redis::RedisResult<i64> = conn.del(&key).await;
-                    }
                 }
                 info!(
                     settlement_id = %envelope.aggregate_id,

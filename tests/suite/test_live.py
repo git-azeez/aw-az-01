@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import httpx
 
 from .conftest import VerifierContext
-from .helpers import boto_client, resolve_service_url
+from .helpers import boto_client, resolve_service_url, verify_iam_roles_and_policies
 
 
 def _run_block(ctx: VerifierContext, block_id: str, fn) -> None:
@@ -57,6 +58,17 @@ def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
         assert int(svc["desiredCount"]) >= 2
         assert int(svc["runningCount"]) >= 2
 
+        td_live = ecs.describe_task_definition(
+            taskDefinition=m["compute"]["task_definition_arn"]
+        )["taskDefinition"]
+        assert td_live.get("executionRoleArn") == m["iam"]["ecs_execution_role_arn"], (
+            f"Live ECS task definition executionRoleArn ({td_live.get('executionRoleArn')}) does not match manifest"
+        )
+        assert td_live.get("taskRoleArn") == m["iam"]["ecs_task_role_arn"], (
+            f"Live ECS task definition taskRoleArn ({td_live.get('taskRoleArn')}) does not match manifest"
+        )
+        assert str(td_live.get("networkMode", "")).lower() == "awsvpc"
+
         task_arns = ecs.list_tasks(
             cluster=m["compute"]["cluster_name"],
             serviceName=m["compute"]["service_name"],
@@ -86,7 +98,7 @@ def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
                     instances_seen.add(inst)
         assert len(instances_seen) >= 1
 
-        return f"ALB and {len(task_arns)} running ECS tasks verified across subnets"
+        return f"ALB and {len(task_arns)} running ECS tasks with verified role bindings across subnets"
 
     _run_block(ctx, "live.compute_ingress", _check)
 
@@ -120,6 +132,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
         assert db_inst["Engine"] == "postgres"
         assert db_inst.get("DBInstanceStatus") == "available"
 
+        msg_kms_arn = m["kms"]["messaging_arn"]
+        msg_kms_ids = {msg_kms_arn, msg_kms_arn.rsplit("/", 1)[-1]}
         q_attrs = sqs.get_queue_attributes(
             QueueUrl=m["messaging"]["queue_url"],
             AttributeNames=["All"],
@@ -132,14 +146,28 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
         assert int(q_attrs.get("ReceiveMessageWaitTimeSeconds", 0)) == 2
         assert int(q_attrs.get("MessageRetentionPeriod", 0)) == 172800
         assert int(dlq_attrs.get("MessageRetentionPeriod", 0)) == 1209600
+        assert q_attrs.get("KmsMasterKeyId") in msg_kms_ids, (
+            f"Live main SQS queue KmsMasterKeyId ({q_attrs.get('KmsMasterKeyId')}) does not match messaging KMS key"
+        )
+        assert dlq_attrs.get("KmsMasterKeyId") in msg_kms_ids, (
+            f"Live DLQ KmsMasterKeyId ({dlq_attrs.get('KmsMasterKeyId')}) does not match messaging KMS key"
+        )
         redrive = json.loads(q_attrs.get("RedrivePolicy", "{}"))
         assert redrive.get("deadLetterTargetArn") == dlq_attrs.get("QueueArn")
         assert int(redrive.get("maxReceiveCount", 0)) == 4
 
-        for wkey in ("projector", "outbox_relay", "audit_archiver"):
+        worker_roles = (
+            ("projector", "projector_role_arn"),
+            ("outbox_relay", "relay_role_arn"),
+            ("audit_archiver", "archiver_role_arn"),
+        )
+        for wkey, rkey in worker_roles:
             fn_name = m["workers"][wkey]["function_name"]
             fn_cfg = lam.get_function_configuration(FunctionName=fn_name)
             assert fn_cfg["PackageType"] == "Image"
+            assert fn_cfg.get("Role") == m["iam"][rkey], (
+                f"Live Lambda {fn_name} Role ({fn_cfg.get('Role')}) does not match {m['iam'][rkey]}"
+            )
 
         relay_cfg = lam.get_function_configuration(
             FunctionName=m["workers"]["outbox_relay"]["function_name"]
@@ -157,12 +185,13 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
         assert int(esm.get("BatchSize", 0)) == 5
         assert "ReportBatchItemFailures" in (esm.get("FunctionResponseTypes") or [])
 
-        for skey, expected_fn in (
-            ("outbox_schedule_name", m["workers"]["outbox_relay"]["function_arn"]),
-            ("archive_schedule_name", m["workers"]["audit_archiver"]["function_arn"]),
+        for skey, expected_fn, expected_rate in (
+            ("outbox_schedule_name", m["workers"]["outbox_relay"]["function_arn"], "rate(1 minute)"),
+            ("archive_schedule_name", m["workers"]["audit_archiver"]["function_arn"], "rate(5 minutes)"),
         ):
             sched = scheduler.get_schedule(Name=m["schedules"][skey])
             assert sched["State"] == "ENABLED"
+            assert sched.get("ScheduleExpression") == expected_rate
             assert sched["Target"]["Arn"] == expected_fn
             assert sched["Target"]["RoleArn"] == m["iam"]["scheduler_role_arn"]
 
@@ -175,7 +204,10 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
         pitr = ddb.describe_continuous_backups(TableName=m["projections"]["table_name"])[
             "ContinuousBackupsDescription"
         ]
-        assert pitr.get("ContinuousBackupsStatus") in {"ENABLED", "DISABLED"}
+        pitr_status = (pitr.get("PointInTimeRecoveryDescription") or {}).get("PointInTimeRecoveryStatus")
+        assert pitr.get("ContinuousBackupsStatus") == "ENABLED" and pitr_status in {"ENABLED", None}, (
+            f"Live DynamoDB PITR must be ENABLED, got {pitr}"
+        )
 
         rep_groups = ec.describe_replication_groups(
             ReplicationGroupId=m["cache"]["cluster_id"],
@@ -193,18 +225,27 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
 
         ver = s3.get_bucket_versioning(Bucket=m["audit"]["bucket_name"])
         assert ver.get("Status") == "Enabled"
-        try:
-            enc = s3.get_bucket_encryption(Bucket=m["audit"]["bucket_name"])
-            rules = enc.get("ServerSideEncryptionConfiguration", {}).get("Rules", [])
-            if rules:
-                algo = rules[0].get("ApplyServerSideEncryptionByDefault", {}).get("SSEAlgorithm")
-                assert algo in {"aws:kms", "AES256"}
-        except Exception:  # noqa: BLE001
-            pass
-        pab = s3.get_public_access_block(Bucket=m["audit"]["bucket_name"])["PublicAccessBlockConfiguration"]
-        assert all(pab.get(k) is True for k in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets"))
 
-        return "Live RDS, SQS+DLQ, 3 Lambdas, Scheduler, DynamoDB (AccountIndex+PITR), Valkey, and S3 verified"
+        audit_kms_arn = m["kms"]["audit_arn"]
+        audit_kms_ids = {audit_kms_arn, audit_kms_arn.rsplit("/", 1)[-1]}
+        enc = s3.get_bucket_encryption(Bucket=m["audit"]["bucket_name"])
+        rules = enc.get("ServerSideEncryptionConfiguration", {}).get("Rules", [])
+        assert rules, "Live S3 bucket encryption has no rules"
+        default_sse = rules[0].get("ApplyServerSideEncryptionByDefault", {})
+        assert default_sse.get("SSEAlgorithm") == "aws:kms", (
+            f"Live S3 bucket must use SSEAlgorithm='aws:kms', got {default_sse.get('SSEAlgorithm')}"
+        )
+        assert default_sse.get("KMSMasterKeyID") in audit_kms_ids, (
+            f"Live S3 bucket KMSMasterKeyID ({default_sse.get('KMSMasterKeyID')}) does not match audit KMS key"
+        )
+
+        pab = s3.get_public_access_block(Bucket=m["audit"]["bucket_name"])["PublicAccessBlockConfiguration"]
+        assert all(
+            pab.get(k) is True
+            for k in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")
+        )
+
+        return "Live RDS, SQS+DLQ KMS, 3 Lambdas, Scheduler, DynamoDB (AccountIndex+PITR), Valkey, and S3 KMS verified"
 
     _run_block(ctx, "live.data_event_graph", _check)
 
@@ -218,19 +259,115 @@ def test_live_security(ctx: VerifierContext) -> None:
         cognito = boto_client("cognito-idp", ctx.config)
         logs = boto_client("logs", ctx.config)
 
-        role_names = [arn.split("/")[-1] for arn in m["iam"].values()]
-        assert len(set(role_names)) == 6
-        for rname in role_names:
-            role = iam.get_role(RoleName=rname)["Role"]
-            assert role["Arn"] in m["iam"].values()
-            inline_names = iam.list_role_policies(RoleName=rname)["PolicyNames"]
-            assert inline_names, f"Role {rname} has no inline policies"
+        found_groups = {
+            lg["logGroupName"]: lg
+            for lg in logs.describe_log_groups().get("logGroups", [])
+        }
+        for lg_name in m["logs"].values():
+            assert lg_name in found_groups, f"Live CloudWatch log group {lg_name} missing"
+            ret = found_groups[lg_name].get("retentionInDays")
+            assert ret is not None and int(ret) >= 14, (
+                f"Live CloudWatch log group {lg_name} retentionInDays must be >= 14, got {ret}"
+            )
+        log_group_arns = {name: str(lg.get("arn") or "") for name, lg in found_groups.items()}
 
+        role_trust_docs: dict[str, Any] = {}
+        role_policy_docs: dict[str, list[dict[str, Any]]] = {}
+        for arn in m["iam"].values():
+            rname = arn.split("/")[-1]
+            role = iam.get_role(RoleName=rname)["Role"]
+            assert role["Arn"] == arn
+            role_trust_docs[arn] = role.get("AssumeRolePolicyDocument")
+
+            docs: list[dict[str, Any]] = []
+            for pol_name in iam.list_role_policies(RoleName=rname).get("PolicyNames", []):
+                pol_resp = iam.get_role_policy(RoleName=rname, PolicyName=pol_name)
+                docs.append(pol_resp.get("PolicyDocument"))
+            for att in iam.list_attached_role_policies(RoleName=rname).get("AttachedPolicies", []):
+                pol_arn = att.get("PolicyArn")
+                if pol_arn:
+                    pmeta = iam.get_policy(PolicyArn=pol_arn)["Policy"]
+                    pver = iam.get_policy_version(
+                        PolicyArn=pol_arn,
+                        VersionId=pmeta["DefaultVersionId"],
+                    )["PolicyVersion"]
+                    docs.append(pver.get("Document"))
+            assert docs, f"Live IAM role {rname} has no inline or attached policies"
+            role_policy_docs[arn] = docs
+
+        verify_iam_roles_and_policies(
+            manifest=m,
+            role_trust_docs=role_trust_docs,
+            role_policy_docs=role_policy_docs,
+            log_group_arns=log_group_arns,
+            label="Live IAM",
+        )
+
+        # Also verify via live IAM policy simulation when supported by the endpoint
+        sim_checks = [
+            (m["iam"]["ecs_task_role_arn"], "sqs:SendMessage", m["messaging"]["queue_arn"], "allowed"),
+            (m["iam"]["ecs_task_role_arn"], "dynamodb:PutItem", m["projections"]["table_arn"], "denied"),
+            (m["iam"]["projector_role_arn"], "dynamodb:PutItem", m["projections"]["table_arn"], "allowed"),
+            (m["iam"]["projector_role_arn"], "sqs:SendMessage", m["messaging"]["queue_arn"], "denied"),
+            (m["iam"]["relay_role_arn"], "sqs:SendMessage", m["messaging"]["queue_arn"], "allowed"),
+            (m["iam"]["relay_role_arn"], "dynamodb:PutItem", m["projections"]["table_arn"], "denied"),
+            (
+                m["iam"]["archiver_role_arn"],
+                "s3:PutObject",
+                f"{m['audit']['bucket_arn']}/{str(m['audit']['prefix']).lstrip('/')}probe.ndjson",
+                "allowed",
+            ),
+            (m["iam"]["archiver_role_arn"], "sqs:SendMessage", m["messaging"]["queue_arn"], "denied"),
+            (
+                m["iam"]["scheduler_role_arn"],
+                "lambda:InvokeFunction",
+                m["workers"]["outbox_relay"]["function_arn"],
+                "allowed",
+            ),
+            (
+                m["iam"]["scheduler_role_arn"],
+                "lambda:InvokeFunction",
+                m["workers"]["projector"]["function_arn"],
+                "denied",
+            ),
+            (m["iam"]["ecs_execution_role_arn"], "sqs:SendMessage", m["messaging"]["queue_arn"], "denied"),
+        ]
+        for role_arn, action, resource, expected in sim_checks:
+            sim = iam.simulate_principal_policy(
+                PolicySourceArn=role_arn,
+                ActionNames=[action],
+                ResourceArns=[resource],
+            )
+            eval_res = sim.get("EvaluationResults") or []
+            if eval_res:
+                decision = str(eval_res[0].get("EvalDecision", "")).lower()
+                if expected == "allowed":
+                    assert decision == "allowed", f"IAM simulation expected allowed for {role_arn} {action}, got {decision}"
+                else:
+                    assert decision in {"implicitdeny", "explicitdeny", "denied"}, (
+                        f"IAM simulation expected deny for {role_arn} {action}, got {decision}"
+                    )
+
+        assert len(set(m["kms"].values())) == 4, "Expected 4 distinct live KMS key ARNs"
+        live_key_ids: set[str] = set()
         for k_arn in m["kms"].values():
             meta = kms.describe_key(KeyId=k_arn)["KeyMetadata"]
-            assert meta["Enabled"] is True
+            assert meta["Enabled"] is True and meta.get("KeyState") == "Enabled"
             rot = kms.get_key_rotation_status(KeyId=k_arn)
-            assert isinstance(rot.get("KeyRotationEnabled"), bool)
+            assert rot.get("KeyRotationEnabled") is True, (
+                f"Live KMS key {k_arn} must have KeyRotationEnabled=True, got {rot}"
+            )
+            live_key_ids.add(str(meta["KeyId"]))
+
+        aliases = kms.list_aliases().get("Aliases", [])
+        aliased_key_ids = {
+            str(a.get("TargetKeyId"))
+            for a in aliases
+            if a.get("TargetKeyId") and str(a.get("AliasName", "")).startswith("alias/")
+        }
+        assert live_key_ids.issubset(aliased_key_ids), (
+            f"All 4 live KMS keys must have a live KMS alias; missing {live_key_ids - aliased_key_ids}"
+        )
 
         pool_id = m["auth"]["user_pool_id"]
         rs = cognito.describe_resource_server(
@@ -249,16 +386,7 @@ def test_live_security(ctx: VerifierContext) -> None:
             desc = cognito.describe_user_pool_client(UserPoolId=pool_id, ClientId=cid)["UserPoolClient"]
             assert desc.get("AllowedOAuthScopes") == [expected_scope]
 
-        found_groups = {
-            lg["logGroupName"]: lg
-            for lg in logs.describe_log_groups().get("logGroups", [])
-        }
-        for lg_name in m["logs"].values():
-            assert lg_name in found_groups, f"Live CloudWatch log group {lg_name} missing"
-            ret = found_groups[lg_name].get("retentionInDays")
-            if ret is not None:
-                assert int(ret) >= 14
-
-        return "Live IAM roles, KMS rotation, Cognito scopes, and CloudWatch log groups verified"
+        return "Live IAM trust & least-privilege policies, 4 KMS keys+rotation+aliases, Cognito scopes, and 4 log groups verified"
 
     _run_block(ctx, "live.security", _check)
+

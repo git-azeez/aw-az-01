@@ -5,10 +5,6 @@ resource "aws_kms_key" "database" {
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-database-kms"
   })
-
-  lifecycle {
-    ignore_changes = [enable_key_rotation, deletion_window_in_days]
-  }
 }
 
 resource "aws_kms_alias" "database" {
@@ -23,10 +19,6 @@ resource "aws_kms_key" "messaging" {
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-messaging-kms"
   })
-
-  lifecycle {
-    ignore_changes = [enable_key_rotation, deletion_window_in_days]
-  }
 }
 
 resource "aws_kms_alias" "messaging" {
@@ -41,10 +33,6 @@ resource "aws_kms_key" "projection" {
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-projection-kms"
   })
-
-  lifecycle {
-    ignore_changes = [enable_key_rotation, deletion_window_in_days]
-  }
 }
 
 resource "aws_kms_alias" "projection" {
@@ -59,10 +47,6 @@ resource "aws_kms_key" "audit" {
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-audit-kms"
   })
-
-  lifecycle {
-    ignore_changes = [enable_key_rotation, deletion_window_in_days]
-  }
 }
 
 resource "aws_kms_alias" "audit" {
@@ -74,40 +58,24 @@ resource "aws_cloudwatch_log_group" "api" {
   name              = "/clearledger/${local.prefix}/api"
   retention_in_days = 14
   tags              = local.common_tags
-
-  lifecycle {
-    ignore_changes = [retention_in_days]
-  }
 }
 
 resource "aws_cloudwatch_log_group" "projector" {
   name              = "/clearledger/${local.prefix}/projector"
   retention_in_days = 14
   tags              = local.common_tags
-
-  lifecycle {
-    ignore_changes = [retention_in_days]
-  }
 }
 
 resource "aws_cloudwatch_log_group" "relay" {
   name              = "/clearledger/${local.prefix}/outbox-relay"
   retention_in_days = 14
   tags              = local.common_tags
-
-  lifecycle {
-    ignore_changes = [retention_in_days]
-  }
 }
 
 resource "aws_cloudwatch_log_group" "archiver" {
   name              = "/clearledger/${local.prefix}/audit-archiver"
   retention_in_days = 14
   tags              = local.common_tags
-
-  lifecycle {
-    ignore_changes = [retention_in_days]
-  }
 }
 
 resource "aws_cognito_user_pool" "main" {

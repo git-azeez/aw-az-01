@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import uuid
 from datetime import datetime, timezone
@@ -185,7 +186,7 @@ def test_idempotency_and_optimistic_concurrency(ctx: VerifierContext) -> None:
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
         service_url = resolve_service_url(ctx.manifest["service_url"], ctx.config)
-        spec = build_random_settlement_spec(ctx.rng, step_count=2)
+        spec = build_random_settlement_spec(ctx.rng, step_count=3)
         sid = spec["settlementId"]
         idem_create = f"idem-replay-{sid}"
         replays = ctx.rng.randint(5, 8)
@@ -240,18 +241,84 @@ def test_idempotency_and_optimistic_concurrency(ctx: VerifierContext) -> None:
             )
             assert r_stale.status_code == 409
 
+        # Concurrent idempotent replay race on expectedVersion=2 -> v3
+        e2 = spec["entries"][1]
+        idem_e2 = f"idem-e2-race-{e2['entryId']}"
+
+        def _post_same_idem(_: int) -> tuple[int, dict]:
+            with httpx.Client(base_url=service_url, timeout=10.0) as c:
+                r = c.post(
+                    f"/v1/settlements/{sid}/entries",
+                    headers={"Authorization": f"Bearer {tokens['write']}", "Idempotency-Key": idem_e2},
+                    json=e2,
+                )
+                return r.status_code, r.json()
+
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            idem_results = list(pool.map(_post_same_idem, range(6)))
+
+        assert all(code in {200, 202} for code, _ in idem_results), (
+            f"Concurrent idempotent replay returned unexpected status: {idem_results}"
+        )
+        e2_event_ids = {body["eventId"] for _, body in idem_results}
+        assert len(e2_event_ids) == 1, f"Concurrent idempotent requests produced multiple eventIds: {e2_event_ids}"
+        assert all(body["version"] == 3 for _, body in idem_results)
+
+        # Concurrent competing writes racing on expectedVersion=3 -> v4
+        base_e3 = spec["entries"][2]
+        competing_entries = [
+            dict(
+                base_e3,
+                entryId=str(uuid.uuid4()),
+                clearingStage=f"CONCURRENT_RACE_{idx}",
+                memo=f"Concurrent contender {idx}",
+                expectedVersion=3,
+            )
+            for idx in range(5)
+        ]
+
+        def _post_competing(entry_payload: dict) -> tuple[int, dict]:
+            with httpx.Client(base_url=service_url, timeout=10.0) as c:
+                r = c.post(
+                    f"/v1/settlements/{sid}/entries",
+                    headers={
+                        "Authorization": f"Bearer {tokens['write']}",
+                        "Idempotency-Key": f"idem-race-v4-{entry_payload['entryId']}",
+                    },
+                    json=entry_payload,
+                )
+                return r.status_code, r.json()
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            race_results = list(pool.map(_post_competing, competing_entries))
+
+        winners = [(code, body, pay) for (code, body), pay in zip(race_results, competing_entries) if code == 202]
+        conflicts = [code for code, _ in race_results if code == 409]
+        assert len(winners) == 1 and len(conflicts) == 4, (
+            f"Expected exactly 1 winner (202) and 4 conflicts (409) in concurrent version race, got {[c for c, _ in race_results]}"
+        )
+        winning_entry = winners[0][2]
+        assert winners[0][1]["version"] == 4
+
         with pg_connect(ctx.manifest, ctx.config) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM clearledger.events WHERE settlement_id = %s", (sid,))
-                assert cur.fetchone()[0] == 2
+                assert cur.fetchone()[0] == 4
+
+        with httpx.Client(base_url=service_url, timeout=10.0) as client:
+            def _v4_projected() -> bool:
+                r = client.get(f"/v1/settlements/{sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
+                return r.status_code == 200 and r.json().get("version") == 4
+
+            wait_until(_v4_projected, timeout_sec=35.0, interval_sec=0.8, description="concurrent winner v4 projected")
 
         ctx.committed_settlements[sid] = {
             "spec": spec,
-            "expected_version": 2,
-            "last_status": e1["status"],
-            "last_stage": e1["clearingStage"],
+            "expected_version": 4,
+            "last_status": winning_entry["status"],
+            "last_stage": winning_entry["clearingStage"],
         }
-        return f"Verified {replays} idempotent replays, payload mismatch 409, and stale version 409"
+        return f"Verified {replays} sequential + 6 concurrent idempotent replays, payload mismatch 409, and 5-way optimistic concurrency race"
 
     _run_block(ctx, "functional.idempotency_concurrency", _check)
 
@@ -332,25 +399,31 @@ def test_backlog_accumulation_and_drain(ctx: VerifierContext) -> None:
 
 
 def test_duplicate_delivery_and_dlq_isolation(ctx: VerifierContext) -> None:
-    """Scored block: Duplicate and invalid messages (6 points) — async.duplicate_and_dlq."""
+    """Scored block: Duplicate, out-of-order, concurrent, and invalid messages (6 points) — async.duplicate_and_dlq."""
     def _check() -> str:
         tokens = _ensure_tokens(ctx)
         m = ctx.manifest
         sqs = boto_client("sqs", ctx.config)
+        ddb = boto_client("dynamodb", ctx.config)
+        rclient = valkey_connect(m, ctx.config)
         service_url = resolve_service_url(m["service_url"], ctx.config)
+        projector_fn = m["workers"]["projector"]["function_name"]
 
         settlement_id, meta = next(iter(ctx.committed_settlements.items()))
         with pg_connect(m, ctx.config) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT payload FROM clearledger.events WHERE settlement_id = %s ORDER BY aggregate_version DESC LIMIT 1",
+                    "SELECT payload FROM clearledger.events WHERE settlement_id = %s ORDER BY aggregate_version ASC",
                     (settlement_id,),
                 )
-                row = cur.fetchone()
-                assert row is not None
-                latest_envelope = row[0] if isinstance(row[0], str) else json.dumps(row[0])
+                rows = cur.fetchall()
+                assert len(rows) >= 2
+                oldest_envelope = rows[0][0] if isinstance(rows[0][0], str) else json.dumps(rows[0][0])
+                latest_envelope = rows[-1][0] if isinstance(rows[-1][0], str) else json.dumps(rows[-1][0])
 
+        # Re-deliver both the latest event (duplicate) and v1 (stale out-of-order event) over SQS
         sqs.send_message(QueueUrl=m["messaging"]["queue_url"], MessageBody=latest_envelope)
+        sqs.send_message(QueueUrl=m["messaging"]["queue_url"], MessageBody=oldest_envelope)
 
         poison_marker = f"poison-{uuid.uuid4()}"
         poison_body = json.dumps({"schemaVersion": "1.0", "poisonMarker": poison_marker, "invalidEnvelope": True})
@@ -386,8 +459,92 @@ def test_duplicate_delivery_and_dlq_isolation(ctx: VerifierContext) -> None:
 
             wait_until(_fresh_projected, timeout_sec=40.0, interval_sec=1.0, description="valid messages projected")
 
+            # Verify duplicate + stale v1 SQS delivery did not regress settlement_id
+            rclient.delete(f"clearledger:settlement:{settlement_id}")
             r_dup = client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {tokens['read']}"})
-            assert r_dup.status_code == 200 and r_dup.json()["version"] == meta["expected_version"]
+            assert r_dup.status_code == 200
+            dup_body = r_dup.json()
+            assert dup_body["version"] == meta["expected_version"], (
+                f"Stale SQS delivery regressed version from {meta['expected_version']} to {dup_body['version']}"
+            )
+            assert dup_body["status"] == meta["last_status"] and dup_body["clearingStage"] == meta["last_stage"]
+
+            # Deterministic out-of-order (v3 -> v1 -> v2) and concurrent projector race on fresh_id
+            with pg_connect(m, ctx.config) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT payload FROM clearledger.events WHERE settlement_id = %s ORDER BY aggregate_version ASC",
+                        (fresh_id,),
+                    )
+                    fresh_rows = cur.fetchall()
+                    assert len(fresh_rows) == 3
+                    env_v1, env_v2, env_v3 = [
+                        r[0] if isinstance(r[0], str) else json.dumps(r[0]) for r in fresh_rows
+                    ]
+
+            pk = f"SETTLEMENT#{fresh_id}"
+            existing_items = ddb.query(
+                TableName=m["projections"]["table_name"],
+                KeyConditionExpression="PK = :pk",
+                ExpressionAttributeValues={":pk": {"S": pk}},
+            ).get("Items", [])
+            for item in existing_items:
+                ddb.delete_item(
+                    TableName=m["projections"]["table_name"],
+                    Key={"PK": item["PK"], "SK": item["SK"]},
+                )
+            rclient.delete(f"clearledger:settlement:{fresh_id}")
+
+            # 1) Deliver v3 first, then v1, then v2 out of order
+            for step_label, raw_env in (("v3", env_v3), ("v1", env_v1), ("v2", env_v2)):
+                res = invoke_lambda_sync(
+                    projector_fn,
+                    {"Records": [{"messageId": f"ooo-{step_label}-{uuid.uuid4()}", "body": raw_env}]},
+                )
+                assert not res.get("batchItemFailures"), f"Out-of-order step {step_label} failed: {res}"
+
+            rclient.delete(f"clearledger:settlement:{fresh_id}")
+            r_ooo = client.get(f"/v1/settlements/{fresh_id}", headers={"Authorization": f"Bearer {tokens['read']}"})
+            assert r_ooo.status_code == 200
+            ooo_proj = r_ooo.json()
+            assert ooo_proj["version"] == 3, f"Out-of-order v1/v2 overwrote v3 projection: {ooo_proj}"
+            assert ooo_proj["status"] == spec["entries"][-1]["status"]
+            assert ooo_proj["clearingStage"] == spec["entries"][-1]["clearingStage"]
+            assert ooo_proj["entryCount"] == 2
+            assert ooo_proj["accountId"] == spec["accountId"] and ooo_proj["reference"] == spec["reference"]
+            assert ooo_proj["debitParty"] == spec["debitParty"] and ooo_proj["creditParty"] == spec["creditParty"]
+
+            # 2) Concurrent projector Lambda invocations racing scrambled event batches
+            scrambled_batches = [
+                [env_v3, env_v1],
+                [env_v2, env_v1],
+                [env_v1, env_v2, env_v3],
+                [env_v1],
+                [env_v2],
+                [env_v3, env_v2, env_v1],
+            ]
+
+            def _invoke_batch(batch: list[str]) -> dict:
+                records = [{"messageId": f"race-{uuid.uuid4()}", "body": b} for b in batch]
+                return invoke_lambda_sync(projector_fn, {"Records": records})
+
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                batch_results = list(pool.map(_invoke_batch, scrambled_batches))
+            assert all(not br.get("batchItemFailures") for br in batch_results), (
+                f"Concurrent projector race had batch failures: {batch_results}"
+            )
+
+            rclient.delete(f"clearledger:settlement:{fresh_id}")
+            r_race = client.get(f"/v1/settlements/{fresh_id}", headers={"Authorization": f"Bearer {tokens['read']}"})
+            assert r_race.status_code == 200
+            race_proj = r_race.json()
+            assert race_proj["version"] == 3, f"Concurrent projector race regressed version: {race_proj}"
+            assert race_proj["status"] == spec["entries"][-1]["status"]
+            assert race_proj["clearingStage"] == spec["entries"][-1]["clearingStage"]
+
+            r_tl = client.get(f"/v1/settlements/{fresh_id}/ledger", headers={"Authorization": f"Bearer {tokens['read']}"})
+            assert r_tl.status_code == 200
+            assert [e["version"] for e in r_tl.json()["events"]] == [1, 2, 3]
 
         def _poison_in_dlq() -> bool:
             resp = sqs.receive_message(
@@ -405,9 +562,10 @@ def test_duplicate_delivery_and_dlq_isolation(ctx: VerifierContext) -> None:
             "last_status": spec["entries"][-1]["status"],
             "last_stage": spec["entries"][-1]["clearingStage"],
         }
-        return "Duplicate SQS event ignored idempotently and poison message isolated to DLQ"
+        return "Verified duplicate, out-of-order (v3->v1->v2), and concurrent SQS projection safety plus DLQ isolation"
 
     _run_block(ctx, "async.duplicate_and_dlq", _check)
+
 
 
 def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:

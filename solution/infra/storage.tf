@@ -86,7 +86,6 @@ resource "aws_dynamodb_table" "projections" {
 
   lifecycle {
     ignore_changes = [
-      point_in_time_recovery,
       server_side_encryption,
     ]
   }

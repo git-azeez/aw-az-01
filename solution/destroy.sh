@@ -10,6 +10,7 @@ CONFIG_FILE="/workspace/config/config.json"
 SUBMISSION_DIR="/workspace/submission"
 INFRA_DIR="${SUBMISSION_DIR}/infra"
 STATE_FILE="${INFRA_DIR}/terraform.tfstate"
+MANIFEST_FILE="${SUBMISSION_DIR}/manifest.json"
 TFVARS_FILE="${INFRA_DIR}/config.auto.tfvars.json"
 
 if [[ ! -f "${CONFIG_FILE}" ]]; then
@@ -36,31 +37,23 @@ export TF_IN_AUTOMATION=1
 cp "${CONFIG_FILE}" "${TFVARS_FILE}"
 
 pushd "${INFRA_DIR}" >/dev/null
+
 "${IAC_BIN}" init -input=false -no-color >/dev/null
 
-if [[ -f "${STATE_FILE}" ]]; then
-  set +e
-  "${IAC_BIN}" destroy \
-    -input=false \
-    -auto-approve \
-    -no-color \
-    -state="${STATE_FILE}"
-  first_rc=$?
-  set -e
-  if (( first_rc != 0 )); then
-    "${IAC_BIN}" apply -refresh-only -input=false -auto-approve -no-color -state="${STATE_FILE}" || true
-    "${IAC_BIN}" destroy \
-      -input=false \
-      -auto-approve \
-      -no-color \
-      -state="${STATE_FILE}"
-  fi
+"${IAC_BIN}" destroy \
+  -input=false \
+  -auto-approve \
+  -no-color \
+  -state="${STATE_FILE}"
+
+remaining="$("${IAC_BIN}" state list -state="${STATE_FILE}" 2>/dev/null || true)"
+if [[ -n "${remaining}" ]]; then
+  echo "Managed resources remain in state after destroy:" >&2
+  echo "${remaining}" >&2
+  exit 1
 fi
+
 popd >/dev/null
 
-PREFIX="$(jq -r '.resource_prefix' "${CONFIG_FILE}")"
-for lg in $(aws --endpoint-url "${AWS_ENDPOINT_URL}" logs describe-log-groups --query 'logGroups[].logGroupName' --output text 2>/dev/null || true); do
-  if [[ "${lg}" == *"${PREFIX}"* ]]; then
-    aws --endpoint-url "${AWS_ENDPOINT_URL}" logs delete-log-group --log-group-name "${lg}" >/dev/null 2>&1 || true
-  fi
-done
+rm -f "${MANIFEST_FILE}"
+echo "ClearLedger deployment destroyed"

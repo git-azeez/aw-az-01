@@ -441,6 +441,12 @@ pub fn valkey_settlement_key(settlement_id: Uuid) -> String {
     format!("clearledger:settlement:{settlement_id}")
 }
 
+fn is_ddb_conditional_failure<E: std::fmt::Debug>(
+    err: &aws_sdk_dynamodb::error::SdkError<E>,
+) -> bool {
+    format!("{err:?}").contains("ConditionalCheckFailed")
+}
+
 pub async fn apply_event_to_dynamodb(
     ddb: &DynamoDbClient,
     table_name: &str,
@@ -497,164 +503,250 @@ pub async fn apply_event_to_dynamodb(
         event_item.insert("memo".to_string(), AttributeValue::S(memo.clone()));
     }
 
-    ddb.put_item()
+    if let Err(err) = ddb
+        .put_item()
         .table_name(table_name)
         .set_item(Some(event_item))
+        .condition_expression("attribute_not_exists(PK) AND attribute_not_exists(SK)")
         .send()
         .await
-        .context("failed to put event item in DynamoDB")?;
-
-    let existing = ddb
-        .get_item()
-        .table_name(table_name)
-        .key("PK", AttributeValue::S(pk.clone()))
-        .key("SK", AttributeValue::S(projection_state_sk().to_string()))
-        .consistent_read(true)
-        .send()
-        .await
-        .context("failed reading current projection state from DynamoDB")?
-        .item;
-
-    let current_version = existing
-        .as_ref()
-        .and_then(|item| item.get("version"))
-        .and_then(|v| v.as_n().ok())
-        .and_then(|n| n.parse::<i32>().ok())
-        .unwrap_or(0);
-
-    if envelope.aggregate_version <= current_version {
-        return Ok(false);
-    }
-
-    let account_id = existing
-        .as_ref()
-        .and_then(|item| item.get("account_id"))
-        .and_then(|v| v.as_s().ok())
-        .cloned()
-        .unwrap_or_else(|| envelope.data.account_id.clone());
-
-    let reference = envelope
-        .data
-        .reference
-        .clone()
-        .or_else(|| {
-            existing
-                .as_ref()
-                .and_then(|item| item.get("reference"))
-                .and_then(|v| v.as_s().ok())
-                .cloned()
-        })
-        .unwrap_or_else(|| "UNKNOWN".to_string());
-
-    let debit_party = envelope
-        .data
-        .debit_party
-        .clone()
-        .or_else(|| {
-            existing
-                .as_ref()
-                .and_then(|item| item.get("debit_party"))
-                .and_then(|v| v.as_s().ok())
-                .cloned()
-        })
-        .unwrap_or_else(|| "UNKNOWN".to_string());
-
-    let credit_party = envelope
-        .data
-        .credit_party
-        .clone()
-        .or_else(|| {
-            existing
-                .as_ref()
-                .and_then(|item| item.get("credit_party"))
-                .and_then(|v| v.as_s().ok())
-                .cloned()
-        })
-        .unwrap_or_else(|| "UNKNOWN".to_string());
-
-    let entry_count = if envelope.aggregate_version <= 1 {
-        0
-    } else {
-        envelope.aggregate_version - 1
-    };
-
-    let mut state_item = HashMap::new();
-    state_item.insert("PK".to_string(), AttributeValue::S(pk));
-    state_item.insert(
-        "SK".to_string(),
-        AttributeValue::S(projection_state_sk().to_string()),
-    );
-    state_item.insert(
-        "GSI1PK".to_string(),
-        AttributeValue::S(format!("ACCOUNT#{account_id}")),
-    );
-    state_item.insert(
-        "GSI1SK".to_string(),
-        AttributeValue::S(format!("SETTLEMENT#{}", envelope.aggregate_id)),
-    );
-    state_item.insert(
-        "settlement_id".to_string(),
-        AttributeValue::S(envelope.aggregate_id.to_string()),
-    );
-    state_item.insert("account_id".to_string(), AttributeValue::S(account_id));
-    state_item.insert("reference".to_string(), AttributeValue::S(reference));
-    state_item.insert("debit_party".to_string(), AttributeValue::S(debit_party));
-    state_item.insert("credit_party".to_string(), AttributeValue::S(credit_party));
-    state_item.insert(
-        "status".to_string(),
-        AttributeValue::S(envelope.data.status.as_str().to_string()),
-    );
-    state_item.insert(
-        "clearing_stage".to_string(),
-        AttributeValue::S(envelope.data.clearing_stage.clone()),
-    );
-    state_item.insert(
-        "version".to_string(),
-        AttributeValue::N(envelope.aggregate_version.to_string()),
-    );
-    state_item.insert(
-        "entry_count".to_string(),
-        AttributeValue::N(entry_count.to_string()),
-    );
-    state_item.insert(
-        "updated_at".to_string(),
-        AttributeValue::S(envelope.occurred_at.to_rfc3339()),
-    );
-
-    if let Some(entry_id) = envelope.data.entry_id {
-        state_item.insert(
-            "last_entry_id".to_string(),
-            AttributeValue::S(entry_id.to_string()),
-        );
-    } else if let Some(prev_entry) = existing
-        .as_ref()
-        .and_then(|item| item.get("last_entry_id"))
-        .and_then(|v| v.as_s().ok())
     {
+        if !is_ddb_conditional_failure(&err) {
+            return Err(anyhow::Error::new(err).context("failed to put event item in DynamoDB"));
+        }
+    }
+
+    for _attempt in 0..16 {
+        let existing = ddb
+            .get_item()
+            .table_name(table_name)
+            .key("PK", AttributeValue::S(pk.clone()))
+            .key("SK", AttributeValue::S(projection_state_sk().to_string()))
+            .consistent_read(true)
+            .send()
+            .await
+            .context("failed reading current projection state from DynamoDB")?
+            .item;
+
+        let current_version = existing
+            .as_ref()
+            .and_then(|item| item.get("version"))
+            .and_then(|v| v.as_n().ok())
+            .and_then(|n| n.parse::<i32>().ok())
+            .unwrap_or(0);
+
+        if envelope.aggregate_version == current_version {
+            return Ok(false);
+        }
+
+        if envelope.aggregate_version < current_version {
+            if let Some(mut current_item) = existing {
+                let mut backfilled = false;
+                for (field, candidate) in [
+                    ("reference", envelope.data.reference.as_ref()),
+                    ("debit_party", envelope.data.debit_party.as_ref()),
+                    ("credit_party", envelope.data.credit_party.as_ref()),
+                ] {
+                    let is_unknown = current_item
+                        .get(field)
+                        .and_then(|v| v.as_s().ok())
+                        .map(|s| s == "UNKNOWN")
+                        .unwrap_or(true);
+                    if is_unknown {
+                        if let Some(val) = candidate {
+                            current_item
+                                .insert(field.to_string(), AttributeValue::S((*val).clone()));
+                            backfilled = true;
+                        }
+                    }
+                }
+                if !backfilled {
+                    return Ok(false);
+                }
+                match ddb
+                    .put_item()
+                    .table_name(table_name)
+                    .set_item(Some(current_item))
+                    .condition_expression("#version = :expected_version")
+                    .expression_attribute_names("#version", "version")
+                    .expression_attribute_values(
+                        ":expected_version",
+                        AttributeValue::N(current_version.to_string()),
+                    )
+                    .send()
+                    .await
+                {
+                    Ok(_) => return Ok(true),
+                    Err(err) if is_ddb_conditional_failure(&err) => continue,
+                    Err(err) => {
+                        return Err(anyhow::Error::new(err)
+                            .context("failed to backfill metadata on STATE projection in DynamoDB"));
+                    }
+                }
+            }
+            return Ok(false);
+        }
+
+        let account_id = existing
+            .as_ref()
+            .and_then(|item| item.get("account_id"))
+            .and_then(|v| v.as_s().ok())
+            .cloned()
+            .unwrap_or_else(|| envelope.data.account_id.clone());
+
+        let reference = envelope
+            .data
+            .reference
+            .clone()
+            .or_else(|| {
+                existing
+                    .as_ref()
+                    .and_then(|item| item.get("reference"))
+                    .and_then(|v| v.as_s().ok())
+                    .filter(|s| *s != "UNKNOWN")
+                    .cloned()
+            })
+            .unwrap_or_else(|| "UNKNOWN".to_string());
+
+        let debit_party = envelope
+            .data
+            .debit_party
+            .clone()
+            .or_else(|| {
+                existing
+                    .as_ref()
+                    .and_then(|item| item.get("debit_party"))
+                    .and_then(|v| v.as_s().ok())
+                    .filter(|s| *s != "UNKNOWN")
+                    .cloned()
+            })
+            .unwrap_or_else(|| "UNKNOWN".to_string());
+
+        let credit_party = envelope
+            .data
+            .credit_party
+            .clone()
+            .or_else(|| {
+                existing
+                    .as_ref()
+                    .and_then(|item| item.get("credit_party"))
+                    .and_then(|v| v.as_s().ok())
+                    .filter(|s| *s != "UNKNOWN")
+                    .cloned()
+            })
+            .unwrap_or_else(|| "UNKNOWN".to_string());
+
+        let entry_count = if envelope.aggregate_version <= 1 {
+            0
+        } else {
+            envelope.aggregate_version - 1
+        };
+
+        let mut state_item = HashMap::new();
+        state_item.insert("PK".to_string(), AttributeValue::S(pk.clone()));
         state_item.insert(
-            "last_entry_id".to_string(),
-            AttributeValue::S(prev_entry.clone()),
+            "SK".to_string(),
+            AttributeValue::S(projection_state_sk().to_string()),
         );
+        state_item.insert(
+            "GSI1PK".to_string(),
+            AttributeValue::S(format!("ACCOUNT#{account_id}")),
+        );
+        state_item.insert(
+            "GSI1SK".to_string(),
+            AttributeValue::S(format!("SETTLEMENT#{}", envelope.aggregate_id)),
+        );
+        state_item.insert(
+            "settlement_id".to_string(),
+            AttributeValue::S(envelope.aggregate_id.to_string()),
+        );
+        state_item.insert("account_id".to_string(), AttributeValue::S(account_id));
+        state_item.insert("reference".to_string(), AttributeValue::S(reference));
+        state_item.insert("debit_party".to_string(), AttributeValue::S(debit_party));
+        state_item.insert("credit_party".to_string(), AttributeValue::S(credit_party));
+        state_item.insert(
+            "status".to_string(),
+            AttributeValue::S(envelope.data.status.as_str().to_string()),
+        );
+        state_item.insert(
+            "clearing_stage".to_string(),
+            AttributeValue::S(envelope.data.clearing_stage.clone()),
+        );
+        state_item.insert(
+            "version".to_string(),
+            AttributeValue::N(envelope.aggregate_version.to_string()),
+        );
+        state_item.insert(
+            "entry_count".to_string(),
+            AttributeValue::N(entry_count.to_string()),
+        );
+        state_item.insert(
+            "updated_at".to_string(),
+            AttributeValue::S(envelope.occurred_at.to_rfc3339()),
+        );
+
+        if let Some(entry_id) = envelope.data.entry_id {
+            state_item.insert(
+                "last_entry_id".to_string(),
+                AttributeValue::S(entry_id.to_string()),
+            );
+        } else if let Some(prev_entry) = existing
+            .as_ref()
+            .and_then(|item| item.get("last_entry_id"))
+            .and_then(|v| v.as_s().ok())
+        {
+            state_item.insert(
+                "last_entry_id".to_string(),
+                AttributeValue::S(prev_entry.clone()),
+            );
+        }
+
+        if let Some(memo) = &envelope.data.memo {
+            state_item.insert("last_memo".to_string(), AttributeValue::S(memo.clone()));
+        } else if let Some(prev_memo) = existing
+            .as_ref()
+            .and_then(|item| item.get("last_memo"))
+            .and_then(|v| v.as_s().ok())
+        {
+            state_item.insert("last_memo".to_string(), AttributeValue::S(prev_memo.clone()));
+        }
+
+        let put_req = if existing.is_none() {
+            ddb.put_item()
+                .table_name(table_name)
+                .set_item(Some(state_item))
+                .condition_expression("attribute_not_exists(PK) AND attribute_not_exists(SK)")
+        } else {
+            ddb.put_item()
+                .table_name(table_name)
+                .set_item(Some(state_item))
+                .condition_expression("#version = :expected_version AND #version < :new_version")
+                .expression_attribute_names("#version", "version")
+                .expression_attribute_values(
+                    ":expected_version",
+                    AttributeValue::N(current_version.to_string()),
+                )
+                .expression_attribute_values(
+                    ":new_version",
+                    AttributeValue::N(envelope.aggregate_version.to_string()),
+                )
+        };
+
+        match put_req.send().await {
+            Ok(_) => return Ok(true),
+            Err(err) if is_ddb_conditional_failure(&err) => continue,
+            Err(err) => {
+                return Err(
+                    anyhow::Error::new(err).context("failed to put STATE projection in DynamoDB")
+                );
+            }
+        }
     }
 
-    if let Some(memo) = &envelope.data.memo {
-        state_item.insert("last_memo".to_string(), AttributeValue::S(memo.clone()));
-    } else if let Some(prev_memo) = existing
-        .as_ref()
-        .and_then(|item| item.get("last_memo"))
-        .and_then(|v| v.as_s().ok())
-    {
-        state_item.insert("last_memo".to_string(), AttributeValue::S(prev_memo.clone()));
-    }
-
-    ddb.put_item()
-        .table_name(table_name)
-        .set_item(Some(state_item))
-        .send()
-        .await
-        .context("failed to put STATE projection in DynamoDB")?;
-
-    Ok(true)
+    bail!(
+        "exhausted optimistic concurrency retries updating projection state for settlement {}",
+        envelope.aggregate_id
+    )
 }
 
 pub async fn fetch_projection_from_dynamodb(
@@ -1036,11 +1128,6 @@ impl CloudWatchEmit {
         let Some(group) = &self.log_group else {
             return;
         };
-        self.call_logs(
-            "Logs_20140328.CreateLogGroup",
-            json!({ "logGroupName": group }),
-        )
-        .await;
         self.call_logs(
             "Logs_20140328.CreateLogStream",
             json!({

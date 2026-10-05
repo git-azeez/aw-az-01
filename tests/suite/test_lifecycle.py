@@ -4,10 +4,12 @@ import httpx
 
 from .conftest import VerifierContext
 from .helpers import (
+    STATE_PATH,
     SUBMISSION_DIR,
     boto_client,
     diff_inventory,
     get_access_token,
+    load_tfstate,
     pg_connect,
     resolve_service_url,
     run_script,
@@ -108,6 +110,16 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
         base_key = kms.describe_key(KeyId=baseline["kms_key_arn"])["KeyMetadata"]
         assert base_key["KeyState"] == "Enabled", "Baseline KMS key was disabled or scheduled for deletion"
 
+        if STATE_PATH.is_file():
+            remaining_state_res = [
+                r for r in load_tfstate().get("resources", []) if r.get("mode") == "managed"
+            ]
+            if remaining_state_res:
+                ctx.recorder.add_cap("cleanup_leak", 79)
+                raise AssertionError(
+                    f"terraform.tfstate still contains {len(remaining_state_res)} managed resources after destroy.sh"
+                )
+
         if final["additions"] or final["removals"]:
             ctx.recorder.add_cap("cleanup_leak", 79)
             raise AssertionError(
@@ -117,3 +129,4 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
         return "destroy.sh removed all deployment resources and preserved all baseline resources"
 
     _run_block(ctx, "lifecycle.clean_destroy", _check, cap_on_fail=("cleanup_leak", 79))
+

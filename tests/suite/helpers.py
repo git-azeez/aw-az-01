@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import base64
+from fnmatch import fnmatchcase
 import json
 import os
 import random
+import shutil
 import subprocess
+import tempfile
 import time
+import urllib.parse
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -58,6 +62,430 @@ def boto_client(service: str, config: dict[str, Any] | None = None):
         endpoint_url=cfg["aws_endpoint_url"],
         aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", "test"),
         aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", "test"),
+    )
+
+
+def _iac_env() -> dict[str, str]:
+    env = os.environ.copy()
+    cfg = load_config()
+    env.setdefault("AWS_DEFAULT_REGION", cfg["region"])
+    env.setdefault("AWS_REGION", cfg["region"])
+    env.setdefault("AWS_ENDPOINT_URL", cfg["aws_endpoint_url"])
+    env.setdefault("AWS_ACCESS_KEY_ID", "test")
+    env.setdefault("AWS_SECRET_ACCESS_KEY", "test")
+    env.setdefault("TF_CLI_CONFIG_FILE", "/etc/terraform.tfrc")
+    env.setdefault("TF_IN_AUTOMATION", "1")
+    for key, val in cfg.items():
+        if isinstance(val, (str, int, float, bool)):
+            env.setdefault(f"TF_VAR_{key}", str(val))
+    return env
+
+
+def resolve_iac_binaries(infra_dir: Path = INFRA_DIR) -> list[str]:
+    lock_file = infra_dir / ".terraform.lock.hcl"
+    preferred = ["terraform", "tofu"]
+    if lock_file.is_file():
+        lock_text = lock_file.read_text(errors="ignore")
+        if "registry.opentofu.org" in lock_text and "registry.terraform.io" not in lock_text:
+            preferred = ["tofu", "terraform"]
+    available = [b for b in preferred if shutil.which(b)]
+    assert available, "Neither terraform nor tofu is installed in the test environment"
+    return available
+
+
+def run_iac_validate(infra_dir: Path = INFRA_DIR) -> tuple[str, str]:
+    env = _iac_env()
+    errors: list[str] = []
+    for binary in resolve_iac_binaries(infra_dir):
+        proc = subprocess.run(
+            [binary, "validate", "-no-color"],
+            cwd=str(infra_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return binary, proc.stdout.strip()
+        errors.append(f"{binary} validate (rc={proc.returncode}): {proc.stderr.strip() or proc.stdout.strip()}")
+    raise AssertionError("IaC validation failed:\n" + "\n".join(errors))
+
+
+def _collect_module_config_resources(module_obj: dict[str, Any], out: dict[str, dict[str, Any]]) -> None:
+    for res in module_obj.get("resources", []) or []:
+        if res.get("mode") == "managed":
+            addr = f"{res.get('type')}.{res.get('name')}"
+            out[addr] = res.get("expressions") or {}
+    for child in module_obj.get("child_modules", []) or []:
+        if isinstance(child, dict):
+            _collect_module_config_resources(child, out)
+
+
+def load_iac_configuration(infra_dir: Path = INFRA_DIR) -> dict[str, dict[str, Any]]:
+    """Extract parsed Terraform/OpenTofu configuration expressions via `plan -refresh=false` + `show -json`."""
+    env = _iac_env()
+    for binary in resolve_iac_binaries(infra_dir):
+        with tempfile.TemporaryDirectory(prefix="clearledger-iac-") as tmpdir:
+            plan_path = Path(tmpdir) / "tfplan"
+            plan_proc = subprocess.run(
+                [
+                    binary,
+                    "plan",
+                    "-refresh=false",
+                    "-input=false",
+                    "-no-color",
+                    f"-state={STATE_PATH}",
+                    f"-out={plan_path}",
+                ],
+                cwd=str(infra_dir),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+            )
+            if plan_proc.returncode != 0 or not plan_path.is_file():
+                continue
+            show_proc = subprocess.run(
+                [binary, "show", "-json", str(plan_path)],
+                cwd=str(infra_dir),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            if show_proc.returncode != 0 or not show_proc.stdout.strip():
+                continue
+            doc = json.loads(show_proc.stdout)
+            root_mod = (doc.get("configuration") or {}).get("root_module") or {}
+            out: dict[str, dict[str, Any]] = {}
+            _collect_module_config_resources(root_mod, out)
+            return out
+    return {}
+
+
+def config_expr_constant(expr: Any) -> Any:
+    if isinstance(expr, dict):
+        if "constant_value" in expr:
+            return expr["constant_value"]
+    return None
+
+
+def config_depends_on_resource(expr: Any, target_prefix: str) -> bool:
+    if isinstance(expr, dict):
+        refs = expr.get("references") or []
+        if any(str(r) == target_prefix or str(r).startswith(target_prefix) for r in refs):
+            return True
+        return any(config_depends_on_resource(v, target_prefix) for v in expr.values())
+    if isinstance(expr, list):
+        return any(config_depends_on_resource(item, target_prefix) for item in expr)
+    return False
+
+
+def _parse_policy_doc(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if text.startswith("%7B") or text.startswith("%7b"):
+            text = urllib.parse.unquote(text)
+        return json.loads(text) if text else {}
+    return {}
+
+
+def _as_str_list(val: Any) -> list[str]:
+    if isinstance(val, str):
+        return [val]
+    if isinstance(val, list):
+        return [str(x) for x in val if x is not None]
+    return []
+
+
+def validate_trust_policy(doc: Any, expected_service: str, role_label: str) -> None:
+    parsed = _parse_policy_doc(doc)
+    stmts = parsed.get("Statement") or []
+    if isinstance(stmts, dict):
+        stmts = [stmts]
+    allowed_services: set[str] = set()
+    for stmt in stmts:
+        if not isinstance(stmt, dict) or stmt.get("Effect") != "Allow":
+            continue
+        actions = [a.lower() for a in _as_str_list(stmt.get("Action"))]
+        if not any(fnmatchcase("sts:assumerole", pat) for pat in actions):
+            continue
+        principal = stmt.get("Principal") or {}
+        if principal == "*":
+            raise AssertionError(f"{role_label} trust policy must not allow wildcard Principal '*'")
+        if isinstance(principal, dict):
+            for svc in _as_str_list(principal.get("Service")):
+                allowed_services.add(svc)
+    assert expected_service in allowed_services, (
+        f"{role_label} trust policy must allow Service '{expected_service}', found {sorted(allowed_services)}"
+    )
+    assert allowed_services == {expected_service}, (
+        f"{role_label} trust policy must only trust '{expected_service}', found {sorted(allowed_services)}"
+    )
+
+
+def policy_allows(policy_docs: list[dict[str, Any]], action: str, resource: str) -> bool:
+    action_l = action.lower()
+    allowed = False
+    for raw_doc in policy_docs:
+        doc = _parse_policy_doc(raw_doc)
+        stmts = doc.get("Statement") or []
+        if isinstance(stmts, dict):
+            stmts = [stmts]
+        for stmt in stmts:
+            if not isinstance(stmt, dict):
+                continue
+            effect = stmt.get("Effect")
+            actions = [a.lower() for a in _as_str_list(stmt.get("Action"))]
+            resources = _as_str_list(stmt.get("Resource"))
+            act_match = any(fnmatchcase(action_l, pat) for pat in actions)
+            res_match = any(fnmatchcase(resource, pat) for pat in resources)
+            if act_match and res_match:
+                if effect == "Deny":
+                    return False
+                if effect == "Allow":
+                    allowed = True
+    return allowed
+
+
+def policy_allows_any_resource(policy_docs: list[dict[str, Any]], action: str, resources: list[str]) -> bool:
+    return any(policy_allows(policy_docs, action, r) for r in resources)
+
+
+def _lg_arn_candidates(lg_name: str, raw_arn: str | None, region: str) -> list[str]:
+    base = (raw_arn or f"arn:aws:logs:{region}:000000000000:log-group:{lg_name}").rstrip(":*")
+    return [base, f"{base}:*", f"{base}:log-stream:*"]
+
+
+def verify_iam_roles_and_policies(
+    manifest: dict[str, Any],
+    role_trust_docs: dict[str, Any],
+    role_policy_docs: dict[str, list[dict[str, Any]]],
+    log_group_arns: dict[str, str],
+    label: str = "IAM",
+) -> None:
+    expected_trust = {
+        "ecs_execution_role_arn": "ecs-tasks.amazonaws.com",
+        "ecs_task_role_arn": "ecs-tasks.amazonaws.com",
+        "projector_role_arn": "lambda.amazonaws.com",
+        "relay_role_arn": "lambda.amazonaws.com",
+        "archiver_role_arn": "lambda.amazonaws.com",
+        "scheduler_role_arn": "scheduler.amazonaws.com",
+    }
+    iam_map = manifest["iam"]
+    assert len(set(iam_map.values())) == 6, f"{label}: all 6 IAM role ARNs must be distinct"
+
+    for role_key, expected_svc in expected_trust.items():
+        role_arn = iam_map[role_key]
+        assert role_arn in role_trust_docs, f"{label}: missing trust policy for {role_key} ({role_arn})"
+        validate_trust_policy(role_trust_docs[role_arn], expected_svc, f"{label} {role_key}")
+
+        docs = role_policy_docs.get(role_arn) or []
+        assert docs, f"{label}: role {role_key} ({role_arn}) has no attached or inline policies"
+        for raw_doc in docs:
+            doc = _parse_policy_doc(raw_doc)
+            stmts = doc.get("Statement") or []
+            if isinstance(stmts, dict):
+                stmts = [stmts]
+            for stmt in stmts:
+                if not isinstance(stmt, dict) or stmt.get("Effect") != "Allow":
+                    continue
+                for act in _as_str_list(stmt.get("Action")):
+                    assert act != "*" and not act.endswith(":*"), (
+                        f"{label}: wildcard IAM action '{act}' is forbidden in {role_key}"
+                    )
+                for res in _as_str_list(stmt.get("Resource")):
+                    assert res != "*", f"{label}: wildcard IAM resource '*' is forbidden in {role_key}"
+
+    region = manifest.get("region", "us-east-1")
+    queue_arn = manifest["messaging"]["queue_arn"]
+    dlq_arn = manifest["messaging"]["dlq_arn"]
+    table_arn = manifest["projections"]["table_arn"]
+    index_arn = f"{table_arn}/index/{manifest['projections']['gsi_name']}"
+    bucket_arn = manifest["audit"]["bucket_arn"]
+    audit_prefix = str(manifest["audit"]["prefix"]).lstrip("/")
+    audit_obj_arn = f"{bucket_arn}/{audit_prefix}probe.ndjson"
+
+    kms_db = manifest["kms"]["database_arn"]
+    kms_msg = manifest["kms"]["messaging_arn"]
+    kms_proj = manifest["kms"]["projection_arn"]
+    kms_audit = manifest["kms"]["audit_arn"]
+
+    projector_fn_arn = manifest["workers"]["projector"]["function_arn"]
+    relay_fn_arn = manifest["workers"]["outbox_relay"]["function_arn"]
+    archiver_fn_arn = manifest["workers"]["audit_archiver"]["function_arn"]
+
+    lg_api = _lg_arn_candidates(
+        manifest["logs"]["api_log_group"],
+        log_group_arns.get(manifest["logs"]["api_log_group"]),
+        region,
+    )
+    lg_proj = _lg_arn_candidates(
+        manifest["logs"]["projector_log_group"],
+        log_group_arns.get(manifest["logs"]["projector_log_group"]),
+        region,
+    )
+    lg_relay = _lg_arn_candidates(
+        manifest["logs"]["relay_log_group"],
+        log_group_arns.get(manifest["logs"]["relay_log_group"]),
+        region,
+    )
+    lg_arch = _lg_arn_candidates(
+        manifest["logs"]["archiver_log_group"],
+        log_group_arns.get(manifest["logs"]["archiver_log_group"]),
+        region,
+    )
+
+    def _docs(rkey: str) -> list[dict[str, Any]]:
+        return role_policy_docs[iam_map[rkey]]
+
+    # 1. ecs_execution_role_arn
+    exec_docs = _docs("ecs_execution_role_arn")
+    for act in ("logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"):
+        assert policy_allows_any_resource(exec_docs, act, lg_api), (
+            f"{label}: ecs_execution_role_arn must allow {act} on API log group"
+        )
+    assert not policy_allows(exec_docs, "sqs:SendMessage", queue_arn), (
+        f"{label}: ecs_execution_role_arn must not allow sqs:SendMessage"
+    )
+    assert not policy_allows(exec_docs, "dynamodb:GetItem", table_arn), (
+        f"{label}: ecs_execution_role_arn must not allow dynamodb:GetItem"
+    )
+    assert not policy_allows(exec_docs, "s3:PutObject", audit_obj_arn), (
+        f"{label}: ecs_execution_role_arn must not allow s3:PutObject"
+    )
+    assert not policy_allows_any_resource(exec_docs, "logs:PutLogEvents", lg_proj), (
+        f"{label}: ecs_execution_role_arn must not allow writing to projector log group"
+    )
+
+    # 2. ecs_task_role_arn
+    task_docs = _docs("ecs_task_role_arn")
+    for act in ("sqs:SendMessage", "sqs:GetQueueAttributes", "sqs:GetQueueUrl"):
+        assert policy_allows(task_docs, act, queue_arn), f"{label}: ecs_task_role_arn must allow {act} on main queue"
+    for act in ("dynamodb:GetItem", "dynamodb:Query", "dynamodb:DescribeTable"):
+        assert policy_allows(task_docs, act, table_arn), f"{label}: ecs_task_role_arn must allow {act} on table"
+    assert policy_allows(task_docs, "dynamodb:Query", index_arn), (
+        f"{label}: ecs_task_role_arn must allow dynamodb:Query on AccountIndex"
+    )
+    for act in ("kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"):
+        assert policy_allows(task_docs, act, kms_msg), f"{label}: ecs_task_role_arn must allow {act} on messaging KMS"
+        assert policy_allows(task_docs, act, kms_proj), (
+            f"{label}: ecs_task_role_arn must allow {act} on projection KMS"
+        )
+    for act in ("logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"):
+        assert policy_allows_any_resource(task_docs, act, lg_api), (
+            f"{label}: ecs_task_role_arn must allow {act} on API log group"
+        )
+    assert not policy_allows(task_docs, "dynamodb:PutItem", table_arn), (
+        f"{label}: ecs_task_role_arn must not allow dynamodb:PutItem on projection table"
+    )
+    assert not policy_allows(task_docs, "s3:PutObject", audit_obj_arn), (
+        f"{label}: ecs_task_role_arn must not allow s3:PutObject on audit bucket"
+    )
+    assert not policy_allows(task_docs, "kms:Decrypt", kms_audit), (
+        f"{label}: ecs_task_role_arn must not allow kms:Decrypt on audit KMS key"
+    )
+
+    # 3. projector_role_arn
+    proj_docs = _docs("projector_role_arn")
+    for act in ("sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility"):
+        assert policy_allows(proj_docs, act, queue_arn), f"{label}: projector_role_arn must allow {act} on main queue"
+    assert policy_allows(proj_docs, "sqs:SendMessage", dlq_arn), (
+        f"{label}: projector_role_arn must allow sqs:SendMessage on DLQ"
+    )
+    for act in ("dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"):
+        assert policy_allows(proj_docs, act, table_arn), f"{label}: projector_role_arn must allow {act} on table"
+    assert policy_allows(proj_docs, "dynamodb:Query", index_arn), (
+        f"{label}: projector_role_arn must allow dynamodb:Query on AccountIndex"
+    )
+    for act in ("kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"):
+        assert policy_allows(proj_docs, act, kms_msg), f"{label}: projector_role_arn must allow {act} on messaging KMS"
+        assert policy_allows(proj_docs, act, kms_proj), (
+            f"{label}: projector_role_arn must allow {act} on projection KMS"
+        )
+    for act in ("logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"):
+        assert policy_allows_any_resource(proj_docs, act, lg_proj), (
+            f"{label}: projector_role_arn must allow {act} on projector log group"
+        )
+    assert not policy_allows(proj_docs, "sqs:SendMessage", queue_arn), (
+        f"{label}: projector_role_arn must not allow sqs:SendMessage on main queue"
+    )
+    assert not policy_allows(proj_docs, "s3:PutObject", audit_obj_arn), (
+        f"{label}: projector_role_arn must not allow s3:PutObject on audit bucket"
+    )
+    assert not policy_allows(proj_docs, "kms:Decrypt", kms_db), (
+        f"{label}: projector_role_arn must not allow kms:Decrypt on database KMS key"
+    )
+
+    # 4. relay_role_arn
+    relay_docs = _docs("relay_role_arn")
+    for act in ("sqs:SendMessage", "sqs:GetQueueAttributes", "sqs:GetQueueUrl"):
+        assert policy_allows(relay_docs, act, queue_arn), f"{label}: relay_role_arn must allow {act} on main queue"
+    for act in ("kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"):
+        assert policy_allows(relay_docs, act, kms_msg), f"{label}: relay_role_arn must allow {act} on messaging KMS"
+        assert policy_allows(relay_docs, act, kms_db), f"{label}: relay_role_arn must allow {act} on database KMS"
+    for act in ("logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"):
+        assert policy_allows_any_resource(relay_docs, act, lg_relay), (
+            f"{label}: relay_role_arn must allow {act} on relay log group"
+        )
+    assert not policy_allows(relay_docs, "dynamodb:PutItem", table_arn), (
+        f"{label}: relay_role_arn must not allow dynamodb:PutItem"
+    )
+    assert not policy_allows(relay_docs, "s3:PutObject", audit_obj_arn), (
+        f"{label}: relay_role_arn must not allow s3:PutObject"
+    )
+    assert not policy_allows(relay_docs, "kms:Decrypt", kms_audit), (
+        f"{label}: relay_role_arn must not allow kms:Decrypt on audit KMS key"
+    )
+
+    # 5. archiver_role_arn
+    arch_docs = _docs("archiver_role_arn")
+    for act in ("s3:PutObject", "s3:GetObject", "s3:AbortMultipartUpload"):
+        assert policy_allows(arch_docs, act, audit_obj_arn), (
+            f"{label}: archiver_role_arn must allow {act} on {audit_obj_arn}"
+        )
+    for act in ("s3:ListBucket", "s3:GetBucketLocation"):
+        assert policy_allows(arch_docs, act, bucket_arn), (
+            f"{label}: archiver_role_arn must allow {act} on {bucket_arn}"
+        )
+    for act in ("kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"):
+        assert policy_allows(arch_docs, act, kms_audit), f"{label}: archiver_role_arn must allow {act} on audit KMS"
+        assert policy_allows(arch_docs, act, kms_db), f"{label}: archiver_role_arn must allow {act} on database KMS"
+    for act in ("logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"):
+        assert policy_allows_any_resource(arch_docs, act, lg_arch), (
+            f"{label}: archiver_role_arn must allow {act} on archiver log group"
+        )
+    assert not policy_allows(arch_docs, "sqs:SendMessage", queue_arn), (
+        f"{label}: archiver_role_arn must not allow sqs:SendMessage"
+    )
+    assert not policy_allows(arch_docs, "dynamodb:PutItem", table_arn), (
+        f"{label}: archiver_role_arn must not allow dynamodb:PutItem"
+    )
+    assert not policy_allows(arch_docs, "kms:Decrypt", kms_msg), (
+        f"{label}: archiver_role_arn must not allow kms:Decrypt on messaging KMS key"
+    )
+
+    # 6. scheduler_role_arn
+    sched_docs = _docs("scheduler_role_arn")
+    assert policy_allows(sched_docs, "lambda:InvokeFunction", relay_fn_arn), (
+        f"{label}: scheduler_role_arn must allow lambda:InvokeFunction on outbox_relay"
+    )
+    assert policy_allows(sched_docs, "lambda:InvokeFunction", archiver_fn_arn), (
+        f"{label}: scheduler_role_arn must allow lambda:InvokeFunction on audit_archiver"
+    )
+    assert not policy_allows(sched_docs, "lambda:InvokeFunction", projector_fn_arn), (
+        f"{label}: scheduler_role_arn must not allow lambda:InvokeFunction on projector"
+    )
+    assert not policy_allows(sched_docs, "sqs:SendMessage", queue_arn), (
+        f"{label}: scheduler_role_arn must not allow sqs:SendMessage"
+    )
+    assert not policy_allows(sched_docs, "s3:PutObject", audit_obj_arn), (
+        f"{label}: scheduler_role_arn must not allow s3:PutObject"
     )
 
 
@@ -263,6 +691,7 @@ def snapshot_inventory(config: dict[str, Any] | None = None) -> dict[str, set[st
     logs = boto_client("logs", cfg)
     ec2 = boto_client("ec2", cfg)
     scheduler = boto_client("scheduler", cfg)
+    kms = boto_client("kms", cfg)
 
     inv: dict[str, set[str]] = {}
     inv["s3_buckets"] = {b["Name"] for b in s3.list_buckets().get("Buckets", [])}
@@ -298,6 +727,20 @@ def snapshot_inventory(config: dict[str, Any] | None = None) -> dict[str, set[st
     inv["schedules"] = {
         s["Name"] for s in scheduler.list_schedules().get("Schedules", [])
     }
+    inv["kms_aliases"] = {
+        a["AliasName"]
+        for a in kms.list_aliases().get("Aliases", [])
+        if not str(a.get("AliasName", "")).startswith("alias/aws/")
+    }
+    active_keys: set[str] = set()
+    for k in kms.list_keys().get("Keys", []):
+        kid = k.get("KeyId")
+        if not kid:
+            continue
+        meta = kms.describe_key(KeyId=kid).get("KeyMetadata", {})
+        if meta.get("KeyManager") == "CUSTOMER" and not str(meta.get("KeyState", "")).endswith("Deletion"):
+            active_keys.add(meta.get("Arn") or kid)
+    inv["kms_keys"] = active_keys
     return inv
 
 
@@ -312,3 +755,4 @@ def diff_inventory(before: dict[str, set[str]], after: dict[str, set[str]]) -> d
         if removed:
             removals[key] = removed
     return {"additions": additions, "removals": removals}
+
