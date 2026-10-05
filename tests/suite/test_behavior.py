@@ -946,20 +946,56 @@ def test_authorization_audit_and_observability(ctx: VerifierContext) -> None:
             m["auth"]["clients"]["write"]["client_secret"],
             m["auth"]["clients"]["admin"]["client_secret"],
         ]
-        found_corr = False
-        for lg_key, lg_name in m["logs"].items():
-            events = logs.filter_log_events(logGroupName=lg_name, limit=100).get("events", [])
-            assert events, f"Expected structured log events in {lg_name} ({lg_key})"
-            for ev in events:
-                msg = ev.get("message", "")
-                for secret in secrets_to_scrub:
-                    if secret and len(secret) >= 4 and secret in msg:
-                        ctx.recorder.add_cap("auth_escalation", 49)
-                        raise AssertionError(f"Secret value leaked in CloudWatch log group {lg_name}")
-                if corr_marker in msg:
-                    found_corr = True
-        assert found_corr, f"Correlation ID {corr_marker} not found in CloudWatch logs"
+
+        def _fetch_group_messages(lg_name: str) -> list[str]:
+            msgs: list[str] = []
+            next_token: str | None = None
+            for _ in range(10):
+                kwargs: dict = {"logGroupName": lg_name, "limit": 1000}
+                if next_token:
+                    kwargs["nextToken"] = next_token
+                resp = logs.filter_log_events(**kwargs)
+                for ev in resp.get("events", []):
+                    msgs.append(ev.get("message", ""))
+                next_token = resp.get("nextToken")
+                if not next_token:
+                    break
+            streams = logs.describe_log_streams(logGroupName=lg_name).get("logStreams", [])
+            for st in streams:
+                sname = st.get("logStreamName")
+                if sname:
+                    st_events = logs.get_log_events(
+                        logGroupName=lg_name,
+                        logStreamName=sname,
+                        startFromHead=False,
+                        limit=500,
+                    ).get("events", [])
+                    for ev in st_events:
+                        msgs.append(ev.get("message", ""))
+            return msgs
+
+        def _verify_logs_and_corr() -> bool:
+            found_corr = False
+            for lg_key, lg_name in m["logs"].items():
+                messages = _fetch_group_messages(lg_name)
+                assert messages, f"Expected structured log events in {lg_name} ({lg_key})"
+                for msg in messages:
+                    for secret in secrets_to_scrub:
+                        if secret and len(secret) >= 4 and secret in msg:
+                            ctx.recorder.add_cap("auth_escalation", 49)
+                            raise AssertionError(f"Secret value leaked in CloudWatch log group {lg_name}")
+                    if corr_marker in msg:
+                        found_corr = True
+            return found_corr
+
+        wait_until(
+            _verify_logs_and_corr,
+            timeout_sec=15.0,
+            interval_sec=1.0,
+            description=f"Correlation ID {corr_marker} in CloudWatch logs",
+        )
 
         return f"Verified strict scope isolation, {validated_records} S3 audit records, and secret-free structured logs"
 
     _run_block(ctx, "security.auth_audit_logs", _check)
+
