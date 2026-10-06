@@ -24,7 +24,7 @@ All four application images are pre-built and loaded into the local container da
   - `CLOUDWATCH_LOG_GROUP`: name of the API CloudWatch Log Group
   - `SERVICE_INSTANCE_ID` (optional): instance identifier returned in `X-ClearLedger-Instance` (defaults to `HOSTNAME`)
 
-Upon startup, `clearledger-api` connects to PostgreSQL, ensures the `clearledger` schema (`clearledger.settlements`, `clearledger.events`, `clearledger.outbox`, `clearledger.idempotency_keys`) exists, and serves HTTP traffic on `0.0.0.0:8080`.
+Upon startup, `clearledger-api` connects to PostgreSQL and serves HTTP traffic on `0.0.0.0:8080`. The application binaries do **not** run database migrations automatically: `deploy.sh` must idempotently apply the `clearledger` PostgreSQL schema (`clearledger.settlements`, `clearledger.events`, `clearledger.outbox`, `clearledger.idempotency_keys`) and its three indexes as defined in `services/rds.md` before `GET /health/ready` reports `200 OK` (`checks.postgres = "UP"`).
 
 ## 2. Projector Worker (`projector_image` on AWS Lambda)
 
@@ -83,7 +83,7 @@ Selects published outbox rows (`published_at IS NOT NULL AND archived_at IS NULL
 
 ## 5. OAuth2 Scopes and Authorization
 
-All protected endpoints validate Bearer JWTs issued by the Cognito User Pool against `AUTH_ISSUER` and `AUTH_JWKS_URL`. Scopes are strictly non-hierarchical:
+All protected endpoints validate Bearer JWTs issued by the Cognito User Pool against `AUTH_ISSUER`, `AUTH_JWKS_URL`, and `AUTH_AUDIENCES`. Scopes are strictly non-hierarchical:
 
 - `clearledger/read`: permitted only on `GET /v1/settlements/{id}` and `GET /v1/settlements/{id}/ledger`.
 - `clearledger/write`: permitted only on `POST /v1/settlements` and `POST /v1/settlements/{id}/entries`.
@@ -94,6 +94,6 @@ Missing or invalid tokens return `401 Unauthorized`; valid tokens lacking the ex
 ## 6. Recovery Drills and Observability
 
 - **Backlog & DLQ**: When the projector event source mapping is disabled, API writes commit to PostgreSQL and enqueue on SQS while `GET /v1/settlements/{id}` returns `404` until re-enabled. Duplicate event deliveries are ignored idempotently; invalid envelopes are retried and routed to the DLQ after `maxReceiveCount = 4`.
-- **Outbox Recovery**: If the main SQS queue is deleted, `POST /v1/settlements` and `POST /v1/settlements/{id}/entries` still commit to `clearledger.settlements`, `clearledger.events`, and `clearledger.outbox` (`published_at IS NULL`). Re-running `deploy.sh` restores the queue, and invoking `outbox_relay` drains pending outbox rows to SQS.
+- **Outbox Recovery**: If the main SQS queue and/or projector event source mapping are deleted, `POST /v1/settlements` and `POST /v1/settlements/{id}/entries` still commit to `clearledger.settlements`, `clearledger.events`, and `clearledger.outbox` (`published_at IS NULL`). Re-running `deploy.sh` restores the queue and event source mapping, refreshes `manifest.json`, and invoking `outbox_relay` drains pending outbox rows to SQS.
 - **Projection Rebuild & Fault Recovery**: If `SETTLEMENT#<id>` items are deleted from DynamoDB and `clearledger:settlement:<id>` is evicted from Valkey, `POST /v1/admin/projections/{id}/rebuild` republishes all events from `clearledger.events` (`requeued = <version>`) to restore the projection. Stopping an ECS task must not interrupt API availability and ECS must launch a replacement task (`desired_count = 2`). Rebooting the RDS instance must preserve all committed settlements.
 - **Structured Logs**: All four workloads emit JSON log lines containing `correlationId` (propagated from `X-Correlation-Id`) to their configured CloudWatch Log Groups without leaking `db_password` or Cognito `client_secret` values.

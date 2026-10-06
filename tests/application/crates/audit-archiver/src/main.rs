@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use chrono::Utc;
 use clearledger::{
-    build_aws_config, connect_postgres, ensure_postgres_schema, parse_ndjson_batch_key,
-    validate_envelope, CloudWatchEmit, DomainEventEnvelope,
+    build_aws_config, connect_postgres, parse_ndjson_batch_key, validate_envelope, CloudWatchEmit,
+    DomainEventEnvelope,
 };
 use lambda_runtime::{run, service_fn, Error as LambdaError, LambdaEvent};
 use serde_json::{json, Value};
@@ -50,7 +50,6 @@ async fn main() -> Result<(), LambdaError> {
     let s3 = S3Client::from_conf(s3_config);
     let cw = CloudWatchEmit::new(&sdk_config, "audit-archiver");
     let pool = connect_postgres(&database_url).await?;
-    ensure_postgres_schema(&pool).await?;
 
     let state = Arc::new(ArchiverState {
         pool,

@@ -36,11 +36,17 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         before_db_endpoint = before_manifest["database"]["endpoint"]
         before_table_arn = before_manifest["projections"]["table_arn"]
         before_bucket = before_manifest["audit"]["bucket_name"]
+        sqs = boto_client("sqs", ctx.config)
 
         with pg_connect(before_manifest, ctx.config) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM clearledger.settlements")
                 before_count = cur.fetchone()[0]
+
+        sqs.set_queue_attributes(
+            QueueUrl=before_manifest["messaging"]["queue_url"],
+            Attributes={"VisibilityTimeout": "19"},
+        )
 
         proc = run_script(SUBMISSION_DIR / "deploy.sh", timeout_sec=720)
         assert proc.returncode == 0, f"Second deploy.sh failed: {proc.stderr[-800:]}"
@@ -49,6 +55,14 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         assert after_manifest["database"]["endpoint"] == before_db_endpoint
         assert after_manifest["projections"]["table_arn"] == before_table_arn
         assert after_manifest["audit"]["bucket_name"] == before_bucket
+
+        q_attrs = sqs.get_queue_attributes(
+            QueueUrl=after_manifest["messaging"]["queue_url"],
+            AttributeNames=["All"],
+        )["Attributes"]
+        assert int(q_attrs.get("VisibilityTimeout", 0)) == 3, (
+            f"Expected deploy.sh to reconcile drifted SQS VisibilityTimeout back to 3, got {q_attrs.get('VisibilityTimeout')}"
+        )
 
         with pg_connect(after_manifest, ctx.config) as conn:
             with conn.cursor() as cur:
@@ -67,7 +81,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             assert resp.status_code == 200
             assert resp.json()["version"] == sample_meta["expected_version"]
 
-        return f"Re-applied deploy.sh cleanly with all {after_count} settlements preserved"
+        return f"Re-applied deploy.sh cleanly, reconciled SQS drift, and preserved all {after_count} settlements"
 
     _run_block(ctx, "lifecycle.reapply_idempotence", _check)
 

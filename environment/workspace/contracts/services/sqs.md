@@ -7,4 +7,4 @@
   - `receive_wait_time_seconds = 2`
   - `message_retention_seconds = 172800` (2 days)
   - `redrive_policy` routing failed messages to the DLQ with `maxReceiveCount = 4` (`manifest.messaging.max_receive_count = 4`)
-- If the main queue is deleted during an outage drill, re-running `deploy.sh` must recreate the queue and re-bind its Lambda event source mapping cleanly.
+- If the main queue or its Lambda event source mapping is deleted during an outage drill, or if queue attributes (such as `VisibilityTimeout`) drift out-of-band, re-running `deploy.sh` must reconcile or recreate the queue, re-bind its Lambda event source mapping cleanly, and update `manifest.json`.

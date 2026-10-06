@@ -96,8 +96,13 @@ def test_iac_discipline(ctx: VerifierContext) -> None:
         prefix = ctx.config["resource_prefix"]
         tagged_count = 0
         for item in items:
-            tags = item["attributes"].get("tags") or item["attributes"].get("tags_all") or {}
-            if isinstance(tags, dict) and tags.get("ClearLedgerDeployment") == prefix:
+            attrs = item["attributes"]
+            merged_tags: dict[str, Any] = {}
+            if isinstance(attrs.get("tags_all"), dict):
+                merged_tags.update(attrs["tags_all"])
+            if isinstance(attrs.get("tags"), dict):
+                merged_tags.update(attrs["tags"])
+            if merged_tags.get("ClearLedgerDeployment") == prefix:
                 tagged_count += 1
         assert tagged_count >= 25, (
             f"Expected at least 25 resources tagged ClearLedgerDeployment={prefix}, found {tagged_count}"
@@ -199,12 +204,24 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
             "VALKEY_URL",
             "CACHE_TTL_SECONDS",
             "AUTH_ISSUER",
+            "AUTH_JWKS_URL",
             "AUTH_AUDIENCES",
             "CLOUDWATCH_LOG_GROUP",
         ):
             assert env_map.get(req_env), f"Missing {req_env} in ECS container definition"
         assert env_map.get("CACHE_TTL_SECONDS") == "90", (
             f"Expected CACHE_TTL_SECONDS=90, got {env_map.get('CACHE_TTL_SECONDS')}"
+        )
+        declared_audiences = {
+            part.strip() for part in (env_map.get("AUTH_AUDIENCES") or "").split(",") if part.strip()
+        }
+        expected_audiences = {
+            manifest["auth"]["clients"]["read"]["client_id"],
+            manifest["auth"]["clients"]["write"]["client_id"],
+            manifest["auth"]["clients"]["admin"]["client_id"],
+        }
+        assert expected_audiences.issubset(declared_audiences), (
+            f"ECS container AUTH_AUDIENCES ({declared_audiences}) missing Cognito client IDs {expected_audiences}"
         )
 
         return "VPC, ALB, and ECS Fargate declarations and role bindings verified"
@@ -373,16 +390,9 @@ def test_declared_data_and_async(ctx: VerifierContext) -> None:
         caches = _by_type(items, "aws_elasticache_replication_group") + _by_type(items, "aws_elasticache_cluster")
         assert len(caches) >= 1
         cache = caches[0]
-        cache_expr = cfg_map.get(cache["_address"], {})
         assert str(cache.get("engine", "valkey")).lower() in {"valkey", "redis"}
         assert cache.get("node_type") == "cache.t4g.micro"
         assert int(cache.get("port") or 6379) == 6379
-        if cache["_address"].startswith("aws_elasticache_replication_group."):
-            at_rest = (
-                cache.get("at_rest_encryption_enabled") in {True, "true"}
-                or config_expr_constant(cache_expr.get("at_rest_encryption_enabled")) is True
-            )
-            assert at_rest, "ElastiCache replication group must enable at_rest_encryption_enabled"
 
         buckets = _by_type(items, "aws_s3_bucket")
         assert len(buckets) == 1

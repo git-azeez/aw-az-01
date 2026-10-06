@@ -1,3 +1,0 @@
-...................                                                      [100%]
------------------ generated xml file: /logs/verifier/junit.xml -----------------
-19 passed in 694.07s (0:11:34)

@@ -39,8 +39,9 @@ Read the individual service contracts in `/workspace/contracts/services/` for th
 1. `/workspace/submission/deploy.sh`:
    - Must be executable and idempotent (timeout: 720s).
    - Runs `terraform` or `tofu` against `/workspace/submission/infra` with state saved at `/workspace/submission/infra/terraform.tfstate`.
+   - Idempotently initializes the `clearledger` PostgreSQL schema, tables, and indexes on the RDS instance as specified in [RDS PostgreSQL](services/rds.md).
    - Writes `/workspace/submission/manifest.json` (max 1 MiB) conforming strictly to `/workspace/contracts/schemas/manifest.schema.json`.
    - Polls `GET <service_url>/health/ready` until the API returns HTTP `200`.
-   - Re-running `deploy.sh` must preserve the RDS instance, DynamoDB table, and S3 bucket without data loss, and must recreate any deleted resource (such as the main SQS queue) during fault recovery.
+   - Re-running `deploy.sh` must preserve the RDS instance, DynamoDB table, and S3 bucket without data loss, reconcile control-plane drift (such as modified SQS queue attributes), and recreate any deleted resource (such as the main SQS queue and its Lambda event source mapping) during fault recovery.
 2. `/workspace/submission/destroy.sh`:
    - Must be executable (timeout: 900s) and cleanly destroy all resources created for `resource_prefix` while leaving all pre-existing baseline resources untouched.

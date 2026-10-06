@@ -150,10 +150,11 @@ COPY runtime/manifest.schema.json runtime/events.schema.json /opt/clearledger/sc
 COPY runtime/runtime.sh /opt/clearledger/runtime.sh
 COPY test.sh /tests/test.sh
 COPY suite /tests/suite
-RUN chmod +x /opt/clearledger/runtime.sh /opt/clearledger/bin/* /tests/test.sh
-
-RUN mkdir -p /workspace/contracts/schemas /workspace/config /workspace/submission/infra /workspace/evidence /logs/verifier && \
+RUN chmod +x /opt/clearledger/runtime.sh /opt/clearledger/bin/* /tests/test.sh && \
+    mkdir -p /workspace/contracts/schemas /workspace/config /workspace/submission/infra /workspace/evidence /logs/verifier && \
     cp -R /opt/clearledger/contracts/. /workspace/contracts/ && \
+    chown -R root:root /opt/clearledger && \
+    chmod -R 0700 /opt/clearledger && \
     chmod -R 777 /workspace /logs/verifier
 
 WORKDIR /workspace

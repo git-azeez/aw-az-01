@@ -12,11 +12,11 @@ use axum::{
 };
 use chrono::Utc;
 use clearledger::{
-    build_aws_config, connect_postgres, ensure_postgres_schema, fetch_ledger_from_dynamodb,
+    build_aws_config, connect_postgres, fetch_ledger_from_dynamodb,
     fetch_projection_from_dynamodb, normalize_valkey_url, sha256_hex, valkey_settlement_key,
-    AppendEntryRequest, CloudWatchEmit, CreateSettlementRequest, DomainEventData,
-    DomainEventEnvelope, JwksValidator, RebuildResponse, SettlementStatus, TokenClaims,
-    WriteAcceptedResponse,
+    verify_postgres_schema, AppendEntryRequest, CloudWatchEmit, CreateSettlementRequest,
+    DomainEventData, DomainEventEnvelope, JwksValidator, RebuildResponse, SettlementStatus,
+    TokenClaims, WriteAcceptedResponse,
 };
 use redis::AsyncCommands;
 use serde_json::{json, Value};
@@ -119,7 +119,6 @@ async fn main() -> Result<()> {
             }
         }
     };
-    ensure_postgres_schema(&pool).await?;
 
     let state = Arc::new(AppState {
         pool,
@@ -274,10 +273,7 @@ async fn health_live(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 async fn health_ready(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut checks = BTreeMap::new();
-    let pg_ok = sqlx::query_scalar::<_, i32>("SELECT 1")
-        .fetch_one(&state.pool)
-        .await
-        .is_ok();
+    let pg_ok = verify_postgres_schema(&state.pool).await;
     checks.insert(
         "postgres".to_string(),
         if pg_ok { "UP" } else { "DOWN" }.to_string(),

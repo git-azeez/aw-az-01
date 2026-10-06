@@ -3,7 +3,7 @@ use std::{env, sync::Arc};
 use anyhow::{Context, Result};
 use aws_sdk_sqs::Client as SqsClient;
 use chrono::Utc;
-use clearledger::{build_aws_config, connect_postgres, ensure_postgres_schema, CloudWatchEmit};
+use clearledger::{build_aws_config, connect_postgres, CloudWatchEmit};
 use lambda_runtime::{run, service_fn, Error as LambdaError, LambdaEvent};
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
@@ -46,7 +46,6 @@ async fn main() -> Result<(), LambdaError> {
     let sqs = SqsClient::new(&sdk_config);
     let cw = CloudWatchEmit::new(&sdk_config, "outbox-relay");
     let pool = connect_postgres(&database_url).await?;
-    ensure_postgres_schema(&pool).await?;
 
     let state = Arc::new(RelayState {
         pool,

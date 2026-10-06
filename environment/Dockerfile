@@ -288,10 +288,11 @@ RUN userdel -r node 2>/dev/null || true && \
 COPY --from=rust-builder /out /opt/clearledger/bin
 COPY workspace/contracts /opt/clearledger/contracts
 COPY runtime.sh /opt/clearledger/runtime.sh
-RUN chmod +x /opt/clearledger/runtime.sh /opt/clearledger/bin/*
-
-RUN mkdir -p /workspace/contracts /workspace/config /workspace/submission/infra /workspace/evidence /logs/agent /logs/verifier && \
+RUN chmod +x /opt/clearledger/runtime.sh /opt/clearledger/bin/* && \
+    mkdir -p /workspace/contracts /workspace/config /workspace/submission/infra /workspace/evidence /logs/agent /logs/verifier && \
     cp -R /opt/clearledger/contracts/. /workspace/contracts/ && \
+    chown -R root:root /opt/clearledger && \
+    chmod -R 0700 /opt/clearledger && \
     chown -R agent:agent /workspace /logs/agent && \
     chown -R verifier:verifier /logs/verifier
 

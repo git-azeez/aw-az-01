@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 
 from .conftest import VerifierContext
-from .helpers import boto_client, resolve_service_url, verify_iam_roles_and_policies
+from .helpers import boto_client, pg_connect, resolve_service_url, verify_iam_roles_and_policies, wait_until
 
 
 def _run_block(ctx: VerifierContext, block_id: str, fn) -> None:
@@ -49,15 +49,6 @@ def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
         assert int(tgs[0]["Port"]) == 8080
         assert tgs[0]["HealthCheckPath"] == "/health/ready"
 
-        svcs = ecs.describe_services(
-            cluster=m["compute"]["cluster_name"],
-            services=[m["compute"]["service_name"]],
-        )["services"]
-        assert len(svcs) == 1
-        svc = svcs[0]
-        assert int(svc["desiredCount"]) >= 2
-        assert int(svc["runningCount"]) >= 2
-
         td_live = ecs.describe_task_definition(
             taskDefinition=m["compute"]["task_definition_arn"]
         )["taskDefinition"]
@@ -69,14 +60,35 @@ def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
         )
         assert str(td_live.get("networkMode", "")).lower() == "awsvpc"
 
-        task_arns = ecs.list_tasks(
-            cluster=m["compute"]["cluster_name"],
-            serviceName=m["compute"]["service_name"],
-            desiredStatus="RUNNING",
-        )["taskArns"]
-        assert len(task_arns) >= 2, f"Expected >=2 running ECS tasks, found {len(task_arns)}"
-        tasks = ecs.describe_tasks(cluster=m["compute"]["cluster_name"], tasks=task_arns)["tasks"]
-        assert len([t for t in tasks if t.get("lastStatus") == "RUNNING"]) >= 2
+        def _ecs_converged() -> tuple[dict[str, Any], list[str]] | None:
+            svcs = ecs.describe_services(
+                cluster=m["compute"]["cluster_name"],
+                services=[m["compute"]["service_name"]],
+            ).get("services", [])
+            assert len(svcs) == 1, f"Expected 1 ECS service, found {len(svcs)}"
+            svc_obj = svcs[0]
+            assert int(svc_obj.get("desiredCount", 0)) >= 2, (
+                f"Expected ECS desiredCount >= 2, got {svc_obj.get('desiredCount')}"
+            )
+            t_arns = ecs.list_tasks(
+                cluster=m["compute"]["cluster_name"],
+                serviceName=m["compute"]["service_name"],
+                desiredStatus="RUNNING",
+            ).get("taskArns", [])
+            if len(t_arns) < 2:
+                return None
+            t_list = ecs.describe_tasks(cluster=m["compute"]["cluster_name"], tasks=t_arns).get("tasks", [])
+            running_tasks = [t for t in t_list if t.get("lastStatus") == "RUNNING"]
+            if len(running_tasks) < 2 or int(svc_obj.get("runningCount", 0)) < 2:
+                return None
+            return svc_obj, t_arns
+
+        svc, task_arns = wait_until(
+            _ecs_converged,
+            timeout_sec=60.0,
+            interval_sec=1.5,
+            description="ECS service convergence to >=2 running tasks",
+        )
         svc_subnets = set(
             (svc.get("networkConfiguration") or {}).get("awsvpcConfiguration", {}).get("subnets") or []
         )
@@ -93,6 +105,8 @@ def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
                 assert body["status"] == "UP"
                 assert body["checks"]["postgres"] == "UP"
                 assert body["checks"]["dynamodb"] == "UP"
+                assert body["checks"]["sqs"] == "UP"
+                assert body["checks"]["valkey"] == "UP"
                 inst = resp.headers.get("X-ClearLedger-Instance") or body.get("instance")
                 if inst:
                     instances_seen.add(inst)
@@ -131,6 +145,37 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
         assert db_inst is not None, f"RDS instance {raw_db_id} not found"
         assert db_inst["Engine"] == "postgres"
         assert db_inst.get("DBInstanceStatus") == "available"
+
+        with pg_connect(m, ctx.config) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = 'clearledger'
+                    """
+                )
+                found_tables = {row[0] for row in cur.fetchall()}
+                expected_tables = {"settlements", "events", "outbox", "idempotency_keys"}
+                assert expected_tables.issubset(found_tables), (
+                    f"Missing required clearledger tables in PostgreSQL: expected {expected_tables}, found {found_tables}"
+                )
+                cur.execute(
+                    """
+                    SELECT indexname
+                    FROM pg_indexes
+                    WHERE schemaname = 'clearledger'
+                    """
+                )
+                found_indexes = {row[0] for row in cur.fetchall()}
+                expected_indexes = {
+                    "idx_clearledger_outbox_unpublished",
+                    "idx_clearledger_outbox_unarchived",
+                    "idx_clearledger_events_settlement_version",
+                }
+                assert expected_indexes.issubset(found_indexes), (
+                    f"Missing required clearledger indexes in PostgreSQL: expected {expected_indexes}, found {found_indexes}"
+                )
 
         msg_kms_arn = m["kms"]["messaging_arn"]
         msg_kms_ids = {msg_kms_arn, msg_kms_arn.rsplit("/", 1)[-1]}

@@ -335,94 +335,24 @@ pub async fn connect_postgres(database_url: &str) -> Result<PgPool> {
     }
 }
 
-pub async fn ensure_postgres_schema(pool: &PgPool) -> Result<()> {
-    let mut lock_conn = pool.acquire().await?;
-    sqlx::query("SELECT pg_advisory_lock(1842910441)")
-        .execute(&mut *lock_conn)
-        .await?;
-
-    let ddl = [
-        "CREATE SCHEMA IF NOT EXISTS clearledger",
-        r#"
-        CREATE TABLE IF NOT EXISTS clearledger.settlements (
-            settlement_id UUID PRIMARY KEY,
-            account_id TEXT NOT NULL,
-            reference TEXT NOT NULL,
-            debit_party TEXT NOT NULL,
-            credit_party TEXT NOT NULL,
-            current_status TEXT NOT NULL,
-            current_stage TEXT NOT NULL,
-            last_entry_id UUID NULL,
-            last_memo TEXT NULL,
-            version INTEGER NOT NULL,
-            entry_count INTEGER NOT NULL DEFAULT 0,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-        "#,
-        r#"
-        CREATE TABLE IF NOT EXISTS clearledger.events (
-            seq BIGSERIAL PRIMARY KEY,
-            event_id UUID NOT NULL UNIQUE,
-            settlement_id UUID NOT NULL REFERENCES clearledger.settlements(settlement_id) ON DELETE CASCADE,
-            aggregate_version INTEGER NOT NULL,
-            event_type TEXT NOT NULL,
-            correlation_id TEXT NOT NULL,
-            idempotency_key TEXT NOT NULL,
-            occurred_at TIMESTAMPTZ NOT NULL,
-            payload JSONB NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            UNIQUE (settlement_id, aggregate_version)
-        )
-        "#,
-        r#"
-        CREATE TABLE IF NOT EXISTS clearledger.outbox (
-            seq BIGSERIAL PRIMARY KEY,
-            event_id UUID NOT NULL UNIQUE,
-            settlement_id UUID NOT NULL,
-            aggregate_version INTEGER NOT NULL,
-            correlation_id TEXT NOT NULL,
-            payload JSONB NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            published_at TIMESTAMPTZ NULL,
-            archived_at TIMESTAMPTZ NULL,
-            attempts INTEGER NOT NULL DEFAULT 0,
-            last_error TEXT NULL
-        )
-        "#,
-        r#"
-        CREATE TABLE IF NOT EXISTS clearledger.idempotency_keys (
-            scope TEXT NOT NULL,
-            idempotency_key TEXT NOT NULL,
-            request_hash TEXT NOT NULL,
-            status_code INTEGER NOT NULL,
-            response_body JSONB NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            PRIMARY KEY (scope, idempotency_key)
-        )
-        "#,
-        "CREATE INDEX IF NOT EXISTS idx_clearledger_outbox_unpublished ON clearledger.outbox (seq) WHERE published_at IS NULL",
-        "CREATE INDEX IF NOT EXISTS idx_clearledger_outbox_unarchived ON clearledger.outbox (seq) WHERE published_at IS NOT NULL AND archived_at IS NULL",
-        "CREATE INDEX IF NOT EXISTS idx_clearledger_events_settlement_version ON clearledger.events (settlement_id, aggregate_version)",
-    ];
-
-    let mut ddl_result = Ok(());
-    for statement in ddl {
-        if let Err(err) = sqlx::query(statement)
-            .execute(pool)
-            .await
-            .with_context(|| format!("failed executing DDL: {statement}"))
-        {
-            ddl_result = Err(err);
-            break;
-        }
+pub async fn verify_postgres_schema(pool: &PgPool) -> bool {
+    let tables_ok = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'clearledger' AND table_name IN ('settlements', 'events', 'outbox', 'idempotency_keys')",
+    )
+    .fetch_one(pool)
+    .await
+    .map(|count| count == 4)
+    .unwrap_or(false);
+    if !tables_ok {
+        return false;
     }
-
-    let _ = sqlx::query("SELECT pg_advisory_unlock(1842910441)")
-        .execute(&mut *lock_conn)
-        .await;
-
-    ddl_result
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'clearledger' AND indexname IN ('idx_clearledger_outbox_unpublished', 'idx_clearledger_outbox_unarchived', 'idx_clearledger_events_settlement_version')",
+    )
+    .fetch_one(pool)
+    .await
+    .map(|count| count == 3)
+    .unwrap_or(false)
 }
 
 pub fn projection_pk(settlement_id: Uuid) -> String {
@@ -959,6 +889,9 @@ impl JwksValidator {
             .or_else(|_| env::var("COGNITO_ISSUER"))
             .context("AUTH_ISSUER is required")?;
         let trimmed_issuer = issuer.trim_end_matches('/').to_string();
+        if trimmed_issuer.is_empty() {
+            bail!("AUTH_ISSUER must not be empty");
+        }
         let pool_id = trimmed_issuer
             .rsplit('/')
             .next()
@@ -977,24 +910,25 @@ impl JwksValidator {
             accepted_issuers.push(aws_iss);
         }
 
-        let raw_jwks = env::var("AUTH_JWKS_URL")
+        let jwks_url = env::var("AUTH_JWKS_URL")
             .or_else(|_| env::var("COGNITO_JWKS_URL"))
-            .unwrap_or_else(|_| format!("{ep_trimmed}/{pool_id}/.well-known/jwks.json"));
-        let jwks_url = if raw_jwks.starts_with("http://localhost:4566/") {
-            raw_jwks.replacen("http://localhost:4566", ep_trimmed, 1)
-        } else if raw_jwks.starts_with("http://127.0.0.1:4566/") {
-            raw_jwks.replacen("http://127.0.0.1:4566", ep_trimmed, 1)
-        } else {
-            raw_jwks
-        };
+            .context("AUTH_JWKS_URL is required")?
+            .trim()
+            .to_string();
+        if jwks_url.is_empty() {
+            bail!("AUTH_JWKS_URL must not be empty");
+        }
 
         let allowed_clients = env::var("AUTH_AUDIENCES")
             .or_else(|_| env::var("COGNITO_AUDIENCES"))
-            .unwrap_or_default()
+            .context("AUTH_AUDIENCES is required")?
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>();
+        if allowed_clients.is_empty() {
+            bail!("AUTH_AUDIENCES must specify at least one allowed Cognito client ID");
+        }
 
         Ok(Self {
             accepted_issuers,

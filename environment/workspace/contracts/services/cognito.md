@@ -1,6 +1,6 @@
 # Cognito User Pool and OAuth2 Scopes (`services/cognito.md`)
 
-- Provision a Cognito User Pool (`aws_cognito_user_pool`) and User Pool Domain (`aws_cognito_user_pool_domain`).
+- Provision a Cognito User Pool (`aws_cognito_user_pool`) (an `aws_cognito_user_pool_domain` is optional).
 - Provision a Cognito Resource Server (`aws_cognito_resource_server`) with:
   - `identifier = "clearledger"` (`manifest.auth.resource_server_identifier = "clearledger"`)
   - Three scopes: `read`, `write`, and `admin` (yielding full scope strings `clearledger/read`, `clearledger/write`, and `clearledger/admin`).

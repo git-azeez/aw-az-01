@@ -574,8 +574,13 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         tokens = _ensure_tokens(ctx, refresh=True)
         m = ctx.manifest
         sqs = boto_client("sqs", ctx.config)
+        lam = boto_client("lambda", ctx.config)
         service_url = resolve_service_url(m["service_url"], ctx.config)
 
+        try:
+            lam.delete_event_source_mapping(UUID=m["messaging"]["event_source_mapping_uuid"])
+        except Exception:  # noqa: BLE001
+            pass
         sqs.delete_queue(QueueUrl=m["messaging"]["queue_url"])
 
         spec = build_random_settlement_spec(ctx.rng, step_count=2)
@@ -616,6 +621,10 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         m = ctx.refresh_manifest()
         tokens = _ensure_tokens(ctx, refresh=True)
         service_url = resolve_service_url(m["service_url"], ctx.config)
+
+        esm = lam.get_event_source_mapping(UUID=m["messaging"]["event_source_mapping_uuid"])
+        assert esm["EventSourceArn"] == m["messaging"]["queue_arn"]
+        assert esm["State"] in {"Enabled", "Enabling", "Updating"}
 
         relay_res = invoke_lambda_sync(m["workers"]["outbox_relay"]["function_name"])
         assert int(relay_res.get("published", 0)) >= 3 or relay_res.get("failed", 0) == 0
@@ -693,12 +702,20 @@ def test_ecs_task_failure_replacement(ctx: VerifierContext) -> None:
         ecs = boto_client("ecs", ctx.config)
         service_url = resolve_service_url(m["service_url"], ctx.config)
 
-        before_tasks = ecs.list_tasks(
-            cluster=m["compute"]["cluster_name"],
-            serviceName=m["compute"]["service_name"],
-            desiredStatus="RUNNING",
-        )["taskArns"]
-        assert len(before_tasks) >= 2
+        def _two_tasks_running() -> list[str] | None:
+            arns = ecs.list_tasks(
+                cluster=m["compute"]["cluster_name"],
+                serviceName=m["compute"]["service_name"],
+                desiredStatus="RUNNING",
+            ).get("taskArns", [])
+            return arns if len(arns) >= 2 else None
+
+        before_tasks = wait_until(
+            _two_tasks_running,
+            timeout_sec=45.0,
+            interval_sec=1.5,
+            description=">=2 running ECS tasks before stop_task drill",
+        )
         ecs.stop_task(cluster=m["compute"]["cluster_name"], task=before_tasks[0], reason="Verifier fault drill")
 
         settlement_id = next(iter(ctx.committed_settlements.keys()))

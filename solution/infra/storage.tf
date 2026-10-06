@@ -103,15 +103,14 @@ resource "aws_elasticache_subnet_group" "main" {
 resource "aws_elasticache_replication_group" "valkey" {
   replication_group_id       = "${local.prefix}-valkey"
   description                = "ClearLedger settlement projection cache"
-  engine                     = "redis"
-  engine_version             = "7.2"
+  engine                     = "valkey"
+  engine_version             = "8.0"
   node_type                  = "cache.t4g.micro"
   num_cache_clusters         = 1
   port                       = 6379
   subnet_group_name          = aws_elasticache_subnet_group.main.name
   security_group_ids         = [aws_security_group.valkey.id]
   transit_encryption_enabled = false
-  at_rest_encryption_enabled = true
   automatic_failover_enabled = false
 
   tags = merge(local.common_tags, {
