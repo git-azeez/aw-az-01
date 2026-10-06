@@ -123,7 +123,27 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
                     "last_stage": last_entry["clearingStage"],
                 }
 
-        return f"Verified {settlement_count} randomized settlement lifecycles end-to-end"
+            same_party_sid = str(uuid.uuid4())
+            bad_party_resp = client.post(
+                "/v1/settlements",
+                headers={
+                    "Authorization": f"Bearer {tokens['write']}",
+                    "Idempotency-Key": f"idem-same-party-{same_party_sid}",
+                },
+                json={
+                    "settlementId": same_party_sid,
+                    "accountId": "ACCT-DOM-CHECK",
+                    "reference": "REF-DOM-CHECK",
+                    "debitParty": "BANK-IDENTICAL",
+                    "creditParty": "BANK-IDENTICAL",
+                    "expectedVersion": 0,
+                },
+            )
+            assert bad_party_resp.status_code == 400, (
+                f"Expected 400 Bad Request when debitParty == creditParty, got {bad_party_resp.status_code}: {bad_party_resp.text}"
+            )
+
+        return f"Verified {settlement_count} randomized settlement lifecycles and domain party check end-to-end"
 
     _run_block(ctx, "functional.workflow", _check, cap_on_fail=("accepted_write_loss", 49))
 
@@ -575,7 +595,33 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         m = ctx.manifest
         sqs = boto_client("sqs", ctx.config)
         lam = boto_client("lambda", ctx.config)
+        ddb = boto_client("dynamodb", ctx.config)
+        rclient = valkey_connect(m, ctx.config)
         service_url = resolve_service_url(m["service_url"], ctx.config)
+
+        # Simulate projection loss + stale Valkey cache on an already-published settlement
+        corrupted_sid, corrupted_meta = next(iter(ctx.committed_settlements.items()))
+        ddb.delete_item(
+            TableName=m["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{corrupted_sid}"}, "SK": {"S": "STATE"}},
+        )
+        rclient.set(
+            f"clearledger:settlement:{corrupted_sid}",
+            json.dumps(
+                {
+                    "settlementId": corrupted_sid,
+                    "accountId": corrupted_meta["spec"]["accountId"],
+                    "reference": corrupted_meta["spec"]["reference"],
+                    "debitParty": corrupted_meta["spec"]["debitParty"],
+                    "creditParty": corrupted_meta["spec"]["creditParty"],
+                    "status": "INITIATED",
+                    "clearingStage": "STALE_POISONED_CACHE",
+                    "version": 1,
+                    "entryCount": 0,
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                }
+            ),
+        )
 
         try:
             lam.delete_event_source_mapping(UUID=m["messaging"]["event_source_mapping_uuid"])
@@ -626,16 +672,36 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         assert esm["EventSourceArn"] == m["messaging"]["queue_arn"]
         assert esm["State"] in {"Enabled", "Enabling", "Updating"}
 
-        relay_res = invoke_lambda_sync(m["workers"]["outbox_relay"]["function_name"])
-        assert int(relay_res.get("published", 0)) >= 3 or relay_res.get("failed", 0) == 0
+        with pg_connect(m, ctx.config) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE settlement_id = %s AND published_at IS NULL", (sid,))
+                unpub = cur.fetchone()[0]
+                assert unpub == 0, (
+                    f"deploy.sh exited before draining unpublished outbox rows ({unpub} rows still have published_at IS NULL)"
+                )
+                cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE settlement_id = %s AND archived_at IS NULL", (sid,))
+                unarch = cur.fetchone()[0]
+                assert unarch == 0, (
+                    f"deploy.sh exited before archiving outbox rows ({unarch} rows still have archived_at IS NULL)"
+                )
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             def _recovered() -> bool:
-                invoke_lambda_sync(m["workers"]["outbox_relay"]["function_name"])
                 r = client.get(f"/v1/settlements/{sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
                 return r.status_code == 200 and r.json().get("version") == 3
 
-            wait_until(_recovered, timeout_sec=45.0, interval_sec=1.2, description="outbox recovery projection v3")
+            wait_until(_recovered, timeout_sec=25.0, interval_sec=1.0, description="outbox recovery projection v3")
+
+            r_healed = client.get(f"/v1/settlements/{corrupted_sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
+            assert r_healed.status_code == 200, (
+                f"Expected deploy.sh to reconcile missing DynamoDB STATE projection for {corrupted_sid}, got {r_healed.status_code}"
+            )
+            healed_body = r_healed.json()
+            assert healed_body.get("version") == corrupted_meta["expected_version"], (
+                f"deploy.sh did not reconcile corrupted projection/cache for {corrupted_sid}: expected version {corrupted_meta['expected_version']}, got {healed_body}"
+            )
+            assert healed_body.get("status") == corrupted_meta["last_status"]
+            assert healed_body.get("clearingStage") == corrupted_meta["last_stage"]
 
         ctx.committed_settlements[sid] = {
             "spec": spec,
@@ -643,7 +709,7 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             "last_status": spec["entries"][-1]["status"],
             "last_stage": spec["entries"][-1]["clearingStage"],
         }
-        return "Accepted writes during SQS queue outage and recovered via deploy.sh + outbox relay"
+        return "Accepted writes during SQS queue outage and verified full deploy.sh outbox/projection/cache/archive reconciliation"
 
     _run_block(ctx, "recovery.outbox_recovery", _check, cap_on_fail=("accepted_write_loss", 49))
 

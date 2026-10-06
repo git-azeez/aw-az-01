@@ -150,12 +150,26 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
         for key in ("alb", "ecs", "rds", "valkey"):
             assert sg_ids[key] in sgs, f"Security group {key} ({sg_ids[key]}) not in state"
 
+        sg_rules = _by_type(items, "aws_security_group_rule")
+        vpc_sg_rules = _by_type(items, "aws_vpc_security_group_ingress_rule")
         for restricted_key, port in (("ecs", 8080), ("rds", 5432), ("valkey", 6379)):
-            sg = sgs[sg_ids[restricted_key]]
+            sg_id = sg_ids[restricted_key]
+            sg = sgs[sg_id]
             for rule in sg.get("ingress", []) or []:
                 cidrs = rule.get("cidr_blocks") or []
                 if rule.get("from_port") == port:
                     assert "0.0.0.0/0" not in cidrs, f"{restricted_key} security group exposes port {port} to 0.0.0.0/0"
+            for srule in sg_rules:
+                if srule.get("security_group_id") == sg_id and srule.get("type") == "ingress":
+                    if srule.get("from_port") == port:
+                        assert "0.0.0.0/0" not in (srule.get("cidr_blocks") or []), (
+                            f"{restricted_key} security group rule exposes port {port} to 0.0.0.0/0"
+                        )
+            for vrule in vpc_sg_rules:
+                if vrule.get("security_group_id") == sg_id and vrule.get("from_port") == port:
+                    assert vrule.get("cidr_ipv4") != "0.0.0.0/0", (
+                        f"{restricted_key} VPC security group ingress rule exposes port {port} to 0.0.0.0/0"
+                    )
 
         lbs = _by_type(items, "aws_lb")
         assert len(lbs) == 1
@@ -283,8 +297,44 @@ def test_declared_data_and_async(ctx: VerifierContext) -> None:
         assert dlq_q.get("kms_master_key_id") in msg_kms_ids, (
             f"DLQ kms_master_key_id ({dlq_q.get('kms_master_key_id')}) does not match messaging KMS key"
         )
-        redrive = json.loads(main_q.get("redrive_policy") or "{}")
-        assert redrive.get("deadLetterTargetArn") == dlq_q.get("arn")
+        raw_redrive = main_q.get("redrive_policy")
+        if not raw_redrive or raw_redrive.strip() in {"", "{}"}:
+            main_q_urls = {
+                str(u)
+                for u in (
+                    main_q.get("url"),
+                    main_q.get("id"),
+                    manifest["messaging"]["queue_url"],
+                )
+                if u
+            }
+            main_q_addr = str(main_q.get("_address") or "")
+            for rp in _by_type(items, "aws_sqs_queue_redrive_policy"):
+                rp_expr = cfg_map.get(str(rp.get("_address") or ""), {})
+                if (
+                    str(rp.get("queue_url") or "") in main_q_urls
+                    or str(rp.get("id") or "") in main_q_urls
+                    or (main_q_addr and config_depends_on_resource(rp_expr.get("queue_url"), main_q_addr))
+                ):
+                    candidate = rp.get("redrive_policy")
+                    if candidate and str(candidate).strip() not in {"", "{}"}:
+                        raw_redrive = candidate
+                        break
+        redrive = json.loads(raw_redrive or "{}")
+        dlq_addr = str(dlq_q.get("_address") or "")
+        redrive_target_ok = redrive.get("deadLetterTargetArn") == dlq_q.get("arn")
+        if not redrive_target_ok and dlq_addr:
+            main_q_expr = cfg_map.get(str(main_q.get("_address") or ""), {})
+            if config_depends_on_resource(main_q_expr.get("redrive_policy"), dlq_addr):
+                redrive_target_ok = True
+            for rp in _by_type(items, "aws_sqs_queue_redrive_policy"):
+                rp_expr = cfg_map.get(str(rp.get("_address") or ""), {})
+                if config_depends_on_resource(rp_expr.get("redrive_policy"), dlq_addr):
+                    redrive_target_ok = True
+                    break
+        assert redrive_target_ok, (
+            f"Declared SQS redrive deadLetterTargetArn ({redrive.get('deadLetterTargetArn')}) does not match DLQ ARN ({dlq_q.get('arn')})"
+        )
         assert int(redrive.get("maxReceiveCount", 0)) == 4
 
         lambdas = {fn["function_name"]: fn for fn in _by_type(items, "aws_lambda_function")}

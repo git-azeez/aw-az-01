@@ -449,6 +449,13 @@ def verify_iam_roles_and_policies(
         assert policy_allows(arch_docs, act, audit_obj_arn), (
             f"{label}: archiver_role_arn must allow {act} on {audit_obj_arn}"
         )
+    assert not policy_allows(arch_docs, "s3:PutObject", f"{bucket_arn}/unscoped-root-object.ndjson"), (
+        f"{label}: archiver_role_arn s3:PutObject must be scoped to {bucket_arn}/ledger-audit/*, not {bucket_arn}/*"
+    )
+    for del_act in ("s3:DeleteObject", "s3:DeleteObjectVersion"):
+        assert not policy_allows(arch_docs, del_act, audit_obj_arn), (
+            f"{label}: archiver_role_arn must not allow {del_act} on immutable audit archive {audit_obj_arn}"
+        )
     for act in ("s3:ListBucket", "s3:GetBucketLocation"):
         assert policy_allows(arch_docs, act, bucket_arn), (
             f"{label}: archiver_role_arn must allow {act} on {bucket_arn}"

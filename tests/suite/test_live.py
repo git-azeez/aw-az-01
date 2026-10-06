@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 import httpx
@@ -176,6 +177,136 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                 assert expected_indexes.issubset(found_indexes), (
                     f"Missing required clearledger indexes in PostgreSQL: expected {expected_indexes}, found {found_indexes}"
                 )
+
+                def _assert_pg_rejects(label: str, sql: str, params: tuple[Any, ...] = ()) -> None:
+                    cur.execute("SAVEPOINT sp_constraint_probe")
+                    try:
+                        cur.execute(sql, params)
+                    except Exception:
+                        cur.execute("ROLLBACK TO SAVEPOINT sp_constraint_probe")
+                        cur.execute("RELEASE SAVEPOINT sp_constraint_probe")
+                        return
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_constraint_probe")
+                    cur.execute("RELEASE SAVEPOINT sp_constraint_probe")
+                    raise AssertionError(
+                        f"PostgreSQL schema accepted an invalid row that violates domain constraint ({label})"
+                    )
+
+                cur.execute("SAVEPOINT sp_outer_probe")
+                try:
+                    probe_sid = str(uuid.uuid4())
+                    probe_eid = str(uuid.uuid4())
+                    orphan_eid = str(uuid.uuid4())
+
+                    _assert_pg_rejects(
+                        "settlements.debit_party <> credit_party",
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-SAME', 'BANK-SAME', 'INITIATED', 'INIT', 1, 0)
+                        """,
+                        (str(uuid.uuid4()),),
+                    )
+                    _assert_pg_rejects(
+                        "settlements.version >= 1",
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INIT', 0, 0)
+                        """,
+                        (str(uuid.uuid4()),),
+                    )
+                    _assert_pg_rejects(
+                        "settlements.entry_count = version - 1",
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'VALIDATED', 'VAL', 2, 0)
+                        """,
+                        (str(uuid.uuid4()),),
+                    )
+                    _assert_pg_rejects(
+                        "settlements.current_status enum check",
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'BOGUS_STATUS', 'INIT', 1, 0)
+                        """,
+                        (str(uuid.uuid4()),),
+                    )
+
+                    cur.execute(
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INIT', 1, 0)
+                        """,
+                        (probe_sid,),
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO clearledger.events (
+                            event_id, settlement_id, aggregate_version, event_type,
+                            correlation_id, idempotency_key, occurred_at, payload
+                        ) VALUES (%s, %s, 1, 'SettlementInitiated', 'corr-probe', 'idem-probe-1', NOW(), '{}'::jsonb)
+                        """,
+                        (probe_eid, probe_sid),
+                    )
+
+                    _assert_pg_rejects(
+                        "events.aggregate_version >= 1",
+                        """
+                        INSERT INTO clearledger.events (
+                            event_id, settlement_id, aggregate_version, event_type,
+                            correlation_id, idempotency_key, occurred_at, payload
+                        ) VALUES (%s, %s, 0, 'SettlementInitiated', 'corr-probe', 'idem-probe-0', NOW(), '{}'::jsonb)
+                        """,
+                        (str(uuid.uuid4()), probe_sid),
+                    )
+                    _assert_pg_rejects(
+                        "events.event_type enum check",
+                        """
+                        INSERT INTO clearledger.events (
+                            event_id, settlement_id, aggregate_version, event_type,
+                            correlation_id, idempotency_key, occurred_at, payload
+                        ) VALUES (%s, %s, 2, 'BogusEventType', 'corr-probe', 'idem-probe-2', NOW(), '{}'::jsonb)
+                        """,
+                        (str(uuid.uuid4()), probe_sid),
+                    )
+                    _assert_pg_rejects(
+                        "outbox.event_id foreign key to events(event_id)",
+                        """
+                        INSERT INTO clearledger.outbox (
+                            event_id, settlement_id, aggregate_version, correlation_id, payload
+                        ) VALUES (%s, %s, 1, 'corr-probe', '{}'::jsonb)
+                        """,
+                        (orphan_eid, probe_sid),
+                    )
+                    _assert_pg_rejects(
+                        "outbox.attempts >= 0",
+                        """
+                        INSERT INTO clearledger.outbox (
+                            event_id, settlement_id, aggregate_version, correlation_id, payload, attempts
+                        ) VALUES (%s, %s, 1, 'corr-probe', '{}'::jsonb, -1)
+                        """,
+                        (probe_eid, probe_sid),
+                    )
+                    _assert_pg_rejects(
+                        "idempotency_keys.status_code range check",
+                        """
+                        INSERT INTO clearledger.idempotency_keys (
+                            scope, idempotency_key, request_hash, status_code, response_body
+                        ) VALUES ('probe', 'idem-probe-bad-code', 'hash', 99, '{}'::jsonb)
+                        """,
+                    )
+                finally:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_outer_probe")
+                    cur.execute("RELEASE SAVEPOINT sp_outer_probe")
 
         msg_kms_arn = m["kms"]["messaging_arn"]
         msg_kms_ids = {msg_kms_arn, msg_kms_arn.rsplit("/", 1)[-1]}

@@ -417,6 +417,19 @@ async fn invalidate_valkey_cache(state: &AppState, settlement_id: Uuid) {
     }
 }
 
+fn map_write_db_error(err: sqlx::Error) -> ApiError {
+    if let sqlx::Error::Database(ref db_err) = err {
+        if matches!(db_err.code().as_deref(), Some("23514" | "23503" | "23502")) {
+            return ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_settlement",
+                db_err.message().to_string(),
+            );
+        }
+    }
+    ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "db_error", err.to_string())
+}
+
 async fn create_settlement(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -551,7 +564,7 @@ async fn create_settlement(
     .bind(now)
     .execute(&mut *tx)
     .await
-    .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "db_error", err.to_string()))?;
+    .map_err(map_write_db_error)?;
 
     sqlx::query(
         r#"
@@ -571,7 +584,7 @@ async fn create_settlement(
     .bind(&envelope_json)
     .execute(&mut *tx)
     .await
-    .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "db_error", err.to_string()))?;
+    .map_err(map_write_db_error)?;
 
     sqlx::query(
         r#"
@@ -587,7 +600,7 @@ async fn create_settlement(
     .bind(&envelope_json)
     .execute(&mut *tx)
     .await
-    .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "db_error", err.to_string()))?;
+    .map_err(map_write_db_error)?;
 
     let response_payload = WriteAcceptedResponse {
         settlement_id: req.settlement_id,
@@ -612,7 +625,7 @@ async fn create_settlement(
     .bind(&response_value)
     .execute(&mut *tx)
     .await
-    .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "db_error", err.to_string()))?;
+    .map_err(map_write_db_error)?;
 
     tx.commit().await.map_err(|err| {
         ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "db_error", err.to_string())
@@ -720,7 +733,7 @@ async fn append_entry(
     .bind(settlement_id)
     .fetch_optional(&mut *tx)
     .await
-    .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "db_error", err.to_string()))?;
+    .map_err(map_write_db_error)?;
 
     let Some(row) = row else {
         return Err(ApiError::new(
@@ -806,7 +819,7 @@ async fn append_entry(
     .bind(req.occurred_at)
     .execute(&mut *tx)
     .await
-    .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "db_error", err.to_string()))?;
+    .map_err(map_write_db_error)?;
 
     sqlx::query(
         r#"
@@ -826,7 +839,7 @@ async fn append_entry(
     .bind(&envelope_json)
     .execute(&mut *tx)
     .await
-    .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "db_error", err.to_string()))?;
+    .map_err(map_write_db_error)?;
 
     sqlx::query(
         r#"
@@ -842,7 +855,7 @@ async fn append_entry(
     .bind(&envelope_json)
     .execute(&mut *tx)
     .await
-    .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "db_error", err.to_string()))?;
+    .map_err(map_write_db_error)?;
 
     let response_payload = WriteAcceptedResponse {
         settlement_id,
@@ -867,7 +880,7 @@ async fn append_entry(
     .bind(&response_value)
     .execute(&mut *tx)
     .await
-    .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "db_error", err.to_string()))?;
+    .map_err(map_write_db_error)?;
 
     tx.commit().await.map_err(|err| {
         ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "db_error", err.to_string())

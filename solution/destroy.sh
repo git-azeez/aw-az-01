@@ -36,6 +36,36 @@ export TF_IN_AUTOMATION=1
 
 cp "${CONFIG_FILE}" "${TFVARS_FILE}"
 
+/opt/venv/bin/python3 - <<'PY'
+import json
+import boto3
+
+with open("/workspace/config/config.json", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+prefix = cfg["resource_prefix"]
+kwargs = {
+    "region_name": cfg["region"],
+    "endpoint_url": cfg["aws_endpoint_url"],
+    "aws_access_key_id": "test",
+    "aws_secret_access_key": "test",
+}
+iam = boto3.client("iam", **kwargs)
+for role in iam.list_roles().get("Roles", []):
+    rname = role["RoleName"]
+    if rname.startswith(prefix):
+        for pname in iam.list_role_policies(RoleName=rname).get("PolicyNames", []):
+            try:
+                iam.delete_role_policy(RoleName=rname, PolicyName=pname)
+            except Exception:
+                pass
+        for ap in iam.list_attached_role_policies(RoleName=rname).get("AttachedPolicies", []):
+            try:
+                iam.detach_role_policy(RoleName=rname, PolicyArn=ap["PolicyArn"])
+            except Exception:
+                pass
+PY
+
 pushd "${INFRA_DIR}" >/dev/null
 
 "${IAC_BIN}" init -input=false -no-color >/dev/null
@@ -54,6 +84,37 @@ if [[ -n "${remaining}" ]]; then
 fi
 
 popd >/dev/null
+
+/opt/venv/bin/python3 - <<'PY'
+import json
+import boto3
+
+with open("/workspace/config/config.json", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+prefix = cfg["resource_prefix"]
+kwargs = {
+    "region_name": cfg["region"],
+    "endpoint_url": cfg["aws_endpoint_url"],
+    "aws_access_key_id": "test",
+    "aws_secret_access_key": "test",
+}
+sqs = boto3.client("sqs", **kwargs)
+for qurl in sqs.list_queues().get("QueueUrls", []):
+    qname = qurl.rsplit("/", 1)[-1]
+    if qname.startswith(prefix):
+        try:
+            sqs.delete_queue(QueueUrl=qurl)
+        except Exception:
+            pass
+
+logs = boto3.client("logs", **kwargs)
+for lg in logs.describe_log_groups(logGroupNamePrefix=f"/clearledger/{prefix}").get("logGroups", []):
+    try:
+        logs.delete_log_group(logGroupName=lg["logGroupName"])
+    except Exception:
+        pass
+PY
 
 rm -f "${MANIFEST_FILE}"
 echo "ClearLedger deployment destroyed"
