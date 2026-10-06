@@ -1,0 +1,23 @@
+{
+    "job_name": "rv-20261006T181057Z-54a817",
+    "jobs_dir": "/Users/azeez/Azeez/microai/aw-az-01/jobs",
+    "verifier": {
+        "env": {
+            "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}",
+            "REWARDKIT_JUDGE": "${REWARDKIT_JUDGE}"
+        }
+    },
+    "agents": [
+        {
+            "name": "oracle",
+            "env": {
+                "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}"
+            }
+        }
+    ],
+    "tasks": [
+        {
+            "path": "/Users/azeez/Azeez/microai/aw-az-01"
+        }
+    ]
+}
