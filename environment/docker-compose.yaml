@@ -23,6 +23,9 @@ services:
       AWS_SECRET_ACCESS_KEY: test
       AWS_ENDPOINT_URL: http://aws:4566
       TF_CLI_CONFIG_FILE: /etc/terraform.tfrc
+    networks:
+      - solver-control
+      - agent
     volumes:
       - shared-workspace:/workspace
       - /etc/daytona/netleash/ca.crt:/etc/daytona-netleash-ca.crt:ro
@@ -69,7 +72,9 @@ services:
       - floci-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
-      default: {}
+      solver-control:
+        aliases:
+          - aws
       workload:
         aliases:
           - aws
@@ -91,6 +96,8 @@ services:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_ENDPOINT_URL: http://aws:4566
+    networks:
+      - solver-control
     volumes:
       - shared-workspace:/workspace
       - /var/run/docker.sock:/var/run/docker.sock
@@ -104,6 +111,9 @@ volumes:
   floci-data:
 
 networks:
+  agent: {}
+  solver-control:
+    internal: true
   workload:
     name: ${COMPOSE_PROJECT_NAME}_workload
     driver: bridge
