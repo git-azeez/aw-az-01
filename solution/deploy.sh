@@ -139,14 +139,16 @@ CREATE TABLE IF NOT EXISTS clearledger.events (
         (event_type = 'LedgerEntryRecorded' AND aggregate_version >= 2)
     ),
     CONSTRAINT chk_events_payload_coherence CHECK (
-        jsonb_typeof(payload) = 'object'
-        AND payload->>'schemaVersion' = '1.0'
-        AND payload->>'eventId' = event_id::text
-        AND payload->>'aggregateId' = settlement_id::text
-        AND (payload->>'aggregateVersion') ~ '^[0-9]+$'
-        AND (payload->>'aggregateVersion')::integer = aggregate_version
-        AND payload->>'eventType' = event_type
-        AND payload->>'correlationId' = correlation_id
+        (
+            jsonb_typeof(payload) = 'object'
+            AND payload->>'schemaVersion' = '1.0'
+            AND payload->>'eventId' = event_id::text
+            AND payload->>'aggregateId' = settlement_id::text
+            AND (payload->>'aggregateVersion') ~ '^[0-9]+$'
+            AND (payload->>'aggregateVersion')::integer = aggregate_version
+            AND payload->>'eventType' = event_type
+            AND payload->>'correlationId' = correlation_id
+        ) IS TRUE
     )
 );
 
@@ -175,13 +177,15 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
         archived_at IS NULL OR (published_at IS NOT NULL AND archived_at >= published_at)
     ),
     CONSTRAINT chk_outbox_payload_coherence CHECK (
-        jsonb_typeof(payload) = 'object'
-        AND payload->>'schemaVersion' = '1.0'
-        AND payload->>'eventId' = event_id::text
-        AND payload->>'aggregateId' = settlement_id::text
-        AND (payload->>'aggregateVersion') ~ '^[0-9]+$'
-        AND (payload->>'aggregateVersion')::integer = aggregate_version
-        AND payload->>'correlationId' = correlation_id
+        (
+            jsonb_typeof(payload) = 'object'
+            AND payload->>'schemaVersion' = '1.0'
+            AND payload->>'eventId' = event_id::text
+            AND payload->>'aggregateId' = settlement_id::text
+            AND (payload->>'aggregateVersion') ~ '^[0-9]+$'
+            AND (payload->>'aggregateVersion')::integer = aggregate_version
+            AND payload->>'correlationId' = correlation_id
+        ) IS TRUE
     )
 );
 

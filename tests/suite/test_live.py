@@ -446,13 +446,28 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """,
                         (bad_le_eid, settled_probe_sid, _make_event_payload(bad_le_eid, settled_probe_sid, 1, "LedgerEntryRecorded")),
                     )
+                    bad_json_eid = str(uuid.uuid4())
                     _assert_pg_rejects(
                         "events.payload JSONB envelope coherence with columns",
                         """
                         INSERT INTO clearledger.events (
                             event_id, settlement_id, aggregate_version, event_type,
                             correlation_id, idempotency_key, occurred_at, payload
-                        ) VALUES (%s, %s, 3, 'LedgerEntryRecorded', 'corr-probe', 'idem-probe-bad-json', NOW(), '{}'::jsonb)
+                        ) VALUES (%s, %s, 3, 'LedgerEntryRecorded', 'corr-probe', 'idem-probe-bad-json', NOW(), %s::jsonb)
+                        """,
+                        (
+                            bad_json_eid,
+                            probe_sid,
+                            _make_event_payload(bad_json_eid, probe_sid, 3, "LedgerEntryRecorded", corr="mismatched-corr"),
+                        ),
+                    )
+                    _assert_pg_rejects(
+                        "events.payload JSONB object type check",
+                        """
+                        INSERT INTO clearledger.events (
+                            event_id, settlement_id, aggregate_version, event_type,
+                            correlation_id, idempotency_key, occurred_at, payload
+                        ) VALUES (%s, %s, 3, 'LedgerEntryRecorded', 'corr-probe', 'idem-probe-arr-json', NOW(), '[]'::jsonb)
                         """,
                         (str(uuid.uuid4()), probe_sid),
                     )
@@ -494,9 +509,13 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.outbox (
                             event_id, settlement_id, aggregate_version, correlation_id, payload
-                        ) VALUES (%s, %s, 1, 'corr-probe', '{}'::jsonb)
+                        ) VALUES (%s, %s, 1, 'corr-probe', %s::jsonb)
                         """,
-                        (probe_eid, probe_sid),
+                        (
+                            probe_eid,
+                            probe_sid,
+                            _make_event_payload(probe_eid, probe_sid, 1, "SettlementInitiated", corr="mismatched-corr"),
+                        ),
                     )
                     _assert_pg_rejects(
                         "outbox.attempts >= 0",

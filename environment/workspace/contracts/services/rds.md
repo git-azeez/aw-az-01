@@ -67,7 +67,7 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
   - Composite `UNIQUE (settlement_id, aggregate_version)`.
   - `aggregate_version >= 1`, and `correlation_id` and `idempotency_key` must be non-empty after whitespace trimming.
   - Event-type / version coupling: `'SettlementInitiated'` is permitted only when `aggregate_version = 1`; `'LedgerEntryRecorded'` is permitted only when `aggregate_version >= 2`.
-  - JSONB envelope coherence: `payload` must be a JSON object (`jsonb_typeof(payload) = 'object'`) whose embedded fields match the row columns: `payload->>'schemaVersion' = '1.0'`, `payload->>'eventId' = event_id::text`, `payload->>'aggregateId' = settlement_id::text`, `(payload->>'aggregateVersion')::integer = aggregate_version`, `payload->>'eventType' = event_type`, and `payload->>'correlationId' = correlation_id`.
+  - JSONB envelope coherence: `payload` must be a JSON object (`jsonb_typeof(payload) = 'object'`) containing non-null envelope fields that match the row columns (missing/null fields such as `'{}'::jsonb` or mismatched values must be rejected): `payload->>'schemaVersion' = '1.0'`, `payload->>'eventId' = event_id::text`, `payload->>'aggregateId' = settlement_id::text`, `(payload->>'aggregateVersion')::integer = aggregate_version`, `payload->>'eventType' = event_type`, and `payload->>'correlationId' = correlation_id`.
 - **Append-only immutability (`BEFORE UPDATE OR DELETE` trigger)**:
   - `clearledger.events` is strictly an immutable append-only event log: any `UPDATE` or `DELETE` operation on `clearledger.events` must be rejected by raising an exception.
 
@@ -91,7 +91,7 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
   - Delivery & archival state coherence:
     - When `published_at IS NOT NULL`, `attempts` must be `>= 1` and `last_error` must be `NULL`.
     - `archived_at` must be `NULL` unless `published_at IS NOT NULL` and `archived_at >= published_at`.
-  - JSONB envelope coherence: `payload` must be a JSON object (`jsonb_typeof(payload) = 'object'`) whose embedded fields match the row columns: `payload->>'schemaVersion' = '1.0'`, `payload->>'eventId' = event_id::text`, `payload->>'aggregateId' = settlement_id::text`, `(payload->>'aggregateVersion')::integer = aggregate_version`, and `payload->>'correlationId' = correlation_id`.
+  - JSONB envelope coherence: `payload` must be a JSON object (`jsonb_typeof(payload) = 'object'`) containing non-null envelope fields that match the row columns (missing/null fields such as `'{}'::jsonb` or mismatched values must be rejected): `payload->>'schemaVersion' = '1.0'`, `payload->>'eventId' = event_id::text`, `payload->>'aggregateId' = settlement_id::text`, `(payload->>'aggregateVersion')::integer = aggregate_version`, and `payload->>'correlationId' = correlation_id`.
 - **Envelope immutability & non-deletion (`BEFORE UPDATE OR DELETE` trigger)**:
   - Outbox rows are never deleted (`DELETE` on `clearledger.outbox` must be rejected).
   - On `UPDATE`, the envelope identity columns (`seq`, `event_id`, `settlement_id`, `aggregate_version`, `correlation_id`, `payload`, `created_at`) must remain unchanged, and `attempts` must be monotonically non-decreasing (`NEW.attempts >= OLD.attempts`).
