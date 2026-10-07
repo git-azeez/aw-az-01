@@ -92,6 +92,11 @@ CREATE TABLE IF NOT EXISTS clearledger.settlements (
     CONSTRAINT chk_settlements_distinct_parties CHECK (debit_party <> credit_party),
     CONSTRAINT chk_settlements_version_positive CHECK (version >= 1),
     CONSTRAINT chk_settlements_entry_count_version CHECK (entry_count >= 0 AND entry_count = version - 1),
+    CONSTRAINT chk_settlements_lifecycle_state CHECK (
+        (version = 1 AND entry_count = 0 AND current_status = 'INITIATED' AND last_entry_id IS NULL)
+        OR
+        (version > 1 AND entry_count = version - 1 AND current_status <> 'INITIATED' AND last_entry_id IS NOT NULL)
+    ),
     CONSTRAINT chk_settlements_status_enum CHECK (
         current_status IN (
             'INITIATED',
@@ -118,8 +123,10 @@ CREATE TABLE IF NOT EXISTS clearledger.events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (settlement_id, aggregate_version),
     CONSTRAINT chk_events_version_positive CHECK (aggregate_version >= 1),
-    CONSTRAINT chk_events_type_enum CHECK (
-        event_type IN ('SettlementInitiated', 'LedgerEntryRecorded')
+    CONSTRAINT chk_events_type_version CHECK (
+        (event_type = 'SettlementInitiated' AND aggregate_version = 1)
+        OR
+        (event_type = 'LedgerEntryRecorded' AND aggregate_version >= 2)
     )
 );
 
@@ -135,8 +142,11 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
     archived_at TIMESTAMPTZ NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT NULL,
+    UNIQUE (settlement_id, aggregate_version),
     CONSTRAINT chk_outbox_version_positive CHECK (aggregate_version >= 1),
-    CONSTRAINT chk_outbox_attempts_nonnegative CHECK (attempts >= 0)
+    CONSTRAINT chk_outbox_attempts_nonnegative CHECK (attempts >= 0),
+    CONSTRAINT chk_outbox_published_attempts CHECK (published_at IS NULL OR attempts >= 1),
+    CONSTRAINT chk_outbox_archived_requires_published CHECK (archived_at IS NULL OR published_at IS NOT NULL)
 );
 
 CREATE TABLE IF NOT EXISTS clearledger.idempotency_keys (
@@ -250,7 +260,7 @@ with psycopg.connect(pg_conninfo) as conn:
             lam.invoke(FunctionName=relay_fn, InvocationType="RequestResponse", Payload=b"{}")
             time.sleep(0.3)
 
-        # 2. Reconcile DynamoDB projections and Valkey cache against PostgreSQL source of truth
+        # 2. Reconcile DynamoDB projections (STATE + EVENT#*) and Valkey cache against PostgreSQL source of truth
         cur.execute("SELECT settlement_id::text, version FROM clearledger.settlements")
         settlements = cur.fetchall()
         for sid, pg_ver in settlements:
@@ -261,7 +271,22 @@ with psycopg.connect(pg_conninfo) as conn:
                 ConsistentRead=True,
             ).get("Item")
             ddb_ver = int(item["version"]["N"]) if item and "version" in item else 0
-            if ddb_ver < pg_ver:
+            ev_q = ddb.query(
+                TableName=table_name,
+                ConsistentRead=True,
+                KeyConditionExpression="PK = :pk AND begins_with(SK, :prefix)",
+                ExpressionAttributeValues={
+                    ":pk": {"S": pk},
+                    ":prefix": {"S": "EVENT#"},
+                },
+            )
+            ev_count = len(ev_q.get("Items", []))
+            if ddb_ver != pg_ver or ev_count < pg_ver:
+                if ddb_ver > pg_ver:
+                    ddb.delete_item(
+                        TableName=table_name,
+                        Key={"PK": {"S": pk}, "SK": {"S": "STATE"}},
+                    )
                 cur.execute(
                     "SELECT payload FROM clearledger.events WHERE settlement_id = %s ORDER BY aggregate_version ASC",
                     (sid,),

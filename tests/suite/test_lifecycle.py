@@ -44,9 +44,12 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         lam = boto_client("lambda", ctx.config)
         scheduler = boto_client("scheduler", ctx.config)
         ddb = boto_client("dynamodb", ctx.config)
+        s3 = boto_client("s3", ctx.config)
         rclient = valkey_connect(before_manifest, ctx.config)
 
-        sample_sid, sample_meta = next(iter(ctx.committed_settlements.items()))
+        committed_items = list(ctx.committed_settlements.items())
+        sample_sid, sample_meta = committed_items[0]
+        ledger_sid, ledger_meta = committed_items[1]
 
         with pg_connect(before_manifest, ctx.config) as conn:
             with conn.cursor() as cur:
@@ -61,6 +64,16 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                     (sample_sid, sample_meta["expected_version"]),
                 )
             conn.commit()
+
+        # Remove any prior S3 archive batch containing (sample_sid, expected_version) so re-archiving under ledger-audit/ is verified
+        for obj in s3.list_objects_v2(Bucket=before_bucket, Prefix="ledger-audit/").get("Contents", []):
+            body = s3.get_object(Bucket=before_bucket, Key=obj["Key"])["Body"].read().decode()
+            for line in body.splitlines():
+                if line.strip():
+                    rec = json.loads(line)
+                    if rec.get("aggregateId") == sample_sid and int(rec.get("aggregateVersion", 0)) == sample_meta["expected_version"]:
+                        s3.delete_object(Bucket=before_bucket, Key=obj["Key"])
+                        break
 
         # 1. Control-plane drift across SQS, DLQ, EventBridge Scheduler, and Lambda worker environments
         sqs.set_queue_attributes(
@@ -100,10 +113,14 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             Environment={"Variables": archiver_env},
         )
 
-        # 2. Data-plane drift: delete DynamoDB STATE projection and plant stale Valkey cache entry
+        # 2. Data-plane drift: delete DynamoDB STATE projection on sample_sid, delete EVENT#00000001 on ledger_sid, and plant stale Valkey cache entry
         ddb.delete_item(
             TableName=before_manifest["projections"]["table_name"],
             Key={"PK": {"S": f"SETTLEMENT#{sample_sid}"}, "SK": {"S": "STATE"}},
+        )
+        ddb.delete_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{ledger_sid}"}, "SK": {"S": "EVENT#00000001"}},
         )
         rclient.set(
             f"clearledger:settlement:{sample_sid}",
@@ -176,6 +193,22 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         assert unpub_count == 0, f"deploy.sh left {unpub_count} unpublished outbox rows after re-apply"
         assert unarch_count == 0, f"deploy.sh left {unarch_count} unarchived outbox rows after re-apply"
 
+        found_rearchived_in_s3 = False
+        for obj in s3.list_objects_v2(Bucket=after_manifest["audit"]["bucket_name"], Prefix="ledger-audit/").get("Contents", []):
+            body = s3.get_object(Bucket=after_manifest["audit"]["bucket_name"], Key=obj["Key"])["Body"].read().decode()
+            for line in body.splitlines():
+                if line.strip():
+                    rec = json.loads(line)
+                    if rec.get("aggregateId") == sample_sid and int(rec.get("aggregateVersion", 0)) == sample_meta["expected_version"]:
+                        found_rearchived_in_s3 = True
+                        break
+            if found_rearchived_in_s3:
+                break
+        assert found_rearchived_in_s3, (
+            f"Expected deploy.sh to re-archive unarchived outbox row ({sample_sid} v{sample_meta['expected_version']}) "
+            f"into S3 under restored prefix ledger-audit/"
+        )
+
         read_tok = get_access_token(after_manifest, "read")
         service_url = resolve_service_url(after_manifest["service_url"], ctx.config)
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
@@ -192,6 +225,18 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             )
             assert body["status"] == sample_meta["last_status"]
             assert body["clearingStage"] == sample_meta["last_stage"]
+
+            r_ledger = client.get(
+                f"/v1/settlements/{ledger_sid}/ledger",
+                headers={"Authorization": f"Bearer {read_tok}"},
+            )
+            assert r_ledger.status_code == 200, (
+                f"Expected deploy.sh to heal missing DynamoDB EVENT#* items for {ledger_sid}, got {r_ledger.status_code}"
+            )
+            ledger_events = r_ledger.json().get("events", [])
+            assert [e["version"] for e in ledger_events] == list(range(1, ledger_meta["expected_version"] + 1)), (
+                f"Expected healed ledger events 1..{ledger_meta['expected_version']} for {ledger_sid}, got {[e['version'] for e in ledger_events]}"
+            )
 
         return (
             f"Re-applied deploy.sh cleanly, reconciled multi-service control-plane & data-plane drift, "

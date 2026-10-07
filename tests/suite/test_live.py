@@ -238,6 +238,26 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """,
                         (str(uuid.uuid4()),),
                     )
+                    _assert_pg_rejects(
+                        "settlements.version = 1 requires current_status = INITIATED and last_entry_id IS NULL",
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'VALIDATED', 'INIT', 1, 0)
+                        """,
+                        (str(uuid.uuid4()),),
+                    )
+                    _assert_pg_rejects(
+                        "settlements.version > 1 requires last_entry_id IS NOT NULL and current_status <> INITIATED",
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, last_entry_id, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'VALIDATED', 'VAL', NULL, 2, 1)
+                        """,
+                        (str(uuid.uuid4()),),
+                    )
 
                     cur.execute(
                         """
@@ -279,6 +299,26 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         (str(uuid.uuid4()), probe_sid),
                     )
                     _assert_pg_rejects(
+                        "events.SettlementInitiated requires aggregate_version = 1",
+                        """
+                        INSERT INTO clearledger.events (
+                            event_id, settlement_id, aggregate_version, event_type,
+                            correlation_id, idempotency_key, occurred_at, payload
+                        ) VALUES (%s, %s, 2, 'SettlementInitiated', 'corr-probe', 'idem-probe-si2', NOW(), '{}'::jsonb)
+                        """,
+                        (str(uuid.uuid4()), probe_sid),
+                    )
+                    _assert_pg_rejects(
+                        "events.LedgerEntryRecorded requires aggregate_version >= 2",
+                        """
+                        INSERT INTO clearledger.events (
+                            event_id, settlement_id, aggregate_version, event_type,
+                            correlation_id, idempotency_key, occurred_at, payload
+                        ) VALUES (%s, %s, 1, 'LedgerEntryRecorded', 'corr-probe', 'idem-probe-le1', NOW(), '{}'::jsonb)
+                        """,
+                        (str(uuid.uuid4()), probe_sid),
+                    )
+                    _assert_pg_rejects(
                         "outbox.event_id foreign key to events(event_id)",
                         """
                         INSERT INTO clearledger.outbox (
@@ -293,6 +333,24 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         INSERT INTO clearledger.outbox (
                             event_id, settlement_id, aggregate_version, correlation_id, payload, attempts
                         ) VALUES (%s, %s, 1, 'corr-probe', '{}'::jsonb, -1)
+                        """,
+                        (probe_eid, probe_sid),
+                    )
+                    _assert_pg_rejects(
+                        "outbox.published_at requires attempts >= 1",
+                        """
+                        INSERT INTO clearledger.outbox (
+                            event_id, settlement_id, aggregate_version, correlation_id, payload, published_at, attempts
+                        ) VALUES (%s, %s, 1, 'corr-probe', '{}'::jsonb, NOW(), 0)
+                        """,
+                        (probe_eid, probe_sid),
+                    )
+                    _assert_pg_rejects(
+                        "outbox.archived_at requires published_at IS NOT NULL",
+                        """
+                        INSERT INTO clearledger.outbox (
+                            event_id, settlement_id, aggregate_version, correlation_id, payload, published_at, archived_at, attempts
+                        ) VALUES (%s, %s, 1, 'corr-probe', '{}'::jsonb, NULL, NOW(), 0)
                         """,
                         (probe_eid, probe_sid),
                     )

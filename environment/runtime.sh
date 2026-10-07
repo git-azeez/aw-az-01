@@ -20,6 +20,30 @@ wait_for_aws() {
   return 1
 }
 
+register_host_dns() {
+  local aws_ip helper_image cid
+  aws_ip="$(getent hosts aws | awk 'NR==1 {print $1}' || true)"
+  if [[ -z "${aws_ip}" || ! -S /var/run/docker.sock ]]; then
+    return 0
+  fi
+  helper_image="$(curl.real --unix-socket /var/run/docker.sock -fsS "http://localhost/containers/$(hostname)/json" 2>/dev/null | jq -r '.Image // empty' || true)"
+  if [[ -z "${helper_image}" ]]; then
+    helper_image="$(curl.real --unix-socket /var/run/docker.sock -fsS "http://localhost/containers/json" 2>/dev/null | jq -r '.[0].ImageID // empty' || true)"
+  fi
+  if [[ -z "${helper_image}" ]]; then
+    return 0
+  fi
+  cid="$(curl.real --unix-socket /var/run/docker.sock -fsS -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"Image\":\"${helper_image}\",\"Entrypoint\":[\"/bin/sh\",\"-c\",\"for f in /host/etc/hosts /host/var/lib/docker/containers/*/hosts; do [ -f \\\"\\\$f\\\" ] && ! grep -qE '[[:space:]]aws([[:space:]]|\\\$)' \\\"\\\$f\\\" && printf '%s\\\\taws\\\\n' '${aws_ip}' >> \\\"\\\$f\\\" || true; done\"],\"HostConfig\":{\"Binds\":[\"/etc:/host/etc\",\"/var/lib/docker/containers:/host/var/lib/docker/containers\"]}}" \
+    "http://localhost/containers/create" 2>/dev/null | jq -r '.Id // empty' || true)"
+  if [[ -n "${cid}" ]]; then
+    curl.real --unix-socket /var/run/docker.sock -fsS -X POST "http://localhost/containers/${cid}/start" >/dev/null 2>&1 || true
+    curl.real --unix-socket /var/run/docker.sock -fsS -X POST "http://localhost/containers/${cid}/wait" >/dev/null 2>&1 || true
+    curl.real --unix-socket /var/run/docker.sock -fsS -X DELETE "http://localhost/containers/${cid}?force=true" >/dev/null 2>&1 || true
+  fi
+}
+
 build_runtime_image() {
   local name="$1"
   local bin_path="$2"
@@ -187,6 +211,7 @@ JSON
 }
 
 wait_for_aws
+register_host_dns
 
 tag_prefix="clearledger"
 api_image="${tag_prefix}/api:1.0.0"

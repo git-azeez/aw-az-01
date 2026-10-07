@@ -596,14 +596,21 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         sqs = boto_client("sqs", ctx.config)
         lam = boto_client("lambda", ctx.config)
         ddb = boto_client("dynamodb", ctx.config)
+        s3 = boto_client("s3", ctx.config)
         rclient = valkey_connect(m, ctx.config)
         service_url = resolve_service_url(m["service_url"], ctx.config)
 
-        # Simulate projection loss + stale Valkey cache on an already-published settlement
-        corrupted_sid, corrupted_meta = next(iter(ctx.committed_settlements.items()))
+        # Simulate projection loss + stale Valkey cache on already-published settlements
+        committed_items = list(ctx.committed_settlements.items())
+        corrupted_sid, corrupted_meta = committed_items[0]
+        ledger_corrupted_sid, ledger_corrupted_meta = committed_items[1]
         ddb.delete_item(
             TableName=m["projections"]["table_name"],
             Key={"PK": {"S": f"SETTLEMENT#{corrupted_sid}"}, "SK": {"S": "STATE"}},
+        )
+        ddb.delete_item(
+            TableName=m["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{ledger_corrupted_sid}"}, "SK": {"S": "EVENT#00000001"}},
         )
         rclient.set(
             f"clearledger:settlement:{corrupted_sid}",
@@ -685,12 +692,30 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                     f"deploy.sh exited before archiving outbox rows ({unarch} rows still have archived_at IS NULL)"
                 )
 
+        # Verify S3 audit archive objects genuinely contain all 3 recovered events for sid
+        archived_versions_for_sid: set[int] = set()
+        for obj in s3.list_objects_v2(Bucket=m["audit"]["bucket_name"], Prefix=m["audit"]["prefix"]).get("Contents", []):
+            body = s3.get_object(Bucket=m["audit"]["bucket_name"], Key=obj["Key"])["Body"].read().decode()
+            for line in body.splitlines():
+                if line.strip():
+                    rec = json.loads(line)
+                    if rec.get("aggregateId") == sid:
+                        archived_versions_for_sid.add(int(rec.get("aggregateVersion", 0)))
+        assert archived_versions_for_sid == {1, 2, 3}, (
+            f"Expected deploy.sh to archive all 3 recovered outbox events for {sid} to S3 under {m['audit']['prefix']}, "
+            f"found versions {sorted(archived_versions_for_sid)}"
+        )
+
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             def _recovered() -> bool:
                 r = client.get(f"/v1/settlements/{sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
                 return r.status_code == 200 and r.json().get("version") == 3
 
             wait_until(_recovered, timeout_sec=25.0, interval_sec=1.0, description="outbox recovery projection v3")
+
+            r_sid_ledger = client.get(f"/v1/settlements/{sid}/ledger", headers={"Authorization": f"Bearer {tokens['read']}"})
+            assert r_sid_ledger.status_code == 200
+            assert [e["version"] for e in r_sid_ledger.json().get("events", [])] == [1, 2, 3]
 
             r_healed = client.get(f"/v1/settlements/{corrupted_sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
             assert r_healed.status_code == 200, (
@@ -702,6 +727,18 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             )
             assert healed_body.get("status") == corrupted_meta["last_status"]
             assert healed_body.get("clearingStage") == corrupted_meta["last_stage"]
+
+            r_ledger_healed = client.get(
+                f"/v1/settlements/{ledger_corrupted_sid}/ledger",
+                headers={"Authorization": f"Bearer {tokens['read']}"},
+            )
+            assert r_ledger_healed.status_code == 200, (
+                f"Expected deploy.sh to reconcile missing DynamoDB EVENT#* items for {ledger_corrupted_sid}, got {r_ledger_healed.status_code}"
+            )
+            ledger_events = r_ledger_healed.json().get("events", [])
+            assert [e["version"] for e in ledger_events] == list(range(1, ledger_corrupted_meta["expected_version"] + 1)), (
+                f"deploy.sh did not reconcile missing EVENT#00000001 item for {ledger_corrupted_sid}: got versions {[e['version'] for e in ledger_events]}"
+            )
 
         ctx.committed_settlements[sid] = {
             "spec": spec,

@@ -262,6 +262,13 @@ def test_declared_data_and_async(ctx: VerifierContext) -> None:
         proj_kms_ids = {proj_kms_arn, (kms_by_arn.get(proj_kms_arn) or {}).get("key_id") or proj_kms_arn.rsplit("/", 1)[-1]}
         audit_kms_ids = {audit_kms_arn, (kms_by_arn.get(audit_kms_arn) or {}).get("key_id") or audit_kms_arn.rsplit("/", 1)[-1]}
 
+        for al in _by_type(items, "aws_kms_alias"):
+            target = str(al.get("target_key_id") or al.get("target_key_arn") or "")
+            al_vals = {str(v) for v in (al.get("name"), al.get("arn"), al.get("id")) if v}
+            for kms_set in (db_kms_ids, msg_kms_ids, proj_kms_ids, audit_kms_ids):
+                if target and target in kms_set:
+                    kms_set.update(al_vals)
+
         db_kms_addr = (kms_by_arn.get(db_kms_arn) or {}).get("_address", "aws_kms_key.")
         proj_kms_addr = (kms_by_arn.get(proj_kms_arn) or {}).get("_address", "aws_kms_key.")
 
@@ -299,8 +306,9 @@ def test_declared_data_and_async(ctx: VerifierContext) -> None:
         )
         raw_redrive = main_q.get("redrive_policy")
         if not raw_redrive or raw_redrive.strip() in {"", "{}"}:
+            main_q_name = manifest["messaging"]["queue_name"]
             main_q_urls = {
-                str(u)
+                str(u).rstrip("/")
                 for u in (
                     main_q.get("url"),
                     main_q.get("id"),
@@ -309,12 +317,15 @@ def test_declared_data_and_async(ctx: VerifierContext) -> None:
                 if u
             }
             main_q_addr = str(main_q.get("_address") or "")
-            for rp in _by_type(items, "aws_sqs_queue_redrive_policy"):
+            rp_items = _by_type(items, "aws_sqs_queue_redrive_policy")
+            for rp in rp_items:
                 rp_expr = cfg_map.get(str(rp.get("_address") or ""), {})
+                rp_qurl = str(rp.get("queue_url") or rp.get("id") or "").rstrip("/")
                 if (
-                    str(rp.get("queue_url") or "") in main_q_urls
-                    or str(rp.get("id") or "") in main_q_urls
+                    rp_qurl in main_q_urls
+                    or rp_qurl.endswith(f"/{main_q_name}")
                     or (main_q_addr and config_depends_on_resource(rp_expr.get("queue_url"), main_q_addr))
+                    or len(rp_items) == 1
                 ):
                     candidate = rp.get("redrive_policy")
                     if candidate and str(candidate).strip() not in {"", "{}"}:

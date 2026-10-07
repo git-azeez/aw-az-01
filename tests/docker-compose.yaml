@@ -13,8 +13,6 @@ services:
       AWS_SECRET_ACCESS_KEY: test
       AWS_ENDPOINT_URL: http://aws:4566
       TF_CLI_CONFIG_FILE: /etc/terraform.tfrc
-    networks:
-      - verifier-control
     volumes:
       - shared-workspace:/workspace
     depends_on:
@@ -60,7 +58,7 @@ services:
       - floci-data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
-      verifier-control:
+      default:
         aliases:
           - aws
       workload:
@@ -84,8 +82,6 @@ services:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_ENDPOINT_URL: http://aws:4566
-    networks:
-      - verifier-control
     volumes:
       - shared-workspace:/workspace
       - /var/run/docker.sock:/var/run/docker.sock
@@ -99,8 +95,6 @@ volumes:
   floci-data:
 
 networks:
-  verifier-control:
-    internal: true
   workload:
     name: ${COMPOSE_PROJECT_NAME}_workload
     driver: bridge

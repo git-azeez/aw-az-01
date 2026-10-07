@@ -30,10 +30,10 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
 | `credit_party` | `TEXT` | `NOT NULL` | Table `CHECK`: `debit_party <> credit_party` |
 | `current_status` | `TEXT` | `NOT NULL` | `CHECK`: must be one of `'INITIATED'`, `'VALIDATED'`, `'RESERVED'`, `'CLEARED'`, `'SETTLED'`, `'RECONCILED'`, `'DISPUTED'` |
 | `current_stage` | `TEXT` | `NOT NULL` | — |
-| `last_entry_id` | `UUID` | `NULL` | — |
+| `last_entry_id` | `UUID` | `NULL` | Cross-column `CHECK`: `NULL` when `version = 1`; `NOT NULL` when `version > 1` |
 | `last_memo` | `TEXT` | `NULL` | — |
 | `version` | `INTEGER` | `NOT NULL` | `CHECK`: `version >= 1` |
-| `entry_count` | `INTEGER` | `NOT NULL DEFAULT 0` | `CHECK`: `entry_count >= 0 AND entry_count = version - 1` |
+| `entry_count` | `INTEGER` | `NOT NULL DEFAULT 0` | Cross-column `CHECK`: when `version = 1`, `entry_count = 0 AND current_status = 'INITIATED' AND last_entry_id IS NULL`; when `version > 1`, `entry_count = version - 1 AND current_status <> 'INITIATED' AND last_entry_id IS NOT NULL` |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | — |
 | `updated_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | — |
 
@@ -45,7 +45,7 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
 | `event_id` | `UUID` | `NOT NULL` | `UNIQUE` |
 | `settlement_id` | `UUID` | `NOT NULL` | `REFERENCES clearledger.settlements(settlement_id) ON DELETE CASCADE` |
 | `aggregate_version` | `INTEGER` | `NOT NULL` | `CHECK (aggregate_version >= 1)`; composite `UNIQUE (settlement_id, aggregate_version)` |
-| `event_type` | `TEXT` | `NOT NULL` | `CHECK`: must be one of `'SettlementInitiated'`, `'LedgerEntryRecorded'` |
+| `event_type` | `TEXT` | `NOT NULL` | Cross-column `CHECK`: must be `'SettlementInitiated'` with `aggregate_version = 1`, or `'LedgerEntryRecorded'` with `aggregate_version >= 2` |
 | `correlation_id` | `TEXT` | `NOT NULL` | — |
 | `idempotency_key` | `TEXT` | `NOT NULL` | — |
 | `occurred_at` | `TIMESTAMPTZ` | `NOT NULL` | — |
@@ -59,12 +59,12 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
 | `seq` | `BIGSERIAL` | `NOT NULL` | `PRIMARY KEY` |
 | `event_id` | `UUID` | `NOT NULL` | `UNIQUE REFERENCES clearledger.events(event_id) ON DELETE CASCADE` |
 | `settlement_id` | `UUID` | `NOT NULL` | `REFERENCES clearledger.settlements(settlement_id) ON DELETE CASCADE` |
-| `aggregate_version` | `INTEGER` | `NOT NULL` | `CHECK (aggregate_version >= 1)` |
+| `aggregate_version` | `INTEGER` | `NOT NULL` | `CHECK (aggregate_version >= 1)`; composite `UNIQUE (settlement_id, aggregate_version)` |
 | `correlation_id` | `TEXT` | `NOT NULL` | — |
 | `payload` | `JSONB` | `NOT NULL` | — |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | — |
-| `published_at` | `TIMESTAMPTZ` | `NULL` | — |
-| `archived_at` | `TIMESTAMPTZ` | `NULL` | — |
+| `published_at` | `TIMESTAMPTZ` | `NULL` | Cross-column `CHECK`: `published_at IS NULL OR attempts >= 1` |
+| `archived_at` | `TIMESTAMPTZ` | `NULL` | Cross-column `CHECK`: `archived_at IS NULL OR published_at IS NOT NULL` (cannot be archived before publication) |
 | `attempts` | `INTEGER` | `NOT NULL DEFAULT 0` | `CHECK (attempts >= 0)` |
 | `last_error` | `TEXT` | `NULL` | — |
 
