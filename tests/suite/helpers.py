@@ -350,6 +350,16 @@ def verify_iam_roles_and_policies(
         assert policy_allows_any_resource(exec_docs, act, lg_api), (
             f"{label}: ecs_execution_role_arn must allow {act} on API log group"
         )
+    for forbidden_lg, lg_label in ((lg_proj, "projector"), (lg_relay, "relay"), (lg_arch, "archiver")):
+        for log_act in ("logs:PutLogEvents", "logs:CreateLogStream"):
+            assert not policy_allows_any_resource(exec_docs, log_act, forbidden_lg), (
+                f"{label}: ecs_execution_role_arn must not allow {log_act} on {lg_label} log group (no shared /clearledger/* wildcard)"
+            )
+    for kms_arn, kms_label in ((kms_db, "database"), (kms_msg, "messaging"), (kms_proj, "projection"), (kms_audit, "audit")):
+        for kms_act in ("kms:Decrypt", "kms:GenerateDataKey"):
+            assert not policy_allows(exec_docs, kms_act, kms_arn), (
+                f"{label}: ecs_execution_role_arn must not allow {kms_act} on {kms_label} KMS key"
+            )
     assert not policy_allows(exec_docs, "sqs:SendMessage", queue_arn), (
         f"{label}: ecs_execution_role_arn must not allow sqs:SendMessage"
     )
@@ -358,9 +368,6 @@ def verify_iam_roles_and_policies(
     )
     assert not policy_allows(exec_docs, "s3:PutObject", audit_obj_arn), (
         f"{label}: ecs_execution_role_arn must not allow s3:PutObject"
-    )
-    assert not policy_allows_any_resource(exec_docs, "logs:PutLogEvents", lg_proj), (
-        f"{label}: ecs_execution_role_arn must not allow writing to projector log group"
     )
 
     # 2. ecs_task_role_arn
@@ -381,15 +388,30 @@ def verify_iam_roles_and_policies(
         assert policy_allows_any_resource(task_docs, act, lg_api), (
             f"{label}: ecs_task_role_arn must allow {act} on API log group"
         )
-    assert not policy_allows(task_docs, "dynamodb:PutItem", table_arn), (
-        f"{label}: ecs_task_role_arn must not allow dynamodb:PutItem on projection table"
+    for forbidden_lg, lg_label in ((lg_proj, "projector"), (lg_relay, "relay"), (lg_arch, "archiver")):
+        for log_act in ("logs:PutLogEvents", "logs:CreateLogStream"):
+            assert not policy_allows_any_resource(task_docs, log_act, forbidden_lg), (
+                f"{label}: ecs_task_role_arn must not allow {log_act} on {lg_label} log group"
+            )
+    for sqs_forbid in ("sqs:ReceiveMessage", "sqs:DeleteMessage"):
+        assert not policy_allows(task_docs, sqs_forbid, queue_arn), (
+            f"{label}: ecs_task_role_arn must not allow {sqs_forbid} on main queue"
+        )
+    assert not policy_allows(task_docs, "sqs:SendMessage", dlq_arn), (
+        f"{label}: ecs_task_role_arn must not allow sqs:SendMessage on DLQ"
     )
+    for ddb_forbid in ("dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"):
+        assert not policy_allows(task_docs, ddb_forbid, table_arn), (
+            f"{label}: ecs_task_role_arn must not allow {ddb_forbid} on projection table"
+        )
     assert not policy_allows(task_docs, "s3:PutObject", audit_obj_arn), (
         f"{label}: ecs_task_role_arn must not allow s3:PutObject on audit bucket"
     )
-    assert not policy_allows(task_docs, "kms:Decrypt", kms_audit), (
-        f"{label}: ecs_task_role_arn must not allow kms:Decrypt on audit KMS key"
-    )
+    for kms_arn, kms_label in ((kms_db, "database"), (kms_audit, "audit")):
+        for kms_act in ("kms:Decrypt", "kms:GenerateDataKey"):
+            assert not policy_allows(task_docs, kms_act, kms_arn), (
+                f"{label}: ecs_task_role_arn must not allow {kms_act} on {kms_label} KMS key"
+            )
 
     # 3. projector_role_arn
     proj_docs = _docs("projector_role_arn")
@@ -412,15 +434,28 @@ def verify_iam_roles_and_policies(
         assert policy_allows_any_resource(proj_docs, act, lg_proj), (
             f"{label}: projector_role_arn must allow {act} on projector log group"
         )
+    for forbidden_lg, lg_label in ((lg_api, "API"), (lg_relay, "relay"), (lg_arch, "archiver")):
+        for log_act in ("logs:PutLogEvents", "logs:CreateLogStream"):
+            assert not policy_allows_any_resource(proj_docs, log_act, forbidden_lg), (
+                f"{label}: projector_role_arn must not allow {log_act} on {lg_label} log group"
+            )
     assert not policy_allows(proj_docs, "sqs:SendMessage", queue_arn), (
         f"{label}: projector_role_arn must not allow sqs:SendMessage on main queue"
+    )
+    assert not policy_allows(proj_docs, "sqs:ReceiveMessage", dlq_arn), (
+        f"{label}: projector_role_arn must not allow sqs:ReceiveMessage on DLQ"
+    )
+    assert not policy_allows(proj_docs, "dynamodb:DeleteItem", table_arn), (
+        f"{label}: projector_role_arn must not allow dynamodb:DeleteItem on projection table"
     )
     assert not policy_allows(proj_docs, "s3:PutObject", audit_obj_arn), (
         f"{label}: projector_role_arn must not allow s3:PutObject on audit bucket"
     )
-    assert not policy_allows(proj_docs, "kms:Decrypt", kms_db), (
-        f"{label}: projector_role_arn must not allow kms:Decrypt on database KMS key"
-    )
+    for kms_arn, kms_label in ((kms_db, "database"), (kms_audit, "audit")):
+        for kms_act in ("kms:Decrypt", "kms:GenerateDataKey"):
+            assert not policy_allows(proj_docs, kms_act, kms_arn), (
+                f"{label}: projector_role_arn must not allow {kms_act} on {kms_label} KMS key"
+            )
 
     # 4. relay_role_arn
     relay_docs = _docs("relay_role_arn")
@@ -433,15 +468,30 @@ def verify_iam_roles_and_policies(
         assert policy_allows_any_resource(relay_docs, act, lg_relay), (
             f"{label}: relay_role_arn must allow {act} on relay log group"
         )
-    assert not policy_allows(relay_docs, "dynamodb:PutItem", table_arn), (
-        f"{label}: relay_role_arn must not allow dynamodb:PutItem"
+    for forbidden_lg, lg_label in ((lg_api, "API"), (lg_proj, "projector"), (lg_arch, "archiver")):
+        for log_act in ("logs:PutLogEvents", "logs:CreateLogStream"):
+            assert not policy_allows_any_resource(relay_docs, log_act, forbidden_lg), (
+                f"{label}: relay_role_arn must not allow {log_act} on {lg_label} log group"
+            )
+    for sqs_forbid in ("sqs:ReceiveMessage", "sqs:DeleteMessage"):
+        assert not policy_allows(relay_docs, sqs_forbid, queue_arn), (
+            f"{label}: relay_role_arn must not allow {sqs_forbid} on main queue"
+        )
+    assert not policy_allows(relay_docs, "sqs:SendMessage", dlq_arn), (
+        f"{label}: relay_role_arn must not allow sqs:SendMessage on DLQ"
     )
+    for ddb_forbid in ("dynamodb:GetItem", "dynamodb:PutItem"):
+        assert not policy_allows(relay_docs, ddb_forbid, table_arn), (
+            f"{label}: relay_role_arn must not allow {ddb_forbid}"
+        )
     assert not policy_allows(relay_docs, "s3:PutObject", audit_obj_arn), (
         f"{label}: relay_role_arn must not allow s3:PutObject"
     )
-    assert not policy_allows(relay_docs, "kms:Decrypt", kms_audit), (
-        f"{label}: relay_role_arn must not allow kms:Decrypt on audit KMS key"
-    )
+    for kms_arn, kms_label in ((kms_proj, "projection"), (kms_audit, "audit")):
+        for kms_act in ("kms:Decrypt", "kms:GenerateDataKey"):
+            assert not policy_allows(relay_docs, kms_act, kms_arn), (
+                f"{label}: relay_role_arn must not allow {kms_act} on {kms_label} KMS key"
+            )
 
     # 5. archiver_role_arn
     arch_docs = _docs("archiver_role_arn")
@@ -467,15 +517,22 @@ def verify_iam_roles_and_policies(
         assert policy_allows_any_resource(arch_docs, act, lg_arch), (
             f"{label}: archiver_role_arn must allow {act} on archiver log group"
         )
+    for forbidden_lg, lg_label in ((lg_api, "API"), (lg_proj, "projector"), (lg_relay, "relay")):
+        for log_act in ("logs:PutLogEvents", "logs:CreateLogStream"):
+            assert not policy_allows_any_resource(arch_docs, log_act, forbidden_lg), (
+                f"{label}: archiver_role_arn must not allow {log_act} on {lg_label} log group"
+            )
     assert not policy_allows(arch_docs, "sqs:SendMessage", queue_arn), (
         f"{label}: archiver_role_arn must not allow sqs:SendMessage"
     )
     assert not policy_allows(arch_docs, "dynamodb:PutItem", table_arn), (
         f"{label}: archiver_role_arn must not allow dynamodb:PutItem"
     )
-    assert not policy_allows(arch_docs, "kms:Decrypt", kms_msg), (
-        f"{label}: archiver_role_arn must not allow kms:Decrypt on messaging KMS key"
-    )
+    for kms_arn, kms_label in ((kms_msg, "messaging"), (kms_proj, "projection")):
+        for kms_act in ("kms:Decrypt", "kms:GenerateDataKey"):
+            assert not policy_allows(arch_docs, kms_act, kms_arn), (
+                f"{label}: archiver_role_arn must not allow {kms_act} on {kms_label} KMS key"
+            )
 
     # 6. scheduler_role_arn
     sched_docs = _docs("scheduler_role_arn")
@@ -494,6 +551,16 @@ def verify_iam_roles_and_policies(
     assert not policy_allows(sched_docs, "s3:PutObject", audit_obj_arn), (
         f"{label}: scheduler_role_arn must not allow s3:PutObject"
     )
+    for forbidden_lg, lg_label in ((lg_api, "API"), (lg_proj, "projector"), (lg_relay, "relay"), (lg_arch, "archiver")):
+        for log_act in ("logs:PutLogEvents", "logs:CreateLogStream"):
+            assert not policy_allows_any_resource(sched_docs, log_act, forbidden_lg), (
+                f"{label}: scheduler_role_arn must not allow {log_act} on {lg_label} log group"
+            )
+    for kms_arn, kms_label in ((kms_db, "database"), (kms_msg, "messaging"), (kms_proj, "projection"), (kms_audit, "audit")):
+        for kms_act in ("kms:Decrypt", "kms:GenerateDataKey"):
+            assert not policy_allows(sched_docs, kms_act, kms_arn), (
+                f"{label}: scheduler_role_arn must not allow {kms_act} on {kms_label} KMS key"
+            )
 
 
 def run_script(script_path: Path, timeout_sec: int) -> subprocess.CompletedProcess[str]:
@@ -720,6 +787,7 @@ def snapshot_inventory(config: dict[str, Any] | None = None) -> dict[str, set[st
         p["Id"] for p in cognito.list_user_pools(MaxResults=60).get("UserPools", [])
     }
     inv["iam_roles"] = {r["RoleName"] for r in iam.list_roles().get("Roles", [])}
+    inv["iam_policies"] = {p["PolicyName"] for p in iam.list_policies(Scope="Local").get("Policies", [])}
     auto_log_prefixes = ("/aws/rds/", "/aws/elasticache/", "/aws/lambda/", "/ecs/")
     inv["log_groups"] = {
         lg["logGroupName"]

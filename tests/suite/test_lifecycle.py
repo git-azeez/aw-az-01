@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import uuid
 
 import httpx
 
@@ -50,6 +51,9 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         committed_items = list(ctx.committed_settlements.items())
         sample_sid, sample_meta = committed_items[0]
         ledger_sid, ledger_meta = committed_items[1]
+        s3_loss_sid, s3_loss_meta = committed_items[2]
+        orphan_sid = str(uuid.uuid4())
+        now_iso = datetime.now(timezone.utc).isoformat()
 
         with pg_connect(before_manifest, ctx.config) as conn:
             with conn.cursor() as cur:
@@ -65,15 +69,29 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 )
             conn.commit()
 
-        # Remove any prior S3 archive batch containing (sample_sid, expected_version) so re-archiving under ledger-audit/ is verified
+        # Remove S3 archive batches containing (sample_sid, expected_version) AND (s3_loss_sid, expected_version)
+        # Note: for s3_loss_sid, clearledger.outbox.archived_at remains NOT NULL in PostgreSQL, so deploy.sh must
+        # genuinely inspect S3 ledger-audit/ against clearledger.outbox to detect and heal the missing S3 audit record!
         for obj in s3.list_objects_v2(Bucket=before_bucket, Prefix="ledger-audit/").get("Contents", []):
             body = s3.get_object(Bucket=before_bucket, Key=obj["Key"])["Body"].read().decode()
             for line in body.splitlines():
                 if line.strip():
                     rec = json.loads(line)
-                    if rec.get("aggregateId") == sample_sid and int(rec.get("aggregateVersion", 0)) == sample_meta["expected_version"]:
+                    agg_id = rec.get("aggregateId")
+                    agg_ver = int(rec.get("aggregateVersion", 0))
+                    if (agg_id == sample_sid and agg_ver == sample_meta["expected_version"]) or (
+                        agg_id == s3_loss_sid and agg_ver == s3_loss_meta["expected_version"]
+                    ):
                         s3.delete_object(Bucket=before_bucket, Key=obj["Key"])
                         break
+
+        # Plant a stray S3 object outside ledger-audit/ that deploy.sh must purge
+        s3.put_object(
+            Bucket=before_bucket,
+            Key="drifted-audit/stray-unscoped-batch.ndjson",
+            Body=b'{"stray":true}\n',
+            ContentType="application/x-ndjson",
+        )
 
         # 1. Control-plane drift across SQS, DLQ, EventBridge Scheduler, and Lambda worker environments
         sqs.set_queue_attributes(
@@ -113,14 +131,76 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             Environment={"Variables": archiver_env},
         )
 
-        # 2. Data-plane drift: delete DynamoDB STATE projection on sample_sid, delete EVENT#00000001 on ledger_sid, and plant stale Valkey cache entry
-        ddb.delete_item(
+        # 2. Data-plane drift:
+        # - Inflated-version STATE corruption on sample_sid + poisoned Valkey cache
+        # - Missing EVENT#00000001 + in-place mutated EVENT#00000002 + phantom EVENT#00000099 on ledger_sid
+        # - Orphan settlement partition in DynamoDB and Valkey absent from PostgreSQL
+        ddb.put_item(
             TableName=before_manifest["projections"]["table_name"],
-            Key={"PK": {"S": f"SETTLEMENT#{sample_sid}"}, "SK": {"S": "STATE"}},
+            Item={
+                "PK": {"S": f"SETTLEMENT#{sample_sid}"},
+                "SK": {"S": "STATE"},
+                "GSI1PK": {"S": f"ACCOUNT#{sample_meta['spec']['accountId']}"},
+                "GSI1SK": {"S": f"UPDATED#{now_iso}#SETTLEMENT#{sample_sid}"},
+                "settlement_id": {"S": sample_sid},
+                "account_id": {"S": sample_meta["spec"]["accountId"]},
+                "reference": {"S": sample_meta["spec"]["reference"]},
+                "debit_party": {"S": sample_meta["spec"]["debitParty"]},
+                "credit_party": {"S": sample_meta["spec"]["creditParty"]},
+                "status": {"S": "DISPUTED"},
+                "clearing_stage": {"S": "DRIFTED_INFLATED_STATE"},
+                "version": {"N": "99"},
+                "entry_count": {"N": "98"},
+                "updated_at": {"S": now_iso},
+            },
         )
         ddb.delete_item(
             TableName=before_manifest["projections"]["table_name"],
             Key={"PK": {"S": f"SETTLEMENT#{ledger_sid}"}, "SK": {"S": "EVENT#00000001"}},
+        )
+        ddb.update_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{ledger_sid}"}, "SK": {"S": "EVENT#00000002"}},
+            UpdateExpression="SET clearing_stage = :cs, #st = :st",
+            ExpressionAttributeNames={"#st": "status"},
+            ExpressionAttributeValues={
+                ":cs": {"S": "DRIFTED_EVENT_STAGE"},
+                ":st": {"S": "DISPUTED"},
+            },
+        )
+        ddb.put_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Item={
+                "PK": {"S": f"SETTLEMENT#{ledger_sid}"},
+                "SK": {"S": "EVENT#00000099"},
+                "event_id": {"S": str(uuid.uuid4())},
+                "settlement_id": {"S": ledger_sid},
+                "version": {"N": "99"},
+                "event_type": {"S": "LedgerEntryRecorded"},
+                "status": {"S": "DISPUTED"},
+                "clearing_stage": {"S": "PHANTOM_EVENT_99"},
+                "correlation_id": {"S": "corr-phantom-99"},
+                "occurred_at": {"S": now_iso},
+            },
+        )
+        ddb.put_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Item={
+                "PK": {"S": f"SETTLEMENT#{orphan_sid}"},
+                "SK": {"S": "STATE"},
+                "GSI1PK": {"S": "ACCOUNT#ACCT-ORPHAN"},
+                "GSI1SK": {"S": f"UPDATED#{now_iso}#SETTLEMENT#{orphan_sid}"},
+                "settlement_id": {"S": orphan_sid},
+                "account_id": {"S": "ACCT-ORPHAN"},
+                "reference": {"S": "REF-ORPHAN"},
+                "debit_party": {"S": "BANK-ORPHAN-A"},
+                "credit_party": {"S": "BANK-ORPHAN-B"},
+                "status": {"S": "INITIATED"},
+                "clearing_stage": {"S": "ORPHAN_STATE"},
+                "version": {"N": "1"},
+                "entry_count": {"N": "0"},
+                "updated_at": {"S": now_iso},
+            },
         )
         rclient.set(
             f"clearledger:settlement:{sample_sid}",
@@ -131,11 +211,28 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                     "reference": sample_meta["spec"]["reference"],
                     "debitParty": sample_meta["spec"]["debitParty"],
                     "creditParty": sample_meta["spec"]["creditParty"],
-                    "status": "INITIATED",
+                    "status": "DISPUTED",
                     "clearingStage": "DRIFTED_CACHE_STAGE",
+                    "version": 99,
+                    "entryCount": 98,
+                    "updatedAt": now_iso,
+                }
+            ),
+        )
+        rclient.set(
+            f"clearledger:settlement:{orphan_sid}",
+            json.dumps(
+                {
+                    "settlementId": orphan_sid,
+                    "accountId": "ACCT-ORPHAN",
+                    "reference": "REF-ORPHAN",
+                    "debitParty": "BANK-ORPHAN-A",
+                    "creditParty": "BANK-ORPHAN-B",
+                    "status": "INITIATED",
+                    "clearingStage": "ORPHAN_CACHE",
                     "version": 1,
                     "entryCount": 0,
-                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                    "updatedAt": now_iso,
                 }
             ),
         )
@@ -193,31 +290,44 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         assert unpub_count == 0, f"deploy.sh left {unpub_count} unpublished outbox rows after re-apply"
         assert unarch_count == 0, f"deploy.sh left {unarch_count} unarchived outbox rows after re-apply"
 
-        found_rearchived_in_s3 = False
+        all_bucket_objs = s3.list_objects_v2(Bucket=after_manifest["audit"]["bucket_name"]).get("Contents", [])
+        stray_keys = [o["Key"] for o in all_bucket_objs if not o["Key"].startswith("ledger-audit/")]
+        assert not stray_keys, (
+            f"Expected deploy.sh to purge stray S3 objects outside ledger-audit/, found: {stray_keys}"
+        )
+
+        found_rearchived_sample = False
+        found_rearchived_s3_loss = False
         for obj in s3.list_objects_v2(Bucket=after_manifest["audit"]["bucket_name"], Prefix="ledger-audit/").get("Contents", []):
             body = s3.get_object(Bucket=after_manifest["audit"]["bucket_name"], Key=obj["Key"])["Body"].read().decode()
             for line in body.splitlines():
                 if line.strip():
                     rec = json.loads(line)
-                    if rec.get("aggregateId") == sample_sid and int(rec.get("aggregateVersion", 0)) == sample_meta["expected_version"]:
-                        found_rearchived_in_s3 = True
-                        break
-            if found_rearchived_in_s3:
-                break
-        assert found_rearchived_in_s3, (
+                    agg_id = rec.get("aggregateId")
+                    agg_ver = int(rec.get("aggregateVersion", 0))
+                    if agg_id == sample_sid and agg_ver == sample_meta["expected_version"]:
+                        found_rearchived_sample = True
+                    if agg_id == s3_loss_sid and agg_ver == s3_loss_meta["expected_version"]:
+                        found_rearchived_s3_loss = True
+        assert found_rearchived_sample, (
             f"Expected deploy.sh to re-archive unarchived outbox row ({sample_sid} v{sample_meta['expected_version']}) "
             f"into S3 under restored prefix ledger-audit/"
+        )
+        assert found_rearchived_s3_loss, (
+            f"Expected deploy.sh to detect and re-archive missing S3 audit record ({s3_loss_sid} v{s3_loss_meta['expected_version']}) "
+            f"whose S3 batch was deleted while archived_at remained NOT NULL in PostgreSQL"
         )
 
         read_tok = get_access_token(after_manifest, "read")
         service_url = resolve_service_url(after_manifest["service_url"], ctx.config)
+        rclient = valkey_connect(after_manifest, ctx.config)
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             resp = client.get(
                 f"/v1/settlements/{sample_sid}",
                 headers={"Authorization": f"Bearer {read_tok}"},
             )
             assert resp.status_code == 200, (
-                f"Expected deploy.sh to heal missing DynamoDB STATE projection for {sample_sid}, got {resp.status_code}"
+                f"Expected deploy.sh to heal corrupted DynamoDB STATE projection for {sample_sid}, got {resp.status_code}"
             )
             body = resp.json()
             assert body["version"] == sample_meta["expected_version"], (
@@ -231,15 +341,31 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 headers={"Authorization": f"Bearer {read_tok}"},
             )
             assert r_ledger.status_code == 200, (
-                f"Expected deploy.sh to heal missing DynamoDB EVENT#* items for {ledger_sid}, got {r_ledger.status_code}"
+                f"Expected deploy.sh to heal DynamoDB EVENT#* items for {ledger_sid}, got {r_ledger.status_code}"
             )
             ledger_events = r_ledger.json().get("events", [])
             assert [e["version"] for e in ledger_events] == list(range(1, ledger_meta["expected_version"] + 1)), (
                 f"Expected healed ledger events 1..{ledger_meta['expected_version']} for {ledger_sid}, got {[e['version'] for e in ledger_events]}"
             )
+            expected_v2_stage = ledger_meta["spec"]["entries"][0]["clearingStage"]
+            assert ledger_events[1].get("clearingStage") == expected_v2_stage, (
+                f"Expected deploy.sh to repair in-place mutated EVENT#00000002 for {ledger_sid}: "
+                f"expected {expected_v2_stage}, got {ledger_events[1]}"
+            )
+
+            r_orphan = client.get(
+                f"/v1/settlements/{orphan_sid}",
+                headers={"Authorization": f"Bearer {read_tok}"},
+            )
+            assert r_orphan.status_code == 404, (
+                f"Expected deploy.sh to purge orphan DynamoDB/Valkey settlement {orphan_sid}, got {r_orphan.status_code}"
+            )
+            assert rclient.get(f"clearledger:settlement:{orphan_sid}") is None, (
+                f"Expected deploy.sh to purge orphan Valkey key clearledger:settlement:{orphan_sid}"
+            )
 
         return (
-            f"Re-applied deploy.sh cleanly, reconciled multi-service control-plane & data-plane drift, "
+            f"Re-applied deploy.sh cleanly, reconciled multi-service control-plane & bidirectional data-plane drift, "
             f"and preserved all {after_count} settlements"
         )
 
@@ -254,6 +380,8 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
         iam = boto_client("iam", ctx.config)
         sqs = boto_client("sqs", ctx.config)
         logs = boto_client("logs", ctx.config)
+        scheduler = boto_client("scheduler", ctx.config)
+        kms = boto_client("kms", ctx.config)
 
         # Simulate out-of-band operational artifacts scoped to resource_prefix before teardown:
         # 1) Unmanaged inline policy on a deployment IAM role
@@ -274,7 +402,65 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
                 }
             ),
         )
-        # 2) Out-of-band prefix-scoped SQS queue and CloudWatch log group tagged with ClearLedgerDeployment
+        # 2) Out-of-band customer-managed IAM policy attached to a deployment IAM role
+        task_role_name = m["iam"]["ecs_task_role_arn"].rsplit("/", 1)[-1]
+        managed_pol = iam.create_policy(
+            PolicyName=f"{prefix}-ops-managed-policy",
+            PolicyDocument=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": ["sqs:GetQueueUrl"],
+                            "Resource": m["messaging"]["queue_arn"],
+                        }
+                    ],
+                }
+            ),
+        )["Policy"]
+        iam.attach_role_policy(RoleName=task_role_name, PolicyArn=managed_pol["Arn"])
+
+        # 3) Out-of-band prefix-scoped IAM role with inline policy
+        ops_role_name = f"{prefix}-ops-breakglass-role"
+        iam.create_role(
+            RoleName=ops_role_name,
+            AssumeRolePolicyDocument=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {"Service": "lambda.amazonaws.com"},
+                            "Action": "sts:AssumeRole",
+                        }
+                    ],
+                }
+            ),
+            Tags=[
+                {"Key": "ClearLedgerDeployment", "Value": prefix},
+                {"Key": "Environment", "Value": m.get("environment", "eval")},
+                {"Key": "Service", "Value": "clearledger"},
+            ],
+        )
+        iam.put_role_policy(
+            RoleName=ops_role_name,
+            PolicyName=f"{prefix}-ops-breakglass-inline",
+            PolicyDocument=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": ["sqs:GetQueueAttributes"],
+                            "Resource": m["messaging"]["queue_arn"],
+                        }
+                    ],
+                }
+            ),
+        )
+
+        # 4) Out-of-band prefix-scoped SQS queue, CloudWatch log group, EventBridge schedule, and KMS alias
         sqs.create_queue(
             QueueName=f"{prefix}-ops-dlq",
             tags={
@@ -293,6 +479,27 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
                     "Environment": m.get("environment", "eval"),
                     "Service": "clearledger",
                 },
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            scheduler.create_schedule(
+                Name=f"{prefix}-ops-canary-schedule",
+                ScheduleExpression="rate(5 minutes)",
+                FlexibleTimeWindow={"Mode": "OFF"},
+                Target={
+                    "Arn": m["workers"]["outbox_relay"]["function_arn"],
+                    "RoleArn": m["iam"]["scheduler_role_arn"],
+                    "Input": json.dumps({"source": "ops-canary"}),
+                },
+                State="ENABLED",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            kms.create_alias(
+                AliasName=f"alias/{prefix}-ops-alias",
+                TargetKeyId=m["kms"]["messaging_arn"],
             )
         except Exception:  # noqa: BLE001
             pass

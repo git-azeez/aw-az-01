@@ -419,7 +419,10 @@ async fn invalidate_valkey_cache(state: &AppState, settlement_id: Uuid) {
 
 fn map_write_db_error(err: sqlx::Error) -> ApiError {
     if let sqlx::Error::Database(ref db_err) = err {
-        if matches!(db_err.code().as_deref(), Some("23514" | "23503" | "23502")) {
+        if matches!(
+            db_err.code().as_deref(),
+            Some("23514" | "23503" | "23502" | "P0001")
+        ) {
             return ApiError::new(
                 StatusCode::BAD_REQUEST,
                 "invalid_settlement",

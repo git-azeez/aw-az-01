@@ -195,8 +195,35 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                 cur.execute("SAVEPOINT sp_outer_probe")
                 try:
                     probe_sid = str(uuid.uuid4())
+                    settled_probe_sid = str(uuid.uuid4())
                     probe_eid = str(uuid.uuid4())
+                    probe_eid_2 = str(uuid.uuid4())
                     orphan_eid = str(uuid.uuid4())
+
+                    def _make_event_payload(
+                        eid: str,
+                        sid: str,
+                        ver: int,
+                        etype: str = "SettlementInitiated",
+                        corr: str = "corr-probe",
+                    ) -> str:
+                        return json.dumps(
+                            {
+                                "schemaVersion": "1.0",
+                                "eventId": eid,
+                                "aggregateId": sid,
+                                "aggregateVersion": ver,
+                                "eventType": etype,
+                                "correlationId": corr,
+                                "accountId": "ACCT-PROBE",
+                                "reference": "REF-PROBE",
+                                "debitParty": "BANK-A",
+                                "creditParty": "BANK-B",
+                                "status": "INITIATED" if ver == 1 else "VALIDATED",
+                                "clearingStage": "INIT" if ver == 1 else "VAL",
+                                "entryCount": ver - 1,
+                            }
+                        )
 
                     _assert_pg_rejects(
                         "settlements.debit_party <> credit_party",
@@ -205,6 +232,16 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             settlement_id, account_id, reference, debit_party, credit_party,
                             current_status, current_stage, version, entry_count
                         ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-SAME', 'BANK-SAME', 'INITIATED', 'INIT', 1, 0)
+                        """,
+                        (str(uuid.uuid4()),),
+                    )
+                    _assert_pg_rejects(
+                        "settlements.non-empty trimmed text fields",
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, version, entry_count
+                        ) VALUES (%s, '   ', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INIT', 1, 0)
                         """,
                         (str(uuid.uuid4()),),
                     )
@@ -223,10 +260,10 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
-                            current_status, current_stage, version, entry_count
-                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'VALIDATED', 'VAL', 2, 0)
+                            current_status, current_stage, last_entry_id, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'VALIDATED', 'VAL', %s, 2, 0)
                         """,
-                        (str(uuid.uuid4()),),
+                        (str(uuid.uuid4()), str(uuid.uuid4())),
                     )
                     _assert_pg_rejects(
                         "settlements.current_status enum check",
@@ -270,96 +307,286 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                     )
                     cur.execute(
                         """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, last_entry_id, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'SETTLED', 'STL-1', %s, 2, 1)
+                        """,
+                        (settled_probe_sid, str(uuid.uuid4())),
+                    )
+
+                    _assert_pg_rejects(
+                        "settlements trigger: immutable header columns on UPDATE",
+                        """
+                        UPDATE clearledger.settlements
+                        SET debit_party = 'BANK-MUTATED',
+                            current_status = 'VALIDATED',
+                            current_stage = 'VAL',
+                            last_entry_id = %s,
+                            version = 2,
+                            entry_count = 1
+                        WHERE settlement_id = %s
+                        """,
+                        (str(uuid.uuid4()), probe_sid),
+                    )
+                    _assert_pg_rejects(
+                        "settlements trigger: single-step version progression (NEW.version = OLD.version + 1)",
+                        """
+                        UPDATE clearledger.settlements
+                        SET current_status = 'VALIDATED',
+                            current_stage = 'VAL',
+                            last_entry_id = %s,
+                            version = 3,
+                            entry_count = 2
+                        WHERE settlement_id = %s
+                        """,
+                        (str(uuid.uuid4()), probe_sid),
+                    )
+                    _assert_pg_rejects(
+                        "settlements trigger: SETTLED cannot regress to VALIDATED or CLEARED",
+                        """
+                        UPDATE clearledger.settlements
+                        SET current_status = 'VALIDATED',
+                            current_stage = 'REGRESSED',
+                            last_entry_id = %s,
+                            version = 3,
+                            entry_count = 2
+                        WHERE settlement_id = %s
+                        """,
+                        (str(uuid.uuid4()), settled_probe_sid),
+                    )
+                    cur.execute(
+                        """
+                        UPDATE clearledger.settlements
+                        SET current_status = 'RECONCILED',
+                            current_stage = 'RECON-2',
+                            last_entry_id = %s,
+                            version = 3,
+                            entry_count = 2
+                        WHERE settlement_id = %s
+                        """,
+                        (str(uuid.uuid4()), settled_probe_sid),
+                    )
+                    _assert_pg_rejects(
+                        "settlements trigger: RECONCILED cannot regress to SETTLED, CLEARED, or VALIDATED",
+                        """
+                        UPDATE clearledger.settlements
+                        SET current_status = 'SETTLED',
+                            current_stage = 'REGRESSED-STL',
+                            last_entry_id = %s,
+                            version = 4,
+                            entry_count = 3
+                        WHERE settlement_id = %s
+                        """,
+                        (str(uuid.uuid4()), settled_probe_sid),
+                    )
+
+                    valid_evt_1 = _make_event_payload(probe_eid, probe_sid, 1, "SettlementInitiated")
+                    cur.execute(
+                        """
                         INSERT INTO clearledger.events (
                             event_id, settlement_id, aggregate_version, event_type,
                             correlation_id, idempotency_key, occurred_at, payload
-                        ) VALUES (%s, %s, 1, 'SettlementInitiated', 'corr-probe', 'idem-probe-1', NOW(), '{}'::jsonb)
+                        ) VALUES (%s, %s, 1, 'SettlementInitiated', 'corr-probe', 'idem-probe-1', NOW(), %s::jsonb)
                         """,
-                        (probe_eid, probe_sid),
+                        (probe_eid, probe_sid, valid_evt_1),
+                    )
+                    valid_evt_2 = _make_event_payload(probe_eid_2, probe_sid, 2, "LedgerEntryRecorded")
+                    cur.execute(
+                        """
+                        INSERT INTO clearledger.events (
+                            event_id, settlement_id, aggregate_version, event_type,
+                            correlation_id, idempotency_key, occurred_at, payload
+                        ) VALUES (%s, %s, 2, 'LedgerEntryRecorded', 'corr-probe', 'idem-probe-2-ok', NOW(), %s::jsonb)
+                        """,
+                        (probe_eid_2, probe_sid, valid_evt_2),
                     )
 
+                    bad_ver_eid = str(uuid.uuid4())
                     _assert_pg_rejects(
                         "events.aggregate_version >= 1",
                         """
                         INSERT INTO clearledger.events (
                             event_id, settlement_id, aggregate_version, event_type,
                             correlation_id, idempotency_key, occurred_at, payload
-                        ) VALUES (%s, %s, 0, 'SettlementInitiated', 'corr-probe', 'idem-probe-0', NOW(), '{}'::jsonb)
+                        ) VALUES (%s, %s, 0, 'SettlementInitiated', 'corr-probe', 'idem-probe-0', NOW(), %s::jsonb)
                         """,
-                        (str(uuid.uuid4()), probe_sid),
+                        (bad_ver_eid, probe_sid, _make_event_payload(bad_ver_eid, probe_sid, 0, "SettlementInitiated")),
                     )
+                    bad_type_eid = str(uuid.uuid4())
                     _assert_pg_rejects(
                         "events.event_type enum check",
                         """
                         INSERT INTO clearledger.events (
                             event_id, settlement_id, aggregate_version, event_type,
                             correlation_id, idempotency_key, occurred_at, payload
-                        ) VALUES (%s, %s, 2, 'BogusEventType', 'corr-probe', 'idem-probe-2', NOW(), '{}'::jsonb)
+                        ) VALUES (%s, %s, 3, 'BogusEventType', 'corr-probe', 'idem-probe-bogus', NOW(), %s::jsonb)
                         """,
-                        (str(uuid.uuid4()), probe_sid),
+                        (bad_type_eid, probe_sid, _make_event_payload(bad_type_eid, probe_sid, 3, "BogusEventType")),
                     )
+                    bad_si_eid = str(uuid.uuid4())
                     _assert_pg_rejects(
                         "events.SettlementInitiated requires aggregate_version = 1",
                         """
                         INSERT INTO clearledger.events (
                             event_id, settlement_id, aggregate_version, event_type,
                             correlation_id, idempotency_key, occurred_at, payload
-                        ) VALUES (%s, %s, 2, 'SettlementInitiated', 'corr-probe', 'idem-probe-si2', NOW(), '{}'::jsonb)
+                        ) VALUES (%s, %s, 3, 'SettlementInitiated', 'corr-probe', 'idem-probe-si3', NOW(), %s::jsonb)
                         """,
-                        (str(uuid.uuid4()), probe_sid),
+                        (bad_si_eid, probe_sid, _make_event_payload(bad_si_eid, probe_sid, 3, "SettlementInitiated")),
                     )
+                    bad_le_eid = str(uuid.uuid4())
                     _assert_pg_rejects(
                         "events.LedgerEntryRecorded requires aggregate_version >= 2",
                         """
                         INSERT INTO clearledger.events (
                             event_id, settlement_id, aggregate_version, event_type,
                             correlation_id, idempotency_key, occurred_at, payload
-                        ) VALUES (%s, %s, 1, 'LedgerEntryRecorded', 'corr-probe', 'idem-probe-le1', NOW(), '{}'::jsonb)
+                        ) VALUES (%s, %s, 1, 'LedgerEntryRecorded', 'corr-probe', 'idem-probe-le1', NOW(), %s::jsonb)
+                        """,
+                        (bad_le_eid, settled_probe_sid, _make_event_payload(bad_le_eid, settled_probe_sid, 1, "LedgerEntryRecorded")),
+                    )
+                    _assert_pg_rejects(
+                        "events.payload JSONB envelope coherence with columns",
+                        """
+                        INSERT INTO clearledger.events (
+                            event_id, settlement_id, aggregate_version, event_type,
+                            correlation_id, idempotency_key, occurred_at, payload
+                        ) VALUES (%s, %s, 3, 'LedgerEntryRecorded', 'corr-probe', 'idem-probe-bad-json', NOW(), '{}'::jsonb)
                         """,
                         (str(uuid.uuid4()), probe_sid),
                     )
+                    _assert_pg_rejects(
+                        "events trigger: append-only immutability forbids UPDATE",
+                        """
+                        UPDATE clearledger.events SET correlation_id = 'mutated-corr' WHERE event_id = %s
+                        """,
+                        (probe_eid,),
+                    )
+                    _assert_pg_rejects(
+                        "events trigger: append-only immutability forbids DELETE",
+                        """
+                        DELETE FROM clearledger.events WHERE event_id = %s
+                        """,
+                        (probe_eid_2,),
+                    )
+
                     _assert_pg_rejects(
                         "outbox.event_id foreign key to events(event_id)",
                         """
                         INSERT INTO clearledger.outbox (
                             event_id, settlement_id, aggregate_version, correlation_id, payload
+                        ) VALUES (%s, %s, 1, 'corr-probe', %s::jsonb)
+                        """,
+                        (orphan_eid, probe_sid, _make_event_payload(orphan_eid, probe_sid, 1)),
+                    )
+                    _assert_pg_rejects(
+                        "outbox.(settlement_id, aggregate_version) composite foreign key to events",
+                        """
+                        INSERT INTO clearledger.outbox (
+                            event_id, settlement_id, aggregate_version, correlation_id, payload
+                        ) VALUES (%s, %s, 99, 'corr-probe', %s::jsonb)
+                        """,
+                        (probe_eid_2, probe_sid, _make_event_payload(probe_eid_2, probe_sid, 99, "LedgerEntryRecorded")),
+                    )
+                    _assert_pg_rejects(
+                        "outbox.payload JSONB envelope coherence with columns",
+                        """
+                        INSERT INTO clearledger.outbox (
+                            event_id, settlement_id, aggregate_version, correlation_id, payload
                         ) VALUES (%s, %s, 1, 'corr-probe', '{}'::jsonb)
                         """,
-                        (orphan_eid, probe_sid),
+                        (probe_eid, probe_sid),
                     )
                     _assert_pg_rejects(
                         "outbox.attempts >= 0",
                         """
                         INSERT INTO clearledger.outbox (
                             event_id, settlement_id, aggregate_version, correlation_id, payload, attempts
-                        ) VALUES (%s, %s, 1, 'corr-probe', '{}'::jsonb, -1)
+                        ) VALUES (%s, %s, 1, 'corr-probe', %s::jsonb, -1)
                         """,
-                        (probe_eid, probe_sid),
+                        (probe_eid, probe_sid, valid_evt_1),
                     )
                     _assert_pg_rejects(
-                        "outbox.published_at requires attempts >= 1",
+                        "outbox.published_at requires attempts >= 1 and last_error IS NULL",
                         """
                         INSERT INTO clearledger.outbox (
                             event_id, settlement_id, aggregate_version, correlation_id, payload, published_at, attempts
-                        ) VALUES (%s, %s, 1, 'corr-probe', '{}'::jsonb, NOW(), 0)
+                        ) VALUES (%s, %s, 1, 'corr-probe', %s::jsonb, NOW(), 0)
                         """,
-                        (probe_eid, probe_sid),
+                        (probe_eid, probe_sid, valid_evt_1),
+                    )
+                    _assert_pg_rejects(
+                        "outbox.published_at requires last_error IS NULL",
+                        """
+                        INSERT INTO clearledger.outbox (
+                            event_id, settlement_id, aggregate_version, correlation_id, payload, published_at, attempts, last_error
+                        ) VALUES (%s, %s, 1, 'corr-probe', %s::jsonb, NOW(), 1, 'stale error')
+                        """,
+                        (probe_eid, probe_sid, valid_evt_1),
                     )
                     _assert_pg_rejects(
                         "outbox.archived_at requires published_at IS NOT NULL",
                         """
                         INSERT INTO clearledger.outbox (
                             event_id, settlement_id, aggregate_version, correlation_id, payload, published_at, archived_at, attempts
-                        ) VALUES (%s, %s, 1, 'corr-probe', '{}'::jsonb, NULL, NOW(), 0)
+                        ) VALUES (%s, %s, 1, 'corr-probe', %s::jsonb, NULL, NOW(), 0)
                         """,
-                        (probe_eid, probe_sid),
+                        (probe_eid, probe_sid, valid_evt_1),
                     )
+
+                    cur.execute(
+                        """
+                        INSERT INTO clearledger.outbox (
+                            event_id, settlement_id, aggregate_version, correlation_id, payload, attempts
+                        ) VALUES (%s, %s, 1, 'corr-probe', %s::jsonb, 2)
+                        """,
+                        (probe_eid, probe_sid, valid_evt_1),
+                    )
+                    _assert_pg_rejects(
+                        "outbox trigger: forbid DELETE on transactional outbox",
+                        """
+                        DELETE FROM clearledger.outbox WHERE event_id = %s
+                        """,
+                        (probe_eid,),
+                    )
+                    _assert_pg_rejects(
+                        "outbox trigger: forbid mutating envelope columns on UPDATE",
+                        """
+                        UPDATE clearledger.outbox SET correlation_id = 'mutated-corr' WHERE event_id = %s
+                        """,
+                        (probe_eid,),
+                    )
+                    _assert_pg_rejects(
+                        "outbox trigger: forbid decrementing attempts on UPDATE",
+                        """
+                        UPDATE clearledger.outbox SET attempts = 1 WHERE event_id = %s
+                        """,
+                        (probe_eid,),
+                    )
+
                     _assert_pg_rejects(
                         "idempotency_keys.status_code range check",
                         """
                         INSERT INTO clearledger.idempotency_keys (
                             scope, idempotency_key, request_hash, status_code, response_body
                         ) VALUES ('probe', 'idem-probe-bad-code', 'hash', 99, '{}'::jsonb)
+                        """,
+                    )
+                    _assert_pg_rejects(
+                        "idempotency_keys.idempotency_key length check (8..128)",
+                        """
+                        INSERT INTO clearledger.idempotency_keys (
+                            scope, idempotency_key, request_hash, status_code, response_body
+                        ) VALUES ('probe', 'short', 'hash', 200, '{}'::jsonb)
+                        """,
+                    )
+                    _assert_pg_rejects(
+                        "idempotency_keys.response_body JSON object check",
+                        """
+                        INSERT INTO clearledger.idempotency_keys (
+                            scope, idempotency_key, request_hash, status_code, response_body
+                        ) VALUES ('probe', 'idem-probe-array-body', 'hash', 200, '[]'::jsonb)
                         """,
                     )
                 finally:

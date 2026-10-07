@@ -13,76 +13,105 @@
   - `vpc_security_group_ids` containing the `rds` security group
 - Re-running `deploy.sh` must never replace the RDS instance or lose committed data.
 
-## Required Database Schema & Relational Integrity Specification
+## Required Database Schema, Relational Invariants, and State-Transition Triggers
 
-The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and `clearledger-audit-archiver`) do **not** auto-migrate the database on startup. Moreover, `clearledger-api` relies on PostgreSQL relational `CHECK` and `FOREIGN KEY` constraints to enforce domain invariants (mapping SQLSTATE `23514` / `23503` constraint violations to HTTP `400 Bad Request`).
+The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and `clearledger-audit-archiver`) do **not** run database migrations on startup. Moreover, `clearledger-api` relies on PostgreSQL constraints and triggers to enforce domain and state-transition invariants (mapping SQLSTATE `23514`, `23503`, `23502`, and PL/pgSQL `P0001` exceptions to HTTP `400 Bad Request`).
 
-`deploy.sh` must idempotently initialize the `clearledger` schema, all 4 tables with their relational constraints, and all 3 indexes on the RDS PostgreSQL instance (connecting to host `aws` on the allocated RDS port with `db_name`, `db_username`, and `db_password`) before `/health/ready` reports `200 OK` (`checks.postgres = "UP"`).
+`deploy.sh` must idempotently initialize the `clearledger` schema, all four tables, their relational `CHECK` / `UNIQUE` / `FOREIGN KEY` constraints, their state-transition and append-only triggers, and all three indexes on the RDS PostgreSQL instance before `/health/ready` reports `200 OK` (`checks.postgres = "UP"`). Re-running `deploy.sh` against an already-initialized database must succeed cleanly without failing on existing tables, constraints, functions, triggers, or indexes.
 
 ### 1. Table `clearledger.settlements`
 
-| Column | Type | Nullability & Default | Constraints |
-|---|---|---|---|
-| `settlement_id` | `UUID` | `NOT NULL` | `PRIMARY KEY` |
-| `account_id` | `TEXT` | `NOT NULL` | — |
-| `reference` | `TEXT` | `NOT NULL` | — |
-| `debit_party` | `TEXT` | `NOT NULL` | Table `CHECK`: `debit_party <> credit_party` (self-dealing settlements are prohibited) |
-| `credit_party` | `TEXT` | `NOT NULL` | Table `CHECK`: `debit_party <> credit_party` |
-| `current_status` | `TEXT` | `NOT NULL` | `CHECK`: must be one of `'INITIATED'`, `'VALIDATED'`, `'RESERVED'`, `'CLEARED'`, `'SETTLED'`, `'RECONCILED'`, `'DISPUTED'` |
-| `current_stage` | `TEXT` | `NOT NULL` | — |
-| `last_entry_id` | `UUID` | `NULL` | Cross-column `CHECK`: `NULL` when `version = 1`; `NOT NULL` when `version > 1` |
-| `last_memo` | `TEXT` | `NULL` | — |
-| `version` | `INTEGER` | `NOT NULL` | `CHECK`: `version >= 1` |
-| `entry_count` | `INTEGER` | `NOT NULL DEFAULT 0` | Cross-column `CHECK`: when `version = 1`, `entry_count = 0 AND current_status = 'INITIATED' AND last_entry_id IS NULL`; when `version > 1`, `entry_count = version - 1 AND current_status <> 'INITIATED' AND last_entry_id IS NOT NULL` |
-| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | — |
-| `updated_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | — |
+- **Columns**:
+  - `settlement_id UUID NOT NULL PRIMARY KEY`
+  - `account_id TEXT NOT NULL`
+  - `reference TEXT NOT NULL`
+  - `debit_party TEXT NOT NULL`
+  - `credit_party TEXT NOT NULL`
+  - `current_status TEXT NOT NULL`
+  - `current_stage TEXT NOT NULL`
+  - `last_entry_id UUID NULL`
+  - `last_memo TEXT NULL`
+  - `version INTEGER NOT NULL`
+  - `entry_count INTEGER NOT NULL DEFAULT 0`
+  - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+  - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- **Row-level & cross-column invariants**:
+  - `account_id`, `reference`, `debit_party`, `credit_party`, and `current_stage` must be non-empty after whitespace trimming.
+  - Self-dealing is prohibited: `debit_party` and `credit_party` must be distinct.
+  - `current_status` must be one of `'INITIATED'`, `'VALIDATED'`, `'RESERVED'`, `'CLEARED'`, `'SETTLED'`, `'RECONCILED'`, `'DISPUTED'`.
+  - `version >= 1`.
+  - Initiation vs. post-initiation coherence:
+    - When `version = 1`, `entry_count` must be `0`, `current_status` must be `'INITIATED'`, and `last_entry_id` must be `NULL`.
+    - When `version > 1`, `entry_count` must equal `version - 1`, `current_status` must not be `'INITIATED'`, and `last_entry_id` must be `NOT NULL`.
+- **Update state-transition invariants (`BEFORE UPDATE` trigger)**:
+  - Immutable settlement header fields (`settlement_id`, `account_id`, `reference`, `debit_party`, `credit_party`, `created_at`) must never be modified after insertion.
+  - Optimistic version step invariant: every update must increment `version` by exactly `+1` (`NEW.version = OLD.version + 1`) and increment `entry_count` by `+1` (`NEW.entry_count = OLD.entry_count + 1`).
+  - Clearing lifecycle stage finality:
+    - Once a settlement reaches `'SETTLED'`, subsequent updates may only transition `current_status` to `'SETTLED'`, `'RECONCILED'`, or `'DISPUTED'` (never backward to `'INITIATED'`, `'VALIDATED'`, `'RESERVED'`, or `'CLEARED'`).
+    - Once a settlement reaches `'RECONCILED'`, subsequent updates may only transition `current_status` to `'RECONCILED'` or `'DISPUTED'` (never backward to `'INITIATED'`, `'VALIDATED'`, `'RESERVED'`, `'CLEARED'`, or `'SETTLED'`).
 
 ### 2. Table `clearledger.events`
 
-| Column | Type | Nullability & Default | Constraints |
-|---|---|---|---|
-| `seq` | `BIGSERIAL` | `NOT NULL` | `PRIMARY KEY` |
-| `event_id` | `UUID` | `NOT NULL` | `UNIQUE` |
-| `settlement_id` | `UUID` | `NOT NULL` | `REFERENCES clearledger.settlements(settlement_id) ON DELETE CASCADE` |
-| `aggregate_version` | `INTEGER` | `NOT NULL` | `CHECK (aggregate_version >= 1)`; composite `UNIQUE (settlement_id, aggregate_version)` |
-| `event_type` | `TEXT` | `NOT NULL` | Cross-column `CHECK`: must be `'SettlementInitiated'` with `aggregate_version = 1`, or `'LedgerEntryRecorded'` with `aggregate_version >= 2` |
-| `correlation_id` | `TEXT` | `NOT NULL` | — |
-| `idempotency_key` | `TEXT` | `NOT NULL` | — |
-| `occurred_at` | `TIMESTAMPTZ` | `NOT NULL` | — |
-| `payload` | `JSONB` | `NOT NULL` | — |
-| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | — |
+- **Columns**:
+  - `seq BIGSERIAL NOT NULL PRIMARY KEY`
+  - `event_id UUID NOT NULL UNIQUE`
+  - `settlement_id UUID NOT NULL REFERENCES clearledger.settlements(settlement_id) ON DELETE CASCADE`
+  - `aggregate_version INTEGER NOT NULL`
+  - `event_type TEXT NOT NULL`
+  - `correlation_id TEXT NOT NULL`
+  - `idempotency_key TEXT NOT NULL`
+  - `occurred_at TIMESTAMPTZ NOT NULL`
+  - `payload JSONB NOT NULL`
+  - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+- **Row-level & cross-column invariants**:
+  - Composite `UNIQUE (settlement_id, aggregate_version)`.
+  - `aggregate_version >= 1`, and `correlation_id` and `idempotency_key` must be non-empty after whitespace trimming.
+  - Event-type / version coupling: `'SettlementInitiated'` is permitted only when `aggregate_version = 1`; `'LedgerEntryRecorded'` is permitted only when `aggregate_version >= 2`.
+  - JSONB envelope coherence: `payload` must be a JSON object (`jsonb_typeof(payload) = 'object'`) whose embedded fields match the row columns: `payload->>'schemaVersion' = '1.0'`, `payload->>'eventId' = event_id::text`, `payload->>'aggregateId' = settlement_id::text`, `(payload->>'aggregateVersion')::integer = aggregate_version`, `payload->>'eventType' = event_type`, and `payload->>'correlationId' = correlation_id`.
+- **Append-only immutability (`BEFORE UPDATE OR DELETE` trigger)**:
+  - `clearledger.events` is strictly an immutable append-only event log: any `UPDATE` or `DELETE` operation on `clearledger.events` must be rejected by raising an exception.
 
 ### 3. Table `clearledger.outbox`
 
-| Column | Type | Nullability & Default | Constraints |
-|---|---|---|---|
-| `seq` | `BIGSERIAL` | `NOT NULL` | `PRIMARY KEY` |
-| `event_id` | `UUID` | `NOT NULL` | `UNIQUE REFERENCES clearledger.events(event_id) ON DELETE CASCADE` |
-| `settlement_id` | `UUID` | `NOT NULL` | `REFERENCES clearledger.settlements(settlement_id) ON DELETE CASCADE` |
-| `aggregate_version` | `INTEGER` | `NOT NULL` | `CHECK (aggregate_version >= 1)`; composite `UNIQUE (settlement_id, aggregate_version)` |
-| `correlation_id` | `TEXT` | `NOT NULL` | — |
-| `payload` | `JSONB` | `NOT NULL` | — |
-| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | — |
-| `published_at` | `TIMESTAMPTZ` | `NULL` | Cross-column `CHECK`: `published_at IS NULL OR attempts >= 1` |
-| `archived_at` | `TIMESTAMPTZ` | `NULL` | Cross-column `CHECK`: `archived_at IS NULL OR published_at IS NOT NULL` (cannot be archived before publication) |
-| `attempts` | `INTEGER` | `NOT NULL DEFAULT 0` | `CHECK (attempts >= 0)` |
-| `last_error` | `TEXT` | `NULL` | — |
+- **Columns**:
+  - `seq BIGSERIAL NOT NULL PRIMARY KEY`
+  - `event_id UUID NOT NULL UNIQUE REFERENCES clearledger.events(event_id) ON DELETE CASCADE`
+  - `settlement_id UUID NOT NULL REFERENCES clearledger.settlements(settlement_id) ON DELETE CASCADE`
+  - `aggregate_version INTEGER NOT NULL`
+  - `correlation_id TEXT NOT NULL`
+  - `payload JSONB NOT NULL`
+  - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+  - `published_at TIMESTAMPTZ NULL`
+  - `archived_at TIMESTAMPTZ NULL`
+  - `attempts INTEGER NOT NULL DEFAULT 0`
+  - `last_error TEXT NULL`
+- **Row-level & cross-column invariants**:
+  - Composite `UNIQUE (settlement_id, aggregate_version)` and composite `FOREIGN KEY (settlement_id, aggregate_version) REFERENCES clearledger.events(settlement_id, aggregate_version) ON DELETE CASCADE`.
+  - `aggregate_version >= 1`, `attempts >= 0`, and non-empty trimmed `correlation_id`.
+  - Delivery & archival state coherence:
+    - When `published_at IS NOT NULL`, `attempts` must be `>= 1` and `last_error` must be `NULL`.
+    - `archived_at` must be `NULL` unless `published_at IS NOT NULL` and `archived_at >= published_at`.
+  - JSONB envelope coherence: `payload` must be a JSON object (`jsonb_typeof(payload) = 'object'`) whose embedded fields match the row columns: `payload->>'schemaVersion' = '1.0'`, `payload->>'eventId' = event_id::text`, `payload->>'aggregateId' = settlement_id::text`, `(payload->>'aggregateVersion')::integer = aggregate_version`, and `payload->>'correlationId' = correlation_id`.
+- **Envelope immutability & non-deletion (`BEFORE UPDATE OR DELETE` trigger)**:
+  - Outbox rows are never deleted (`DELETE` on `clearledger.outbox` must be rejected).
+  - On `UPDATE`, the envelope identity columns (`seq`, `event_id`, `settlement_id`, `aggregate_version`, `correlation_id`, `payload`, `created_at`) must remain unchanged, and `attempts` must be monotonically non-decreasing (`NEW.attempts >= OLD.attempts`).
 
 ### 4. Table `clearledger.idempotency_keys`
 
-| Column | Type | Nullability & Default | Constraints |
-|---|---|---|---|
-| `scope` | `TEXT` | `NOT NULL` | Composite `PRIMARY KEY (scope, idempotency_key)` |
-| `idempotency_key` | `TEXT` | `NOT NULL` | Composite `PRIMARY KEY (scope, idempotency_key)` |
-| `request_hash` | `TEXT` | `NOT NULL` | — |
-| `status_code` | `INTEGER` | `NOT NULL` | `CHECK (status_code >= 100 AND status_code <= 599)` |
-| `response_body` | `JSONB` | `NOT NULL` | — |
-| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | — |
+- **Columns**:
+  - `scope TEXT NOT NULL`
+  - `idempotency_key TEXT NOT NULL`
+  - `request_hash TEXT NOT NULL`
+  - `status_code INTEGER NOT NULL`
+  - `response_body JSONB NOT NULL`
+  - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
+  - Composite `PRIMARY KEY (scope, idempotency_key)`
+- **Row-level invariants**:
+  - `scope` and `request_hash` must be non-empty after whitespace trimming; `idempotency_key` length must be between `8` and `128` characters.
+  - `status_code` must be between `100` and `599` inclusive, and `response_body` must be a JSON object (`jsonb_typeof(response_body) = 'object'`).
 
 ### 5. Required Indexes in `clearledger` Schema
 
-| Index Name | Target Table & Key Columns | Partial Index Predicate |
-|---|---|---|
-| `idx_clearledger_outbox_unpublished` | `clearledger.outbox (seq)` | `WHERE published_at IS NULL` |
-| `idx_clearledger_outbox_unarchived` | `clearledger.outbox (seq)` | `WHERE published_at IS NOT NULL AND archived_at IS NULL` |
-| `idx_clearledger_events_settlement_version` | `clearledger.events (settlement_id, aggregate_version)` | *(none)* |
+- `idx_clearledger_outbox_unpublished`: on `clearledger.outbox (seq)` with partial predicate `WHERE published_at IS NULL`
+- `idx_clearledger_outbox_unarchived`: on `clearledger.outbox (seq)` with partial predicate `WHERE published_at IS NOT NULL AND archived_at IS NULL`
+- `idx_clearledger_events_settlement_version`: on `clearledger.events (settlement_id, aggregate_version)`

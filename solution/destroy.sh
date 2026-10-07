@@ -64,6 +64,27 @@ for role in iam.list_roles().get("Roles", []):
                 iam.detach_role_policy(RoleName=rname, PolicyArn=ap["PolicyArn"])
             except Exception:
                 pass
+
+for pol in iam.list_policies(Scope="Local").get("Policies", []):
+    if pol.get("PolicyName", "").startswith(prefix):
+        try:
+            iam.delete_policy(PolicyArn=pol["Arn"])
+        except Exception:
+            pass
+
+s3 = boto3.client("s3", **kwargs)
+for b in s3.list_buckets().get("Buckets", []):
+    bname = b["Name"]
+    if bname.startswith(prefix):
+        try:
+            vers = s3.list_object_versions(Bucket=bname)
+            for item in (vers.get("Versions") or []) + (vers.get("DeleteMarkers") or []):
+                try:
+                    s3.delete_object(Bucket=bname, Key=item["Key"], VersionId=item["VersionId"])
+                except Exception:
+                    pass
+        except Exception:
+            pass
 PY
 
 pushd "${INFRA_DIR}" >/dev/null
@@ -114,6 +135,50 @@ for lg in logs.describe_log_groups(logGroupNamePrefix=f"/clearledger/{prefix}").
         logs.delete_log_group(logGroupName=lg["logGroupName"])
     except Exception:
         pass
+
+scheduler = boto3.client("scheduler", **kwargs)
+for sched in scheduler.list_schedules().get("Schedules", []):
+    sname = sched.get("Name", "")
+    if sname.startswith(prefix):
+        try:
+            scheduler.delete_schedule(Name=sname)
+        except Exception:
+            pass
+
+kms = boto3.client("kms", **kwargs)
+for al in kms.list_aliases().get("Aliases", []):
+    aname = al.get("AliasName", "")
+    if aname.startswith(f"alias/{prefix}"):
+        try:
+            kms.delete_alias(AliasName=aname)
+        except Exception:
+            pass
+
+iam = boto3.client("iam", **kwargs)
+for role in iam.list_roles().get("Roles", []):
+    rname = role["RoleName"]
+    if rname.startswith(prefix):
+        for pname in iam.list_role_policies(RoleName=rname).get("PolicyNames", []):
+            try:
+                iam.delete_role_policy(RoleName=rname, PolicyName=pname)
+            except Exception:
+                pass
+        for ap in iam.list_attached_role_policies(RoleName=rname).get("AttachedPolicies", []):
+            try:
+                iam.detach_role_policy(RoleName=rname, PolicyArn=ap["PolicyArn"])
+            except Exception:
+                pass
+        try:
+            iam.delete_role(RoleName=rname)
+        except Exception:
+            pass
+
+for pol in iam.list_policies(Scope="Local").get("Policies", []):
+    if pol.get("PolicyName", "").startswith(prefix):
+        try:
+            iam.delete_policy(PolicyArn=pol["Arn"])
+        except Exception:
+            pass
 PY
 
 rm -f "${MANIFEST_FILE}"

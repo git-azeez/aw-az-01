@@ -89,6 +89,13 @@ CREATE TABLE IF NOT EXISTS clearledger.settlements (
     entry_count INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_settlements_nonempty_fields CHECK (
+        btrim(account_id) <> ''
+        AND btrim(reference) <> ''
+        AND btrim(debit_party) <> ''
+        AND btrim(credit_party) <> ''
+        AND btrim(current_stage) <> ''
+    ),
     CONSTRAINT chk_settlements_distinct_parties CHECK (debit_party <> credit_party),
     CONSTRAINT chk_settlements_version_positive CHECK (version >= 1),
     CONSTRAINT chk_settlements_entry_count_version CHECK (entry_count >= 0 AND entry_count = version - 1),
@@ -122,11 +129,24 @@ CREATE TABLE IF NOT EXISTS clearledger.events (
     payload JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (settlement_id, aggregate_version),
+    CONSTRAINT chk_events_nonempty_fields CHECK (
+        btrim(correlation_id) <> '' AND btrim(idempotency_key) <> ''
+    ),
     CONSTRAINT chk_events_version_positive CHECK (aggregate_version >= 1),
     CONSTRAINT chk_events_type_version CHECK (
         (event_type = 'SettlementInitiated' AND aggregate_version = 1)
         OR
         (event_type = 'LedgerEntryRecorded' AND aggregate_version >= 2)
+    ),
+    CONSTRAINT chk_events_payload_coherence CHECK (
+        jsonb_typeof(payload) = 'object'
+        AND payload->>'schemaVersion' = '1.0'
+        AND payload->>'eventId' = event_id::text
+        AND payload->>'aggregateId' = settlement_id::text
+        AND (payload->>'aggregateVersion') ~ '^[0-9]+$'
+        AND (payload->>'aggregateVersion')::integer = aggregate_version
+        AND payload->>'eventType' = event_type
+        AND payload->>'correlationId' = correlation_id
     )
 );
 
@@ -143,10 +163,26 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT NULL,
     UNIQUE (settlement_id, aggregate_version),
+    FOREIGN KEY (settlement_id, aggregate_version)
+        REFERENCES clearledger.events(settlement_id, aggregate_version) ON DELETE CASCADE,
+    CONSTRAINT chk_outbox_nonempty_corr CHECK (btrim(correlation_id) <> ''),
     CONSTRAINT chk_outbox_version_positive CHECK (aggregate_version >= 1),
     CONSTRAINT chk_outbox_attempts_nonnegative CHECK (attempts >= 0),
-    CONSTRAINT chk_outbox_published_attempts CHECK (published_at IS NULL OR attempts >= 1),
-    CONSTRAINT chk_outbox_archived_requires_published CHECK (archived_at IS NULL OR published_at IS NOT NULL)
+    CONSTRAINT chk_outbox_published_attempts CHECK (
+        published_at IS NULL OR (attempts >= 1 AND last_error IS NULL)
+    ),
+    CONSTRAINT chk_outbox_archived_requires_published CHECK (
+        archived_at IS NULL OR (published_at IS NOT NULL AND archived_at >= published_at)
+    ),
+    CONSTRAINT chk_outbox_payload_coherence CHECK (
+        jsonb_typeof(payload) = 'object'
+        AND payload->>'schemaVersion' = '1.0'
+        AND payload->>'eventId' = event_id::text
+        AND payload->>'aggregateId' = settlement_id::text
+        AND (payload->>'aggregateVersion') ~ '^[0-9]+$'
+        AND (payload->>'aggregateVersion')::integer = aggregate_version
+        AND payload->>'correlationId' = correlation_id
+    )
 );
 
 CREATE TABLE IF NOT EXISTS clearledger.idempotency_keys (
@@ -157,8 +193,104 @@ CREATE TABLE IF NOT EXISTS clearledger.idempotency_keys (
     response_body JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (scope, idempotency_key),
+    CONSTRAINT chk_idempotency_fields CHECK (
+        btrim(scope) <> ''
+        AND btrim(request_hash) <> ''
+        AND char_length(idempotency_key) BETWEEN 8 AND 128
+        AND jsonb_typeof(response_body) = 'object'
+    ),
     CONSTRAINT chk_idempotency_status_code CHECK (status_code >= 100 AND status_code <= 599)
 );
+
+CREATE OR REPLACE FUNCTION clearledger.fn_guard_settlements_update()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.settlement_id <> OLD.settlement_id
+       OR NEW.account_id <> OLD.account_id
+       OR NEW.reference <> OLD.reference
+       OR NEW.debit_party <> OLD.debit_party
+       OR NEW.credit_party <> OLD.credit_party
+       OR NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'Immutable settlement header attributes cannot be modified'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF NEW.version <> OLD.version + 1 OR NEW.entry_count <> OLD.entry_count + 1 THEN
+        RAISE EXCEPTION 'Settlement version and entry_count must increment by exactly 1'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF OLD.current_status = 'SETTLED'
+       AND NEW.current_status NOT IN ('SETTLED', 'RECONCILED', 'DISPUTED') THEN
+        RAISE EXCEPTION 'SETTLED settlement cannot regress to %', NEW.current_status
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF OLD.current_status = 'RECONCILED'
+       AND NEW.current_status NOT IN ('RECONCILED', 'DISPUTED') THEN
+        RAISE EXCEPTION 'RECONCILED settlement cannot regress to %', NEW.current_status
+            USING ERRCODE = '23514';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_clearledger_settlements_before_update ON clearledger.settlements;
+CREATE TRIGGER trg_clearledger_settlements_before_update
+    BEFORE UPDATE ON clearledger.settlements
+    FOR EACH ROW
+    EXECUTE FUNCTION clearledger.fn_guard_settlements_update();
+
+CREATE OR REPLACE FUNCTION clearledger.fn_guard_events_immutable()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'clearledger.events is an append-only event log (% is forbidden)', TG_OP
+        USING ERRCODE = '23514';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_clearledger_events_immutable ON clearledger.events;
+CREATE TRIGGER trg_clearledger_events_immutable
+    BEFORE UPDATE OR DELETE ON clearledger.events
+    FOR EACH ROW
+    EXECUTE FUNCTION clearledger.fn_guard_events_immutable();
+
+CREATE OR REPLACE FUNCTION clearledger.fn_guard_outbox_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'clearledger.outbox rows cannot be deleted'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF NEW.seq <> OLD.seq
+       OR NEW.event_id <> OLD.event_id
+       OR NEW.settlement_id <> OLD.settlement_id
+       OR NEW.aggregate_version <> OLD.aggregate_version
+       OR NEW.correlation_id <> OLD.correlation_id
+       OR NEW.payload <> OLD.payload
+       OR NEW.created_at <> OLD.created_at
+       OR NEW.attempts < OLD.attempts THEN
+        RAISE EXCEPTION 'clearledger.outbox envelope is immutable and attempts cannot decrease'
+            USING ERRCODE = '23514';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_clearledger_outbox_guard ON clearledger.outbox;
+CREATE TRIGGER trg_clearledger_outbox_guard
+    BEFORE UPDATE OR DELETE ON clearledger.outbox
+    FOR EACH ROW
+    EXECUTE FUNCTION clearledger.fn_guard_outbox_mutation();
 
 CREATE INDEX IF NOT EXISTS idx_clearledger_outbox_unpublished
     ON clearledger.outbox (seq)
@@ -216,20 +348,15 @@ def resolve_host(raw_host: str) -> str:
     return h
 
 
-lam = boto3.client(
-    "lambda",
-    region_name=region,
-    endpoint_url=endpoint_url,
-    aws_access_key_id="test",
-    aws_secret_access_key="test",
-)
-ddb = boto3.client(
-    "dynamodb",
-    region_name=region,
-    endpoint_url=endpoint_url,
-    aws_access_key_id="test",
-    aws_secret_access_key="test",
-)
+boto_kwargs = {
+    "region_name": region,
+    "endpoint_url": endpoint_url,
+    "aws_access_key_id": "test",
+    "aws_secret_access_key": "test",
+}
+lam = boto3.client("lambda", **boto_kwargs)
+ddb = boto3.client("dynamodb", **boto_kwargs)
+s3 = boto3.client("s3", **boto_kwargs)
 
 db = m["database"]
 pg_conninfo = (
@@ -248,6 +375,8 @@ relay_fn = m["workers"]["outbox_relay"]["function_name"]
 projector_fn = m["workers"]["projector"]["function_name"]
 archiver_fn = m["workers"]["audit_archiver"]["function_name"]
 table_name = m["projections"]["table_name"]
+audit_bucket = m["audit"]["bucket_name"]
+audit_prefix = str(m["audit"]["prefix"])
 
 with psycopg.connect(pg_conninfo) as conn:
     with conn.cursor() as cur:
@@ -260,40 +389,116 @@ with psycopg.connect(pg_conninfo) as conn:
             lam.invoke(FunctionName=relay_fn, InvocationType="RequestResponse", Payload=b"{}")
             time.sleep(0.3)
 
-        # 2. Reconcile DynamoDB projections (STATE + EVENT#*) and Valkey cache against PostgreSQL source of truth
-        cur.execute("SELECT settlement_id::text, version FROM clearledger.settlements")
-        settlements = cur.fetchall()
-        for sid, pg_ver in settlements:
+        # 2. Load authoritative PostgreSQL settlements and events
+        cur.execute(
+            """
+            SELECT settlement_id::text, account_id, reference, debit_party, credit_party,
+                   current_status, current_stage, version, entry_count
+            FROM clearledger.settlements
+            """
+        )
+        pg_settlements = {row[0]: row[1:] for row in cur.fetchall()}
+
+        # 3. Purge orphan DynamoDB partitions and Valkey keys not present in PostgreSQL
+        scan_kwargs = {"TableName": table_name, "ConsistentRead": True}
+        while True:
+            scan_resp = ddb.scan(**scan_kwargs)
+            for item in scan_resp.get("Items", []):
+                pk_val = (item.get("PK") or {}).get("S", "")
+                sk_val = (item.get("SK") or {}).get("S", "")
+                if pk_val.startswith("SETTLEMENT#"):
+                    sid_candidate = pk_val.split("SETTLEMENT#", 1)[1]
+                    if sid_candidate not in pg_settlements:
+                        ddb.delete_item(
+                            TableName=table_name,
+                            Key={"PK": {"S": pk_val}, "SK": {"S": sk_val}},
+                        )
+            if "LastEvaluatedKey" not in scan_resp:
+                break
+            scan_kwargs["ExclusiveStartKey"] = scan_resp["LastEvaluatedKey"]
+
+        for rkey in rclient.keys("clearledger:settlement:*"):
+            sid_candidate = rkey.split("clearledger:settlement:", 1)[-1]
+            if sid_candidate not in pg_settlements:
+                rclient.delete(rkey)
+
+        # 4. Reconcile each PostgreSQL settlement's DynamoDB STATE + EVENT#* items and Valkey cache
+        for sid, (acct, ref, debit, credit, status, stage, pg_ver, pg_ec) in pg_settlements.items():
             pk = f"SETTLEMENT#{sid}"
-            item = ddb.get_item(
-                TableName=table_name,
-                Key={"PK": {"S": pk}, "SK": {"S": "STATE"}},
-                ConsistentRead=True,
-            ).get("Item")
-            ddb_ver = int(item["version"]["N"]) if item and "version" in item else 0
-            ev_q = ddb.query(
-                TableName=table_name,
-                ConsistentRead=True,
-                KeyConditionExpression="PK = :pk AND begins_with(SK, :prefix)",
-                ExpressionAttributeValues={
-                    ":pk": {"S": pk},
-                    ":prefix": {"S": "EVENT#"},
-                },
+            cur.execute(
+                """
+                SELECT aggregate_version, event_id::text, event_type, payload
+                FROM clearledger.events
+                WHERE settlement_id = %s
+                ORDER BY aggregate_version ASC
+                """,
+                (sid,),
             )
-            ev_count = len(ev_q.get("Items", []))
-            if ddb_ver != pg_ver or ev_count < pg_ver:
-                if ddb_ver > pg_ver:
+            pg_events = cur.fetchall()
+
+            q_items = ddb.query(
+                TableName=table_name,
+                ConsistentRead=True,
+                KeyConditionExpression="PK = :pk",
+                ExpressionAttributeValues={":pk": {"S": pk}},
+            ).get("Items", [])
+
+            state_item = None
+            event_items_by_sk = {}
+            for it in q_items:
+                sk_val = (it.get("SK") or {}).get("S", "")
+                if sk_val == "STATE":
+                    state_item = it
+                elif sk_val.startswith("EVENT#"):
+                    event_items_by_sk[sk_val] = it
+
+            state_ok = False
+            if state_item is not None:
+                try:
+                    state_ok = (
+                        int((state_item.get("version") or {}).get("N", -1)) == pg_ver
+                        and int((state_item.get("entry_count") or {}).get("N", -1)) == pg_ec
+                        and (state_item.get("status") or {}).get("S") == status
+                        and (state_item.get("clearing_stage") or {}).get("S") == stage
+                        and (state_item.get("account_id") or {}).get("S") == acct
+                        and (state_item.get("reference") or {}).get("S") == ref
+                        and (state_item.get("debit_party") or {}).get("S") == debit
+                        and (state_item.get("credit_party") or {}).get("S") == credit
+                        and (state_item.get("GSI1PK") or {}).get("S") == f"ACCOUNT#{acct}"
+                        and (state_item.get("GSI1SK") or {}).get("S") == f"SETTLEMENT#{sid}"
+                    )
+                except Exception:
+                    state_ok = False
+
+            events_ok = len(event_items_by_sk) == len(pg_events)
+            if events_ok:
+                for ev_ver, ev_id, ev_type, ev_payload in pg_events:
+                    expected_sk = f"EVENT#{ev_ver:08d}"
+                    ddb_ev = event_items_by_sk.get(expected_sk)
+                    if ddb_ev is None:
+                        events_ok = False
+                        break
+                    ev_obj = json.loads(ev_payload) if isinstance(ev_payload, str) else ev_payload
+                    ev_data = ev_obj.get("data") or {}
+                    if (
+                        int((ddb_ev.get("version") or {}).get("N", -1)) != ev_ver
+                        or (ddb_ev.get("event_id") or {}).get("S") != ev_id
+                        or (ddb_ev.get("event_type") or {}).get("S") != ev_type
+                        or (ddb_ev.get("status") or {}).get("S") != ev_data.get("status")
+                        or (ddb_ev.get("clearing_stage") or {}).get("S") != ev_data.get("clearingStage")
+                    ):
+                        events_ok = False
+                        break
+
+            if not (state_ok and events_ok):
+                for it in q_items:
                     ddb.delete_item(
                         TableName=table_name,
-                        Key={"PK": {"S": pk}, "SK": {"S": "STATE"}},
+                        Key={"PK": it["PK"], "SK": it["SK"]},
                     )
-                cur.execute(
-                    "SELECT payload FROM clearledger.events WHERE settlement_id = %s ORDER BY aggregate_version ASC",
-                    (sid,),
-                )
                 records = []
-                for idx, (payload,) in enumerate(cur.fetchall(), start=1):
-                    body = payload if isinstance(payload, str) else json.dumps(payload)
+                for idx, (_, _, _, ev_payload) in enumerate(pg_events, start=1):
+                    body = ev_payload if isinstance(ev_payload, str) else json.dumps(ev_payload)
                     records.append({"messageId": f"reconcile-{sid}-{idx}", "body": body})
                 if records:
                     lam.invoke(
@@ -307,12 +512,50 @@ with psycopg.connect(pg_conninfo) as conn:
                 if cached_raw:
                     try:
                         cached_obj = json.loads(cached_raw)
-                        if int(cached_obj.get("version", 0)) != pg_ver:
+                        if (
+                            int(cached_obj.get("version", -1)) != pg_ver
+                            or cached_obj.get("status") != status
+                            or cached_obj.get("clearingStage") != stage
+                        ):
                             rclient.delete(f"clearledger:settlement:{sid}")
                     except Exception:
                         rclient.delete(f"clearledger:settlement:{sid}")
 
-        # 3. Drain unarchived outbox rows via audit_archiver
+        # 5. Reconcile S3 audit archive objects against clearledger.outbox
+        all_s3_objs = s3.list_objects_v2(Bucket=audit_bucket).get("Contents", [])
+        s3_event_ids: set[str] = set()
+        for obj in all_s3_objs:
+            key = obj["Key"]
+            if not key.startswith(audit_prefix):
+                s3.delete_object(Bucket=audit_bucket, Key=key)
+                continue
+            try:
+                raw_body = s3.get_object(Bucket=audit_bucket, Key=key)["Body"].read().decode("utf-8")
+                batch_ids: list[str] = []
+                for line in raw_body.splitlines():
+                    if line.strip():
+                        parsed_line = json.loads(line)
+                        ev_id = parsed_line.get("eventId")
+                        if not ev_id:
+                            raise ValueError("Missing eventId in S3 audit record")
+                        batch_ids.append(str(ev_id))
+                s3_event_ids.update(batch_ids)
+            except Exception:
+                s3.delete_object(Bucket=audit_bucket, Key=key)
+
+        cur.execute("SELECT seq, event_id::text, archived_at FROM clearledger.outbox")
+        missing_seqs = [
+            seq
+            for seq, ev_id, arch_at in cur.fetchall()
+            if arch_at is not None and ev_id not in s3_event_ids
+        ]
+        if missing_seqs:
+            cur.execute(
+                "UPDATE clearledger.outbox SET archived_at = NULL WHERE seq = ANY(%s)",
+                (missing_seqs,),
+            )
+            conn.commit()
+
         for _ in range(20):
             cur.execute(
                 "SELECT COUNT(*) FROM clearledger.outbox WHERE published_at IS NOT NULL AND archived_at IS NULL"

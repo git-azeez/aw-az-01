@@ -143,7 +143,29 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
                 f"Expected 400 Bad Request when debitParty == creditParty, got {bad_party_resp.status_code}: {bad_party_resp.text}"
             )
 
-        return f"Verified {settlement_count} randomized settlement lifecycles and domain party check end-to-end"
+            settled_sid, settled_meta = next(iter(ctx.committed_settlements.items()))
+            regress_entry_id = str(uuid.uuid4())
+            regress_resp = client.post(
+                f"/v1/settlements/{settled_sid}/entries",
+                headers={
+                    "Authorization": f"Bearer {tokens['write']}",
+                    "Idempotency-Key": f"idem-regress-{regress_entry_id}",
+                },
+                json={
+                    "entryId": regress_entry_id,
+                    "status": "VALIDATED",
+                    "clearingStage": "ILLEGAL_STAGE_REGRESSION",
+                    "memo": "Attempt illegal regression from SETTLED/RECONCILED back to VALIDATED",
+                    "occurredAt": datetime.now(timezone.utc).isoformat(),
+                    "expectedVersion": settled_meta["expected_version"],
+                },
+            )
+            assert regress_resp.status_code == 400, (
+                f"Expected 400 Bad Request when regressing {settled_meta['last_status']} settlement back to VALIDATED, "
+                f"got {regress_resp.status_code}: {regress_resp.text}"
+            )
+
+        return f"Verified {settlement_count} randomized settlement lifecycles, party separation, and stage-finality checks end-to-end"
 
     _run_block(ctx, "functional.workflow", _check, cap_on_fail=("accepted_write_loss", 49))
 
@@ -600,17 +622,98 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         rclient = valkey_connect(m, ctx.config)
         service_url = resolve_service_url(m["service_url"], ctx.config)
 
-        # Simulate projection loss + stale Valkey cache on already-published settlements
+        # Simulate bidirectional projection/cache corruption on already-published settlements:
+        # 1) Inflated-version STATE corruption on corrupted_sid (version=99 blocks naive projector #version < :new_version)
+        # 2) Missing EVENT#00000001 + in-place mutated EVENT#00000002 + phantom EVENT#00000099 on ledger_corrupted_sid
+        #    (keeps total EVENT#* count equal to expected_version so count-only checks fail)
+        # 3) Orphan settlement partition in DynamoDB and Valkey that does not exist in PostgreSQL
         committed_items = list(ctx.committed_settlements.items())
         corrupted_sid, corrupted_meta = committed_items[0]
         ledger_corrupted_sid, ledger_corrupted_meta = committed_items[1]
-        ddb.delete_item(
+        orphan_sid = str(uuid.uuid4())
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        ddb.put_item(
             TableName=m["projections"]["table_name"],
-            Key={"PK": {"S": f"SETTLEMENT#{corrupted_sid}"}, "SK": {"S": "STATE"}},
+            Item={
+                "PK": {"S": f"SETTLEMENT#{corrupted_sid}"},
+                "SK": {"S": "STATE"},
+                "GSI1PK": {"S": f"ACCOUNT#{corrupted_meta['spec']['accountId']}"},
+                "GSI1SK": {"S": f"UPDATED#{now_iso}#SETTLEMENT#{corrupted_sid}"},
+                "settlement_id": {"S": corrupted_sid},
+                "account_id": {"S": corrupted_meta["spec"]["accountId"]},
+                "reference": {"S": corrupted_meta["spec"]["reference"]},
+                "debit_party": {"S": corrupted_meta["spec"]["debitParty"]},
+                "credit_party": {"S": corrupted_meta["spec"]["creditParty"]},
+                "status": {"S": "DISPUTED"},
+                "clearing_stage": {"S": "CORRUPTED_INFLATED_STATE"},
+                "version": {"N": "99"},
+                "entry_count": {"N": "98"},
+                "updated_at": {"S": now_iso},
+            },
         )
         ddb.delete_item(
             TableName=m["projections"]["table_name"],
             Key={"PK": {"S": f"SETTLEMENT#{ledger_corrupted_sid}"}, "SK": {"S": "EVENT#00000001"}},
+        )
+        ddb.update_item(
+            TableName=m["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{ledger_corrupted_sid}"}, "SK": {"S": "EVENT#00000002"}},
+            UpdateExpression="SET clearing_stage = :cs, #st = :st",
+            ExpressionAttributeNames={"#st": "status"},
+            ExpressionAttributeValues={
+                ":cs": {"S": "CORRUPTED_EVENT_STAGE"},
+                ":st": {"S": "DISPUTED"},
+            },
+        )
+        ddb.put_item(
+            TableName=m["projections"]["table_name"],
+            Item={
+                "PK": {"S": f"SETTLEMENT#{ledger_corrupted_sid}"},
+                "SK": {"S": "EVENT#00000099"},
+                "event_id": {"S": str(uuid.uuid4())},
+                "settlement_id": {"S": ledger_corrupted_sid},
+                "version": {"N": "99"},
+                "event_type": {"S": "LedgerEntryRecorded"},
+                "status": {"S": "DISPUTED"},
+                "clearing_stage": {"S": "PHANTOM_EVENT_99"},
+                "correlation_id": {"S": "corr-phantom-99"},
+                "occurred_at": {"S": now_iso},
+            },
+        )
+        ddb.put_item(
+            TableName=m["projections"]["table_name"],
+            Item={
+                "PK": {"S": f"SETTLEMENT#{orphan_sid}"},
+                "SK": {"S": "STATE"},
+                "GSI1PK": {"S": "ACCOUNT#ACCT-ORPHAN"},
+                "GSI1SK": {"S": f"UPDATED#{now_iso}#SETTLEMENT#{orphan_sid}"},
+                "settlement_id": {"S": orphan_sid},
+                "account_id": {"S": "ACCT-ORPHAN"},
+                "reference": {"S": "REF-ORPHAN"},
+                "debit_party": {"S": "BANK-ORPHAN-A"},
+                "credit_party": {"S": "BANK-ORPHAN-B"},
+                "status": {"S": "INITIATED"},
+                "clearing_stage": {"S": "ORPHAN_STATE"},
+                "version": {"N": "1"},
+                "entry_count": {"N": "0"},
+                "updated_at": {"S": now_iso},
+            },
+        )
+        ddb.put_item(
+            TableName=m["projections"]["table_name"],
+            Item={
+                "PK": {"S": f"SETTLEMENT#{orphan_sid}"},
+                "SK": {"S": "EVENT#00000001"},
+                "event_id": {"S": str(uuid.uuid4())},
+                "settlement_id": {"S": orphan_sid},
+                "version": {"N": "1"},
+                "event_type": {"S": "SettlementInitiated"},
+                "status": {"S": "INITIATED"},
+                "clearing_stage": {"S": "ORPHAN_STATE"},
+                "correlation_id": {"S": "corr-orphan"},
+                "occurred_at": {"S": now_iso},
+            },
         )
         rclient.set(
             f"clearledger:settlement:{corrupted_sid}",
@@ -621,11 +724,28 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                     "reference": corrupted_meta["spec"]["reference"],
                     "debitParty": corrupted_meta["spec"]["debitParty"],
                     "creditParty": corrupted_meta["spec"]["creditParty"],
-                    "status": "INITIATED",
+                    "status": "DISPUTED",
                     "clearingStage": "STALE_POISONED_CACHE",
+                    "version": 99,
+                    "entryCount": 98,
+                    "updatedAt": now_iso,
+                }
+            ),
+        )
+        rclient.set(
+            f"clearledger:settlement:{orphan_sid}",
+            json.dumps(
+                {
+                    "settlementId": orphan_sid,
+                    "accountId": "ACCT-ORPHAN",
+                    "reference": "REF-ORPHAN",
+                    "debitParty": "BANK-ORPHAN-A",
+                    "creditParty": "BANK-ORPHAN-B",
+                    "status": "INITIATED",
+                    "clearingStage": "ORPHAN_CACHE",
                     "version": 1,
                     "entryCount": 0,
-                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                    "updatedAt": now_iso,
                 }
             ),
         )
@@ -674,6 +794,7 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         m = ctx.refresh_manifest()
         tokens = _ensure_tokens(ctx, refresh=True)
         service_url = resolve_service_url(m["service_url"], ctx.config)
+        rclient = valkey_connect(m, ctx.config)
 
         esm = lam.get_event_source_mapping(UUID=m["messaging"]["event_source_mapping_uuid"])
         assert esm["EventSourceArn"] == m["messaging"]["queue_arn"]
@@ -719,11 +840,12 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
 
             r_healed = client.get(f"/v1/settlements/{corrupted_sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
             assert r_healed.status_code == 200, (
-                f"Expected deploy.sh to reconcile missing DynamoDB STATE projection for {corrupted_sid}, got {r_healed.status_code}"
+                f"Expected deploy.sh to reconcile corrupted DynamoDB STATE projection for {corrupted_sid}, got {r_healed.status_code}"
             )
             healed_body = r_healed.json()
             assert healed_body.get("version") == corrupted_meta["expected_version"], (
-                f"deploy.sh did not reconcile corrupted projection/cache for {corrupted_sid}: expected version {corrupted_meta['expected_version']}, got {healed_body}"
+                f"deploy.sh did not reconcile inflated-version STATE projection/cache for {corrupted_sid}: "
+                f"expected version {corrupted_meta['expected_version']}, got {healed_body}"
             )
             assert healed_body.get("status") == corrupted_meta["last_status"]
             assert healed_body.get("clearingStage") == corrupted_meta["last_stage"]
@@ -733,11 +855,29 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 headers={"Authorization": f"Bearer {tokens['read']}"},
             )
             assert r_ledger_healed.status_code == 200, (
-                f"Expected deploy.sh to reconcile missing DynamoDB EVENT#* items for {ledger_corrupted_sid}, got {r_ledger_healed.status_code}"
+                f"Expected deploy.sh to reconcile DynamoDB EVENT#* items for {ledger_corrupted_sid}, got {r_ledger_healed.status_code}"
             )
             ledger_events = r_ledger_healed.json().get("events", [])
             assert [e["version"] for e in ledger_events] == list(range(1, ledger_corrupted_meta["expected_version"] + 1)), (
-                f"deploy.sh did not reconcile missing EVENT#00000001 item for {ledger_corrupted_sid}: got versions {[e['version'] for e in ledger_events]}"
+                f"deploy.sh did not reconcile missing EVENT#00000001 and purge phantom EVENT#00000099 for {ledger_corrupted_sid}: "
+                f"got versions {[e['version'] for e in ledger_events]}"
+            )
+            expected_v2_stage = ledger_corrupted_meta["spec"]["entries"][0]["clearingStage"]
+            assert ledger_events[1].get("clearingStage") == expected_v2_stage, (
+                f"deploy.sh did not repair in-place mutated EVENT#00000002 for {ledger_corrupted_sid}: "
+                f"expected clearingStage {expected_v2_stage}, got {ledger_events[1]}"
+            )
+
+            r_orphan_state = client.get(f"/v1/settlements/{orphan_sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
+            assert r_orphan_state.status_code == 404, (
+                f"Expected deploy.sh to purge orphan DynamoDB/Valkey settlement {orphan_sid} absent from PostgreSQL, got {r_orphan_state.status_code}"
+            )
+            r_orphan_ledger = client.get(f"/v1/settlements/{orphan_sid}/ledger", headers={"Authorization": f"Bearer {tokens['read']}"})
+            assert r_orphan_ledger.status_code == 404, (
+                f"Expected deploy.sh to purge orphan DynamoDB EVENT#* items for {orphan_sid}, got {r_orphan_ledger.status_code}"
+            )
+            assert rclient.get(f"clearledger:settlement:{orphan_sid}") is None, (
+                f"Expected deploy.sh to purge orphan Valkey key clearledger:settlement:{orphan_sid}"
             )
 
         ctx.committed_settlements[sid] = {

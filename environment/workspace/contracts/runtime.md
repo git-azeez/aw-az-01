@@ -24,7 +24,7 @@ All four application images are pre-built and loaded into the local container da
   - `CLOUDWATCH_LOG_GROUP`: name of the API CloudWatch Log Group
   - `SERVICE_INSTANCE_ID` (optional): instance identifier returned in `X-ClearLedger-Instance` (defaults to `HOSTNAME`)
 
-Upon startup, `clearledger-api` connects to PostgreSQL and serves HTTP traffic on `0.0.0.0:8080`. The application binaries do **not** run database migrations automatically: `deploy.sh` must idempotently apply the `clearledger` PostgreSQL schema (`clearledger.settlements`, `clearledger.events`, `clearledger.outbox`, `clearledger.idempotency_keys`), all required `CHECK` and `FOREIGN KEY` constraints, and its three indexes as defined in `services/rds.md` before `GET /health/ready` reports `200 OK` (`checks.postgres = "UP"`). During `POST /v1/settlements` and `POST /v1/settlements/{id}/entries`, `clearledger-api` maps PostgreSQL constraint violations (`SQLSTATE 23514` / `23503`, such as `debit_party = credit_party`) to HTTP `400 Bad Request` (`invalid_settlement`).
+Upon startup, `clearledger-api` connects to PostgreSQL and serves HTTP traffic on `0.0.0.0:8080`. The application binaries do **not** run database migrations automatically: `deploy.sh` must idempotently apply the `clearledger` PostgreSQL schema (`clearledger.settlements`, `clearledger.events`, `clearledger.outbox`, `clearledger.idempotency_keys`), all required relational `CHECK` / `UNIQUE` / `FOREIGN KEY` constraints, all state-transition and append-only triggers, and its three indexes as defined in `services/rds.md` before `GET /health/ready` reports `200 OK` (`checks.postgres = "UP"`). During `POST /v1/settlements` and `POST /v1/settlements/{id}/entries`, `clearledger-api` maps PostgreSQL constraint and trigger exceptions (`SQLSTATE 23514`, `23503`, `23502`, and `P0001`) to HTTP `400 Bad Request` (`invalid_settlement`).
 
 ## 2. Projector Worker (`projector_image` on AWS Lambda)
 
@@ -41,8 +41,8 @@ Upon startup, `clearledger-api` connects to PostgreSQL and serves HTTP traffic o
   - `CLOUDWATCH_LOG_GROUP`: name of the projector CloudWatch Log Group
 
 For each valid event envelope in the SQS batch:
-- Upserts the event item (`PK = "SETTLEMENT#<settlement_id>"`, `SK = "EVENT#<8-digit-zero-padded-version>"`) in DynamoDB.
-- Updates the aggregate state item (`PK = "SETTLEMENT#<settlement_id>"`, `SK = "STATE"`, `GSI1PK = "ACCOUNT#<account_id>"`, `GSI1SK = "SETTLEMENT#<settlement_id>"`) when `aggregateVersion` is greater than the stored `version`. Duplicate or older versions are ignored idempotently; if an older version (such as `v1`) arrives after a newer version, any missing static metadata (`reference`, `debit_party`, `credit_party`) is backfilled without regressing `version`, `status`, or `clearing_stage`.
+- Inserts the event item (`PK = "SETTLEMENT#<settlement_id>"`, `SK = "EVENT#<8-digit-zero-padded-version>"`) in DynamoDB using a conditional `attribute_not_exists(PK) AND attribute_not_exists(SK)` write.
+- Updates the aggregate state item (`PK = "SETTLEMENT#<settlement_id>"`, `SK = "STATE"`, `GSI1PK = "ACCOUNT#<account_id>"`, `GSI1SK = "SETTLEMENT#<settlement_id>"`) using a conditional write only when `aggregateVersion` is strictly greater than the stored `version`. Duplicate or older versions are ignored idempotently; if an older version (such as `v1`) arrives after a newer version, any missing static metadata (`reference`, `debit_party`, `credit_party`) is backfilled without regressing `version`, `status`, or `clearing_stage`.
 - Deletes the Valkey key `clearledger:settlement:<settlement_id>`.
 - If any record fails validation or deserialization, its `messageId` is returned in `batchItemFailures` so SQS retries only the failed message and routes poison messages to the DLQ after `maxReceiveCount = 4` receives.
 
@@ -61,7 +61,7 @@ For each valid event envelope in the SQS batch:
   - `OUTBOX_BATCH_SIZE`: `"50"` (must be explicitly set to `"50"`)
   - `CLOUDWATCH_LOG_GROUP`: name of the relay CloudWatch Log Group
 
-Queries up to `OUTBOX_BATCH_SIZE` rows from `clearledger.outbox` where `published_at IS NULL` ordered by `seq ASC`, sends each event envelope to `SQS_QUEUE_URL`, and updates `published_at = NOW()` and `attempts = attempts + 1`.
+Queries up to `OUTBOX_BATCH_SIZE` rows from `clearledger.outbox` where `published_at IS NULL` ordered by `seq ASC`, sends each event envelope to `SQS_QUEUE_URL`, and updates `published_at = NOW(), attempts = attempts + 1, last_error = NULL`.
 
 ## 4. Audit Archiver Worker (`archiver_image` on AWS Lambda)
 
@@ -91,17 +91,20 @@ All protected endpoints validate Bearer JWTs issued by the Cognito User Pool aga
 
 Missing or invalid tokens return `401 Unauthorized`; valid tokens lacking the exact endpoint scope return `403 Forbidden`.
 
-## 6. Recovery Drills, Data-Plane Convergence, and Lifecycle
+## 6. Recovery Drills, Bidirectional Data-Plane Reconciliation, and Lifecycle
 
 - **Backlog & DLQ**: When the projector event source mapping is disabled, API writes commit to PostgreSQL and enqueue on SQS while `GET /v1/settlements/{id}` returns `404` until re-enabled. Duplicate, out-of-order, and concurrent event deliveries are handled without version regression; invalid envelopes are retried and routed to the DLQ after `maxReceiveCount = 4`.
-- **Self-Healing Outbox, Projection, Cache, and Archive Convergence in `deploy.sh`**:
-  - If the main SQS queue and/or projector event source mapping are deleted during an outage, `POST /v1/settlements` and `POST /v1/settlements/{id}/entries` still commit to `clearledger.settlements`, `clearledger.events`, and `clearledger.outbox` (`published_at IS NULL`).
-  - Furthermore, during outage or drift drills, control-plane settings (SQS/DLQ attributes, EventBridge schedule state, Lambda environment variables) may be mutated, and existing settlements may have their DynamoDB `STATE` projection deleted/regressed or their Valkey cache entry (`clearledger:settlement:<id>`) poisoned with a stale version.
-  - Before `deploy.sh` exits `0`, it must not only converge the Terraform/OpenTofu control plane and update `manifest.json`, but also **reconcile the data plane**:
-    1. Drain all unpublished outbox rows (`published_at IS NULL`) via `outbox_relay` until `published_at IS NULL` count is `0`.
-    2. Reconcile every settlement in `clearledger.settlements` against DynamoDB (`PK = SETTLEMENT#<id>`, `SK = STATE` **and** `SK = EVENT#<8-digit-zero-padded-version>`) and Valkey (`clearledger:settlement:<id>`) so that whenever the DynamoDB `STATE` projection is missing/lagging (`version < pg_version`) **or** any `EVENT#*` ledger item (`1..pg_version`) is missing, the settlement's ordered events from `clearledger.events` are replayed through the projector and any stale Valkey cache entry is evicted.
-    3. Drain all unarchived outbox rows (`published_at IS NOT NULL AND archived_at IS NULL`) via `audit_archiver` so every published event is persisted into an S3 NDJSON batch under `s3://<AUDIT_BUCKET>/<AUDIT_PREFIX>` and `archived_at IS NULL` count is `0`.
+- **Bidirectional Multi-Store Convergence in `deploy.sh`**:
+  - PostgreSQL (`clearledger.settlements`, `clearledger.events`, `clearledger.outbox`) is the authoritative system of record; DynamoDB, Valkey, and S3 are derived read/archive stores.
+  - During outage and drift drills, control-plane settings (SQS/DLQ attributes, deleted queues/event-source mappings, EventBridge schedule states, Lambda environment variables) and data-plane state across DynamoDB, Valkey, and S3 may diverge from PostgreSQL:
+    - DynamoDB `SK = STATE` or `SK = EVENT#*` items may be deleted, may have their attributes (`status`, `clearing_stage`, `version`, etc.) corrupted in-place (including inflated versions `version >= pg_version` that the projector's conditional writes will not overwrite unless the corrupted DynamoDB items are deleted first), or may include phantom `EVENT#*` items (`version > pg_version`) or orphan `SETTLEMENT#<id>` partitions for settlements that do not exist in `clearledger.settlements`.
+    - Valkey cache keys (`clearledger:settlement:<id>`) may contain stale/poisoned JSON payloads or orphan settlement keys not backed by PostgreSQL.
+    - S3 audit objects under `s3://<AUDIT_BUCKET>/ledger-audit/` may be missing for outbox rows whose `archived_at` is already `NOT NULL` in PostgreSQL, or stray objects may exist outside the `ledger-audit/` prefix (such as under a drifted prefix).
+  - Before `deploy.sh` exits `0`, it must converge both the control plane and all derived data stores against PostgreSQL so that:
+    - All unpublished outbox rows (`published_at IS NULL`) are relayed.
+    - Every settlement in `clearledger.settlements` has an exact, uncorrupted DynamoDB `SK = STATE` item and exact `SK = EVENT#00000001..EVENT#<pg_version>` items matching `clearledger.events` (with any corrupted or phantom `STATE`/`EVENT#*` items and any orphan `SETTLEMENT#*` partitions or Valkey keys purged).
+    - Every committed event in `clearledger.outbox` is present in a valid NDJSON batch under `s3://<AUDIT_BUCKET>/ledger-audit/` (with `archived_at IS NOT NULL` in PostgreSQL and any stray objects outside `ledger-audit/` removed).
 - **Prefix-Scoped Teardown in `destroy.sh`**:
-  - During operational drills, out-of-band resources scoped to `<resource_prefix>` (such as inline diagnostic policies attached to `<resource_prefix>` IAM roles, `<resource_prefix>-*` SQS queues, or `/clearledger/<resource_prefix>/*` CloudWatch Log Groups) may exist outside Terraform state.
-  - `destroy.sh` must detach/delete any residual inline or attached policies on `<resource_prefix>` IAM roles before role deletion, destroy all Terraform-managed resources, and sweep any remaining `<resource_prefix>`-prefixed or `ClearLedgerDeployment=<resource_prefix>`-tagged resources while keeping all `cl-base-*` baseline resources intact.
+  - During operational drills, out-of-band resources scoped to `<resource_prefix>` (such as inline or attached customer-managed IAM policies on `<resource_prefix>` roles, out-of-band `<resource_prefix>-*` IAM roles, SQS queues, EventBridge Scheduler schedules, KMS aliases, or `/clearledger/<resource_prefix>/*` CloudWatch Log Groups) may exist outside Terraform state.
+  - `destroy.sh` must detach and delete any inline or attached customer-managed policies on `<resource_prefix>` IAM roles, destroy all Terraform-managed resources, and sweep any remaining `<resource_prefix>`-prefixed or `ClearLedgerDeployment=<resource_prefix>`-tagged resources across IAM, SQS, CloudWatch Logs, EventBridge Scheduler, and KMS aliases while keeping all `cl-base-*` baseline resources intact.
 - **Structured Logs**: All four workloads emit JSON log lines containing `correlationId` (propagated from `X-Correlation-Id`) to their configured CloudWatch Log Groups without leaking `db_password` or Cognito `client_secret` values.
