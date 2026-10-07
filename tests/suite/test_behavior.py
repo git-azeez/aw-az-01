@@ -55,7 +55,7 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             for idx in range(settlement_count):
-                spec = build_random_settlement_spec(ctx.rng)
+                spec = build_random_settlement_spec(ctx.rng, step_count=4 if idx == 0 else None)
                 sid = spec["settlementId"]
                 corr_id = f"corr-wf-{idx}-{uuid.uuid4().hex[:8]}"
 
@@ -143,7 +143,12 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
                 f"Expected 400 Bad Request when debitParty == creditParty, got {bad_party_resp.status_code}: {bad_party_resp.text}"
             )
 
-            settled_sid, settled_meta = next(iter(ctx.committed_settlements.items()))
+            settled_sid, settled_meta = next(
+                (k, v)
+                for k, v in ctx.committed_settlements.items()
+                if v["last_status"] in {"SETTLED", "RECONCILED"}
+            )
+            prior_status = settled_meta["last_status"]
             regress_entry_id = str(uuid.uuid4())
             regress_resp = client.post(
                 f"/v1/settlements/{settled_sid}/entries",
@@ -160,8 +165,12 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
                     "expectedVersion": settled_meta["expected_version"],
                 },
             )
+            if regress_resp.status_code in {200, 201, 202}:
+                settled_meta["expected_version"] += 1
+                settled_meta["last_status"] = "VALIDATED"
+                settled_meta["last_stage"] = "ILLEGAL_STAGE_REGRESSION"
             assert regress_resp.status_code == 400, (
-                f"Expected 400 Bad Request when regressing {settled_meta['last_status']} settlement back to VALIDATED, "
+                f"Expected 400 Bad Request when regressing {prior_status} settlement back to VALIDATED, "
                 f"got {regress_resp.status_code}: {regress_resp.text}"
             )
 
