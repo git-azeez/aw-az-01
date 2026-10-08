@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
+import re
 import uuid
 
 import httpx
@@ -71,6 +73,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             conn.commit()
 
         # Corrupt S3 audit archive for s3_loss_sid in-place (while archived_at remains NOT NULL in PostgreSQL)
+        # and split one valid archived record into a forged-digest batch key under ledger-audit/.
         # Note: we do NOT delete sample_sid's existing S3 batch here, so if deploy.sh merely runs audit_archiver
         # without deduplicating S3 batches against unarchived PostgreSQL rows, sample_sid will be duplicated in S3!
         for obj in s3.list_objects_v2(Bucket=before_bucket, Prefix="ledger-audit/").get("Contents", []):
@@ -86,10 +89,17 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                     lines[idx] = json.dumps(rec)
                     tampered = True
             if tampered:
+                forged_line = lines.pop() if len(lines) >= 2 and json.loads(lines[-1]).get("aggregateId") != s3_loss_sid else lines[0]
                 s3.put_object(
                     Bucket=before_bucket,
                     Key=obj["Key"],
                     Body=("\n".join(lines) + "\n").encode("utf-8"),
+                    ContentType="application/x-ndjson",
+                )
+                s3.put_object(
+                    Bucket=before_bucket,
+                    Key="ledger-audit/batch-00000001-00000001-0000000000000000.ndjson",
+                    Body=(forged_line + "\n").encode("utf-8"),
                     ContentType="application/x-ndjson",
                 )
                 break
@@ -359,10 +369,10 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 unpub_count = cur.fetchone()[0]
                 cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE archived_at IS NULL")
                 unarch_count = cur.fetchone()[0]
-                cur.execute("SELECT event_id::text, payload FROM clearledger.outbox")
+                cur.execute("SELECT seq, event_id::text, payload FROM clearledger.outbox")
                 pg_outbox_map = {
-                    ev_id: (json.loads(pay) if isinstance(pay, str) else pay)
-                    for ev_id, pay in cur.fetchall()
+                    ev_id: (int(seq), (json.loads(pay) if isinstance(pay, str) else pay))
+                    for seq, ev_id, pay in cur.fetchall()
                 }
         assert after_count == before_count, f"Settlement count changed after re-apply: {before_count} -> {after_count}"
         assert unpub_count == 0, f"deploy.sh left {unpub_count} unpublished outbox rows after re-apply"
@@ -376,8 +386,21 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
 
         s3_records_by_eid: dict[str, dict] = {}
         total_s3_lines = 0
-        for obj in s3.list_objects_v2(Bucket=after_manifest["audit"]["bucket_name"], Prefix="ledger-audit/").get("Contents", []):
-            body = s3.get_object(Bucket=after_manifest["audit"]["bucket_name"], Key=obj["Key"])["Body"].read().decode()
+        key_pattern = re.compile(r"^ledger-audit/batch-(\d{8})-(\d{8})-([0-9a-f]{16})\.ndjson$")
+        for obj in all_bucket_objs:
+            key = obj["Key"]
+            key_match = key_pattern.match(key)
+            assert key_match is not None, (
+                f"Expected S3 audit batch key {key} to match canonical format ledger-audit/batch-<first_seq:08d>-<last_seq:08d>-<16_char_sha256_hex>.ndjson"
+            )
+            first_seq_str, last_seq_str, key_digest = key_match.groups()
+            raw_bytes = s3.get_object(Bucket=after_manifest["audit"]["bucket_name"], Key=key)["Body"].read()
+            actual_digest = hashlib.sha256(raw_bytes).hexdigest()[:16]
+            assert actual_digest == key_digest, (
+                f"Expected deploy.sh to purge/re-archive S3 batch {key} with mismatched SHA-256 digest (expected {actual_digest})"
+            )
+            body = raw_bytes.decode()
+            batch_seqs: list[int] = []
             for line in body.splitlines():
                 if line.strip():
                     total_s3_lines += 1
@@ -389,10 +412,18 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                     assert ev_id not in s3_records_by_eid, (
                         f"Duplicate S3 audit record found for eventId {ev_id} under ledger-audit/"
                     )
-                    assert rec == pg_outbox_map[ev_id], (
-                        f"Expected deploy.sh to heal tampered S3 audit record for eventId {ev_id}: got {rec.get('data')}, expected {pg_outbox_map[ev_id].get('data')}"
+                    row_seq, auth_pay = pg_outbox_map[ev_id]
+                    assert rec == auth_pay, (
+                        f"Expected deploy.sh to heal tampered S3 audit record for eventId {ev_id}: got {rec.get('data')}, expected {auth_pay.get('data')}"
                     )
                     s3_records_by_eid[ev_id] = rec
+                    batch_seqs.append(row_seq)
+            assert batch_seqs == sorted(batch_seqs), (
+                f"Expected S3 audit batch {key} records to be ordered by ascending clearledger.outbox.seq, got {batch_seqs}"
+            )
+            assert batch_seqs[0] == int(first_seq_str) and batch_seqs[-1] == int(last_seq_str), (
+                f"Expected S3 audit batch {key} sequence bounds ({first_seq_str}..{last_seq_str}) to match outbox.seq range ({batch_seqs[0]}..{batch_seqs[-1]})"
+            )
         assert total_s3_lines == len(pg_outbox_map) and set(s3_records_by_eid.keys()) == set(pg_outbox_map.keys()), (
             f"Expected S3 audit archive under ledger-audit/ to match clearledger.outbox 1-to-1 "
             f"(pg={len(pg_outbox_map)}, s3={total_s3_lines})"

@@ -147,29 +147,59 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
 
         sgs = {s["id"]: s for s in _by_type(items, "aws_security_group")}
         sg_ids = manifest["network"]["security_group_ids"]
+        assert len({sg_ids["alb"], sg_ids["ecs"], sg_ids["rds"], sg_ids["valkey"]}) == 4, (
+            f"Expected 4 distinct security groups for alb, ecs, rds, valkey; got {sg_ids}"
+        )
         for key in ("alb", "ecs", "rds", "valkey"):
             assert sg_ids[key] in sgs, f"Security group {key} ({sg_ids[key]}) not in state"
+            assert sgs[sg_ids[key]].get("vpc_id") == manifest["network"]["vpc_id"]
 
         sg_rules = _by_type(items, "aws_security_group_rule")
         vpc_sg_rules = _by_type(items, "aws_vpc_security_group_ingress_rule")
-        for restricted_key, port in (("ecs", 8080), ("rds", 5432), ("valkey", 6379)):
+        for restricted_key in ("ecs", "rds", "valkey"):
             sg_id = sg_ids[restricted_key]
             sg = sgs[sg_id]
             for rule in sg.get("ingress", []) or []:
                 cidrs = rule.get("cidr_blocks") or []
-                if rule.get("from_port") == port:
-                    assert "0.0.0.0/0" not in cidrs, f"{restricted_key} security group exposes port {port} to 0.0.0.0/0"
+                v6_cidrs = rule.get("ipv6_cidr_blocks") or []
+                assert "0.0.0.0/0" not in cidrs and "::/0" not in v6_cidrs, (
+                    f"{restricted_key} security group exposes ingress to 0.0.0.0/0 or ::/0"
+                )
+                if restricted_key == "ecs":
+                    assert not cidrs and not v6_cidrs, (
+                        f"ecs security group ingress must restrict port 8080 to the alb security group, not CIDR blocks {cidrs}"
+                    )
+                    ref_sgs = set(rule.get("security_groups") or [])
+                    if ref_sgs:
+                        assert sg_ids["alb"] in ref_sgs, (
+                            f"ecs security group ingress must allow traffic from alb security group {sg_ids['alb']}"
+                        )
             for srule in sg_rules:
                 if srule.get("security_group_id") == sg_id and srule.get("type") == "ingress":
-                    if srule.get("from_port") == port:
-                        assert "0.0.0.0/0" not in (srule.get("cidr_blocks") or []), (
-                            f"{restricted_key} security group rule exposes port {port} to 0.0.0.0/0"
+                    cidrs = srule.get("cidr_blocks") or []
+                    v6_cidrs = srule.get("ipv6_cidr_blocks") or []
+                    assert "0.0.0.0/0" not in cidrs and "::/0" not in v6_cidrs, (
+                        f"{restricted_key} security group rule exposes ingress to 0.0.0.0/0 or ::/0"
+                    )
+                    if restricted_key == "ecs":
+                        assert not cidrs and not v6_cidrs, (
+                            "ecs security group ingress rule must reference the alb security group, not CIDR blocks"
+                        )
+                        assert srule.get("source_security_group_id") == sg_ids["alb"], (
+                            f"ecs security group ingress rule must reference alb security group {sg_ids['alb']}"
                         )
             for vrule in vpc_sg_rules:
-                if vrule.get("security_group_id") == sg_id and vrule.get("from_port") == port:
-                    assert vrule.get("cidr_ipv4") != "0.0.0.0/0", (
-                        f"{restricted_key} VPC security group ingress rule exposes port {port} to 0.0.0.0/0"
+                if vrule.get("security_group_id") == sg_id:
+                    assert vrule.get("cidr_ipv4") != "0.0.0.0/0" and vrule.get("cidr_ipv6") != "::/0", (
+                        f"{restricted_key} VPC security group ingress rule exposes ingress to 0.0.0.0/0 or ::/0"
                     )
+                    if restricted_key == "ecs":
+                        assert not vrule.get("cidr_ipv4") and not vrule.get("cidr_ipv6"), (
+                            "ecs VPC security group ingress rule must reference the alb security group, not CIDR blocks"
+                        )
+                        assert vrule.get("referenced_security_group_id") == sg_ids["alb"], (
+                            f"ecs VPC security group ingress rule must reference alb security group {sg_ids['alb']}"
+                        )
 
         lbs = _by_type(items, "aws_lb")
         assert len(lbs) == 1

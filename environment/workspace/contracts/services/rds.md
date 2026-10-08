@@ -74,10 +74,11 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
     - `payload.data` must be a nested JSON object satisfying the domain event data contract in `schemas/events.schema.json`: non-empty `accountId` (`>= 3` trimmed chars) and `clearingStage` (`>= 2` trimmed chars), and:
       - When `event_type = 'SettlementInitiated'` (`aggregate_version = 1`): `data.kind = "settlementInitiated"`, `data.status = "INITIATED"`, `data.entryId` is absent or JSON `null`, and `data.reference`, `data.debitParty`, `data.creditParty` are non-empty trimmed strings with `data.debitParty <> data.creditParty`.
       - When `event_type = 'LedgerEntryRecorded'` (`aggregate_version >= 2`): `data.kind = "ledgerEntryRecorded"`, `data.status` is one of `'VALIDATED'`, `'RESERVED'`, `'CLEARED'`, `'SETTLED'`, `'RECONCILED'`, `'DISPUTED'`, and `data.entryId` is a non-empty UUID string.
-- **Cross-table parent coherence, contiguous sequencing & append-only immutability (`BEFORE INSERT` and `BEFORE UPDATE OR DELETE` triggers)**:
+- **Cross-table parent coherence, contiguous sequencing, unique entryId & append-only immutability (`BEFORE INSERT` and `BEFORE UPDATE OR DELETE` triggers)**:
   - On `INSERT`:
     - Per-settlement event versions must be strictly contiguous starting at `1`: `aggregate_version` must equal `COALESCE(MAX(aggregate_version), 0) + 1` for `settlement_id` in `clearledger.events` (no version gaps).
-    - Because `clearledger-api` inserts/updates `clearledger.settlements` prior to inserting into `clearledger.events` within the same transaction, the inserted event row must match the current parent row in `clearledger.settlements` for `settlement_id`: `aggregate_version = settlements.version`, `data.accountId = settlements.account_id`, `data.status = settlements.current_status`, `data.clearingStage = settlements.current_stage`, and (for `aggregate_version >= 2`) `data.entryId = settlements.last_entry_id::text`.
+    - Within any single settlement (`settlement_id`), `data.entryId` across `LedgerEntryRecorded` events (`aggregate_version >= 2`) must be unique: inserting a `LedgerEntryRecorded` event whose `payload->'data'->>'entryId'` already exists in an earlier event for that `settlement_id` must be rejected.
+    - Because `clearledger-api` inserts/updates `clearledger.settlements` prior to inserting into `clearledger.events` within the same transaction, the inserted event row must match the current parent row in `clearledger.settlements` for `settlement_id`: `aggregate_version = settlements.version`, `data.accountId = settlements.account_id`, `data.status = settlements.current_status`, `data.clearingStage = settlements.current_stage`, `COALESCE(data.reference, settlements.reference) = settlements.reference`, `COALESCE(data.debitParty, settlements.debit_party) = settlements.debit_party`, `COALESCE(data.creditParty, settlements.credit_party) = settlements.credit_party`, and (for `aggregate_version >= 2`) `data.entryId = settlements.last_entry_id::text`.
   - On `UPDATE` or `DELETE`:
     - `clearledger.events` is strictly an immutable append-only event log: any `UPDATE` or `DELETE` operation on `clearledger.events` must be rejected by raising an exception.
 
@@ -118,12 +119,21 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
   - `response_body JSONB NOT NULL`
   - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
   - Composite `PRIMARY KEY (scope, idempotency_key)`
-- **Row-level invariants**:
-  - `scope` and `request_hash` must be non-empty after whitespace trimming; `idempotency_key` length must be between `8` and `128` characters.
-  - `status_code` must be between `100` and `599` inclusive, and `response_body` must be a JSON object (`jsonb_typeof(response_body) = 'object'`).
+- **Row-level & cross-column invariants**:
+  - `scope` must follow `'^(create|entry):[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'` (`create:<settlement_uuid>` or `entry:<settlement_uuid>`).
+  - `idempotency_key` length must be between `8` and `128` trimmed characters.
+  - `request_hash` must be a 64-character lowercase hexadecimal SHA-256 digest (`request_hash ~ '^[0-9a-f]{64}$'`).
+  - `response_body` must be a JSON object (`jsonb_typeof(response_body) = 'object'`) containing `settlementId` equal to `split_part(scope, ':', 2)`, a valid UUID string `eventId`, integer `version`, `accepted = true` (`response_body->'accepted' = 'true'::jsonb`), and `idempotentReplay = false` (`response_body->'idempotentReplay' = 'false'::jsonb`).
+  - Scope / status / version coupling:
+    - When `scope LIKE 'create:%'`: `status_code` must be `201` and `(response_body->>'version')::integer = 1`.
+    - When `scope LIKE 'entry:%'`: `status_code` must be `202` and `(response_body->>'version')::integer >= 2`.
+- **Cross-table event coherence & append-only immutability (`BEFORE INSERT` and `BEFORE UPDATE OR DELETE` triggers)**:
+  - On `INSERT`: because `clearledger-api` records the idempotency entry after inserting into `clearledger.events` within the same transaction, the trigger must verify that a row exists in `clearledger.events` with `event_id = (NEW.response_body->>'eventId')::uuid`, `settlement_id = (NEW.response_body->>'settlementId')::uuid`, `aggregate_version = (NEW.response_body->>'version')::integer`, and `idempotency_key = NEW.idempotency_key` (rejecting orphan or mismatched idempotency rows).
+  - On `UPDATE` or `DELETE`: `clearledger.idempotency_keys` is strictly an append-only idempotency ledger; any `UPDATE` or `DELETE` operation on `clearledger.idempotency_keys` must be rejected by raising an exception.
 
 ### 5. Required Indexes in `clearledger` Schema
 
 - `idx_clearledger_outbox_unpublished`: on `clearledger.outbox (seq)` with partial predicate `WHERE published_at IS NULL`
 - `idx_clearledger_outbox_unarchived`: on `clearledger.outbox (seq)` with partial predicate `WHERE published_at IS NOT NULL AND archived_at IS NULL`
 - `idx_clearledger_events_settlement_version`: on `clearledger.events (settlement_id, aggregate_version)`
+

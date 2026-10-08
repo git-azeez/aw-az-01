@@ -247,13 +247,67 @@ CREATE TABLE IF NOT EXISTS clearledger.idempotency_keys (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (scope, idempotency_key),
     CONSTRAINT chk_idempotency_fields CHECK (
-        btrim(scope) <> ''
-        AND btrim(request_hash) <> ''
-        AND char_length(idempotency_key) BETWEEN 8 AND 128
-        AND jsonb_typeof(response_body) = 'object'
+        (
+            scope ~ '^(create|entry):[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+            AND request_hash ~ '^[0-9a-f]{64}$'
+            AND char_length(btrim(idempotency_key)) BETWEEN 8 AND 128
+            AND jsonb_typeof(response_body) = 'object'
+            AND response_body->>'settlementId' = split_part(scope, ':', 2)
+            AND (response_body->>'eventId') ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+            AND (response_body->>'version') ~ '^[0-9]+$'
+            AND response_body->'accepted' = 'true'::jsonb
+            AND response_body->'idempotentReplay' = 'false'::jsonb
+        ) IS TRUE
     ),
-    CONSTRAINT chk_idempotency_status_code CHECK (status_code >= 100 AND status_code <= 599)
+    CONSTRAINT chk_idempotency_status_code CHECK (
+        (
+            (scope LIKE 'create:%' AND status_code = 201 AND (response_body->>'version')::integer = 1)
+            OR
+            (scope LIKE 'entry:%' AND status_code = 202 AND (response_body->>'version')::integer >= 2)
+        ) IS TRUE
+    )
 );
+
+CREATE OR REPLACE FUNCTION clearledger.fn_guard_idempotency_keys()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_ev_sid uuid;
+    v_ev_ver integer;
+    v_ev_idem text;
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        SELECT settlement_id, aggregate_version, idempotency_key
+          INTO v_ev_sid, v_ev_ver, v_ev_idem
+          FROM clearledger.events
+         WHERE event_id = (NEW.response_body->>'eventId')::uuid;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Idempotency eventId % not found in clearledger.events', NEW.response_body->>'eventId'
+                USING ERRCODE = '23503';
+        END IF;
+
+        IF v_ev_sid <> (NEW.response_body->>'settlementId')::uuid
+           OR v_ev_ver <> (NEW.response_body->>'version')::integer
+           OR v_ev_idem <> NEW.idempotency_key THEN
+            RAISE EXCEPTION 'Idempotency row does not match referenced clearledger.events row'
+                USING ERRCODE = '23514';
+        END IF;
+
+        RETURN NEW;
+    END IF;
+
+    RAISE EXCEPTION 'clearledger.idempotency_keys is an append-only ledger (% is forbidden)', TG_OP
+        USING ERRCODE = '23514';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_clearledger_idempotency_guard ON clearledger.idempotency_keys;
+CREATE TRIGGER trg_clearledger_idempotency_guard
+    BEFORE INSERT OR UPDATE OR DELETE ON clearledger.idempotency_keys
+    FOR EACH ROW
+    EXECUTE FUNCTION clearledger.fn_guard_idempotency_keys();
 
 CREATE OR REPLACE FUNCTION clearledger.fn_status_rank(p_status text)
 RETURNS integer
@@ -326,10 +380,14 @@ AS $$
 DECLARE
     v_max_ver integer;
     v_acct text;
+    v_ref text;
+    v_debit text;
+    v_credit text;
     v_status text;
     v_stage text;
     v_last_entry uuid;
     v_parent_ver integer;
+    v_dup_entry integer;
 BEGIN
     SELECT COALESCE(MAX(aggregate_version), 0)
       INTO v_max_ver
@@ -341,8 +399,8 @@ BEGIN
             USING ERRCODE = '23514';
     END IF;
 
-    SELECT account_id, current_status, current_stage, last_entry_id, version
-      INTO v_acct, v_status, v_stage, v_last_entry, v_parent_ver
+    SELECT account_id, reference, debit_party, credit_party, current_status, current_stage, last_entry_id, version
+      INTO v_acct, v_ref, v_debit, v_credit, v_status, v_stage, v_last_entry, v_parent_ver
       FROM clearledger.settlements
      WHERE settlement_id = NEW.settlement_id;
 
@@ -354,7 +412,10 @@ BEGIN
     IF v_parent_ver <> NEW.aggregate_version
        OR v_acct <> (NEW.payload #>> '{data,accountId}')
        OR v_status <> (NEW.payload #>> '{data,status}')
-       OR v_stage <> (NEW.payload #>> '{data,clearingStage}') THEN
+       OR v_stage <> (NEW.payload #>> '{data,clearingStage}')
+       OR COALESCE(NEW.payload #>> '{data,reference}', v_ref) <> v_ref
+       OR COALESCE(NEW.payload #>> '{data,debitParty}', v_debit) <> v_debit
+       OR COALESCE(NEW.payload #>> '{data,creditParty}', v_credit) <> v_credit THEN
         RAISE EXCEPTION 'Event row does not match parent settlement state at version %', NEW.aggregate_version
             USING ERRCODE = '23514';
     END IF;
@@ -362,6 +423,18 @@ BEGIN
     IF NEW.aggregate_version >= 2 THEN
         IF v_last_entry IS NULL OR v_last_entry::text <> (NEW.payload #>> '{data,entryId}') THEN
             RAISE EXCEPTION 'LedgerEntryRecorded entryId does not match parent settlement last_entry_id'
+                USING ERRCODE = '23514';
+        END IF;
+
+        SELECT COUNT(*)
+          INTO v_dup_entry
+          FROM clearledger.events
+         WHERE settlement_id = NEW.settlement_id
+           AND aggregate_version >= 2
+           AND (payload #>> '{data,entryId}') = (NEW.payload #>> '{data,entryId}');
+
+        IF v_dup_entry > 0 THEN
+            RAISE EXCEPTION 'Duplicate entryId % for settlement %', NEW.payload #>> '{data,entryId}', NEW.settlement_id
                 USING ERRCODE = '23514';
         END IF;
     END IF;
@@ -532,6 +605,7 @@ if [[ "${READY_OK}" -ne 1 ]]; then
 fi
 
 /opt/venv/bin/python3 - <<'PY'
+import hashlib
 import json
 import time
 from urllib.parse import urlparse
@@ -756,11 +830,13 @@ with psycopg.connect(pg_conninfo) as conn:
                 s3.delete_object(Bucket=audit_bucket, Key=key)
                 continue
             try:
-                raw_body = s3.get_object(Bucket=audit_bucket, Key=key)["Body"].read().decode("utf-8")
+                raw_bytes = s3.get_object(Bucket=audit_bucket, Key=key)["Body"].read()
+                raw_body = raw_bytes.decode("utf-8")
                 lines = [ln for ln in raw_body.splitlines() if ln.strip()]
                 if not lines:
                     raise ValueError("Empty S3 audit batch")
                 batch_ids: list[str] = []
+                batch_seqs: list[int] = []
                 batch_seen: set[str] = set()
                 for line in lines:
                     parsed_line = json.loads(line)
@@ -769,13 +845,22 @@ with psycopg.connect(pg_conninfo) as conn:
                         raise ValueError(f"Orphan eventId {ev_id} in S3 audit batch")
                     if ev_id in seen_s3_event_ids or ev_id in batch_seen:
                         raise ValueError(f"Duplicate eventId {ev_id} in S3 audit batch")
-                    _, arch_at, authoritative_payload = pg_outbox[ev_id]
+                    row_seq, arch_at, authoritative_payload = pg_outbox[ev_id]
                     if arch_at is None:
                         raise ValueError(f"Outbox row {ev_id} is marked unarchived in PostgreSQL")
                     if parsed_line != authoritative_payload:
                         raise ValueError(f"Tampered S3 audit record for {ev_id}")
                     batch_seen.add(ev_id)
                     batch_ids.append(ev_id)
+                    batch_seqs.append(int(row_seq))
+                if batch_seqs != sorted(batch_seqs):
+                    raise ValueError("S3 audit batch records are not in ascending outbox.seq order")
+                digest_hex = hashlib.sha256(raw_bytes).hexdigest()[:16]
+                expected_key = (
+                    f"{audit_prefix}batch-{batch_seqs[0]:08d}-{batch_seqs[-1]:08d}-{digest_hex}.ndjson"
+                )
+                if key != expected_key:
+                    raise ValueError(f"S3 audit batch key {key} does not match canonical {expected_key}")
                 seen_s3_event_ids.update(batch_ids)
             except Exception:
                 s3.delete_object(Bucket=audit_bucket, Key=key)

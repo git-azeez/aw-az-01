@@ -36,6 +36,27 @@ def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
         azs = {s["AvailabilityZone"] for s in subnets}
         assert {"us-east-1a", "us-east-1b"}.issubset(azs)
 
+        sg_ids = m["network"]["security_group_ids"]
+        assert len({sg_ids["alb"], sg_ids["ecs"], sg_ids["rds"], sg_ids["valkey"]}) == 4, (
+            f"Expected 4 distinct security group IDs for alb, ecs, rds, valkey; got {sg_ids}"
+        )
+        live_sgs = {
+            sg["GroupId"]: sg
+            for sg in ec2.describe_security_groups(GroupIds=list(sg_ids.values())).get("SecurityGroups", [])
+        }
+        for sg_key, sg_id in sg_ids.items():
+            assert sg_id in live_sgs, f"Live security group {sg_key} ({sg_id}) not found in EC2"
+            assert live_sgs[sg_id].get("VpcId") == m["network"]["vpc_id"], (
+                f"Live security group {sg_key} ({sg_id}) VpcId does not match manifest VPC"
+            )
+            if sg_key in {"ecs", "rds", "valkey"}:
+                for perm in live_sgs[sg_id].get("IpPermissions", []) or []:
+                    v4_cidrs = [r.get("CidrIp") for r in perm.get("IpRanges", []) or []]
+                    v6_cidrs = [r.get("CidrIpv6") for r in perm.get("Ipv6Ranges", []) or []]
+                    assert "0.0.0.0/0" not in v4_cidrs and "::/0" not in v6_cidrs, (
+                        f"Live {sg_key} security group ({sg_id}) exposes ingress to 0.0.0.0/0 or ::/0"
+                    )
+
         lbs = elbv2.describe_load_balancers(LoadBalancerArns=[m["ingress"]["alb_arn"]])["LoadBalancers"]
         assert len(lbs) == 1
         lb = lbs[0]
@@ -408,6 +429,93 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         (probe_eid_2, probe_sid, valid_evt_2),
                     )
 
+                    # Verify per-settlement unique entryId and parent header coherence on clearledger.events
+                    cur.execute("SAVEPOINT sp_dup_entry_probe")
+                    try:
+                        cur.execute(
+                            """
+                            UPDATE clearledger.settlements
+                            SET current_status = 'SETTLED',
+                                current_stage = 'STL-DUP',
+                                last_entry_id = %s,
+                                version = 3,
+                                entry_count = 2
+                            WHERE settlement_id = %s
+                            """,
+                            (probe_entry_2, probe_sid),
+                        )
+                        dup_entry_eid = str(uuid.uuid4())
+                        _assert_pg_rejects(
+                            "events trigger: per-settlement unique entryId across LedgerEntryRecorded events",
+                            """
+                            INSERT INTO clearledger.events (
+                                event_id, settlement_id, aggregate_version, event_type,
+                                correlation_id, idempotency_key, occurred_at, payload
+                            ) VALUES (%s, %s, 3, 'LedgerEntryRecorded', 'corr-probe', 'idem-probe-dup-entry', NOW(), %s::jsonb)
+                            """,
+                            (
+                                dup_entry_eid,
+                                probe_sid,
+                                _make_event_payload(
+                                    dup_entry_eid,
+                                    probe_sid,
+                                    3,
+                                    "LedgerEntryRecorded",
+                                    status="SETTLED",
+                                    stage="STL-DUP",
+                                    entry_id=probe_entry_2,
+                                    idem="idem-probe-dup-entry",
+                                ),
+                            ),
+                        )
+                    finally:
+                        cur.execute("ROLLBACK TO SAVEPOINT sp_dup_entry_probe")
+                        cur.execute("RELEASE SAVEPOINT sp_dup_entry_probe")
+
+                    cur.execute("SAVEPOINT sp_parent_hdr_probe")
+                    try:
+                        hdr_entry_3 = str(uuid.uuid4())
+                        cur.execute(
+                            """
+                            UPDATE clearledger.settlements
+                            SET current_status = 'SETTLED',
+                                current_stage = 'STL-HDR',
+                                last_entry_id = %s,
+                                version = 3,
+                                entry_count = 2
+                            WHERE settlement_id = %s
+                            """,
+                            (hdr_entry_3, probe_sid),
+                        )
+                        hdr_mismatch_eid = str(uuid.uuid4())
+                        _assert_pg_rejects(
+                            "events trigger: event payload debitParty/creditParty/reference must match parent settlement",
+                            """
+                            INSERT INTO clearledger.events (
+                                event_id, settlement_id, aggregate_version, event_type,
+                                correlation_id, idempotency_key, occurred_at, payload
+                            ) VALUES (%s, %s, 3, 'LedgerEntryRecorded', 'corr-probe', 'idem-probe-hdr-mismatch', NOW(), %s::jsonb)
+                            """,
+                            (
+                                hdr_mismatch_eid,
+                                probe_sid,
+                                _make_event_payload(
+                                    hdr_mismatch_eid,
+                                    probe_sid,
+                                    3,
+                                    "LedgerEntryRecorded",
+                                    status="SETTLED",
+                                    stage="STL-HDR",
+                                    entry_id=hdr_entry_3,
+                                    debit="BANK-TAMPERED",
+                                    idem="idem-probe-hdr-mismatch",
+                                ),
+                            ),
+                        )
+                    finally:
+                        cur.execute("ROLLBACK TO SAVEPOINT sp_parent_hdr_probe")
+                        cur.execute("RELEASE SAVEPOINT sp_parent_hdr_probe")
+
                     _assert_pg_rejects(
                         "settlements trigger: CLEARED cannot regress backward to RESERVED or VALIDATED",
                         """
@@ -766,29 +874,133 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         (probe_eid,),
                     )
 
+                    valid_idem_hash = "a" * 64
+                    valid_create_body = json.dumps(
+                        {
+                            "settlementId": probe_sid,
+                            "eventId": probe_eid,
+                            "version": 1,
+                            "accepted": True,
+                            "idempotentReplay": False,
+                        }
+                    )
+                    valid_entry_body = json.dumps(
+                        {
+                            "settlementId": probe_sid,
+                            "eventId": probe_eid_2,
+                            "version": 2,
+                            "accepted": True,
+                            "idempotentReplay": False,
+                        }
+                    )
                     _assert_pg_rejects(
-                        "idempotency_keys.status_code range check",
+                        "idempotency_keys.scope format check (create:<uuid> or entry:<uuid>)",
                         """
                         INSERT INTO clearledger.idempotency_keys (
                             scope, idempotency_key, request_hash, status_code, response_body
-                        ) VALUES ('probe', 'idem-probe-bad-code', 'hash', 99, '{}'::jsonb)
+                        ) VALUES ('probe', 'idem-probe-1', %s, 201, %s::jsonb)
                         """,
+                        (valid_idem_hash, valid_create_body),
+                    )
+                    _assert_pg_rejects(
+                        "idempotency_keys.request_hash 64-char hex SHA-256 check",
+                        """
+                        INSERT INTO clearledger.idempotency_keys (
+                            scope, idempotency_key, request_hash, status_code, response_body
+                        ) VALUES (%s, 'idem-probe-1', 'non-hex-hash', 201, %s::jsonb)
+                        """,
+                        (f"create:{probe_sid}", valid_create_body),
+                    )
+                    _assert_pg_rejects(
+                        "idempotency_keys.status_code coupling for create scope (must be 201)",
+                        """
+                        INSERT INTO clearledger.idempotency_keys (
+                            scope, idempotency_key, request_hash, status_code, response_body
+                        ) VALUES (%s, 'idem-probe-1', %s, 202, %s::jsonb)
+                        """,
+                        (f"create:{probe_sid}", valid_idem_hash, valid_create_body),
+                    )
+                    _assert_pg_rejects(
+                        "idempotency_keys.status_code coupling for entry scope (must be 202)",
+                        """
+                        INSERT INTO clearledger.idempotency_keys (
+                            scope, idempotency_key, request_hash, status_code, response_body
+                        ) VALUES (%s, 'idem-probe-2-ok', %s, 201, %s::jsonb)
+                        """,
+                        (f"entry:{probe_sid}", valid_idem_hash, valid_entry_body),
                     )
                     _assert_pg_rejects(
                         "idempotency_keys.idempotency_key length check (8..128)",
                         """
                         INSERT INTO clearledger.idempotency_keys (
                             scope, idempotency_key, request_hash, status_code, response_body
-                        ) VALUES ('probe', 'short', 'hash', 200, '{}'::jsonb)
+                        ) VALUES (%s, 'short', %s, 201, %s::jsonb)
                         """,
+                        (f"create:{probe_sid}", valid_idem_hash, valid_create_body),
                     )
                     _assert_pg_rejects(
-                        "idempotency_keys.response_body JSON object check",
+                        "idempotency_keys.response_body JSON object and settlementId scope coherence",
                         """
                         INSERT INTO clearledger.idempotency_keys (
                             scope, idempotency_key, request_hash, status_code, response_body
-                        ) VALUES ('probe', 'idem-probe-array-body', 'hash', 200, '[]'::jsonb)
+                        ) VALUES (%s, 'idem-probe-1', %s, 201, %s::jsonb)
                         """,
+                        (f"create:{settled_probe_sid}", valid_idem_hash, valid_create_body),
+                    )
+                    _assert_pg_rejects(
+                        "idempotency_keys trigger: eventId must exist in clearledger.events",
+                        """
+                        INSERT INTO clearledger.idempotency_keys (
+                            scope, idempotency_key, request_hash, status_code, response_body
+                        ) VALUES (%s, 'idem-probe-1', %s, 201, %s::jsonb)
+                        """,
+                        (
+                            f"create:{probe_sid}",
+                            valid_idem_hash,
+                            json.dumps(
+                                {
+                                    "settlementId": probe_sid,
+                                    "eventId": orphan_eid,
+                                    "version": 1,
+                                    "accepted": True,
+                                    "idempotentReplay": False,
+                                }
+                            ),
+                        ),
+                    )
+                    _assert_pg_rejects(
+                        "idempotency_keys trigger: idempotency_key must match referenced clearledger.events row",
+                        """
+                        INSERT INTO clearledger.idempotency_keys (
+                            scope, idempotency_key, request_hash, status_code, response_body
+                        ) VALUES (%s, 'idem-probe-mismatched', %s, 201, %s::jsonb)
+                        """,
+                        (f"create:{probe_sid}", valid_idem_hash, valid_create_body),
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO clearledger.idempotency_keys (
+                            scope, idempotency_key, request_hash, status_code, response_body
+                        ) VALUES (%s, 'idem-probe-1', %s, 201, %s::jsonb)
+                        """,
+                        (f"create:{probe_sid}", valid_idem_hash, valid_create_body),
+                    )
+                    _assert_pg_rejects(
+                        "idempotency_keys trigger: append-only immutability forbids UPDATE",
+                        """
+                        UPDATE clearledger.idempotency_keys
+                        SET request_hash = %s
+                        WHERE scope = %s AND idempotency_key = 'idem-probe-1'
+                        """,
+                        ("b" * 64, f"create:{probe_sid}"),
+                    )
+                    _assert_pg_rejects(
+                        "idempotency_keys trigger: append-only immutability forbids DELETE",
+                        """
+                        DELETE FROM clearledger.idempotency_keys
+                        WHERE scope = %s AND idempotency_key = 'idem-probe-1'
+                        """,
+                        (f"create:{probe_sid}",),
                     )
                 finally:
                     cur.execute("ROLLBACK TO SAVEPOINT sp_outer_probe")

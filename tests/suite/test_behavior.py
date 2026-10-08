@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -205,7 +207,32 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
                 f"got {mid_regress_resp.status_code}: {mid_regress_resp.text}"
             )
 
-        return f"Verified {settlement_count} randomized settlement lifecycles, party separation, and ordered stage progression checks"
+            reused_entry_id = cleared_meta["spec"]["entries"][0]["entryId"]
+            dup_entry_resp = client.post(
+                f"/v1/settlements/{cleared_sid}/entries",
+                headers={
+                    "Authorization": f"Bearer {tokens['write']}",
+                    "Idempotency-Key": f"idem-dup-entry-{uuid.uuid4()}",
+                },
+                json={
+                    "entryId": reused_entry_id,
+                    "status": "SETTLED",
+                    "clearingStage": "ILLEGAL_DUPLICATE_ENTRY_ID",
+                    "memo": "Attempt duplicate entryId within same settlement",
+                    "occurredAt": datetime.now(timezone.utc).isoformat(),
+                    "expectedVersion": cleared_meta["expected_version"],
+                },
+            )
+            if dup_entry_resp.status_code in {200, 201, 202}:
+                cleared_meta["expected_version"] += 1
+                cleared_meta["last_status"] = "SETTLED"
+                cleared_meta["last_stage"] = "ILLEGAL_DUPLICATE_ENTRY_ID"
+            assert dup_entry_resp.status_code == 400, (
+                f"Expected 400 Bad Request when reusing duplicate entryId {reused_entry_id} within settlement {cleared_sid}, "
+                f"got {dup_entry_resp.status_code}: {dup_entry_resp.text}"
+            )
+
+        return f"Verified {settlement_count} randomized settlement lifecycles, party separation, unique entryId, and ordered stage progression checks"
 
     _run_block(ctx, "functional.workflow", _check, cap_on_fail=("accepted_write_loss", 49))
 
@@ -218,12 +245,17 @@ def test_projection_and_valkey_cache(ctx: VerifierContext) -> None:
         settlement_id, meta = next(iter(ctx.committed_settlements.items()))
         rclient = valkey_connect(ctx.manifest, ctx.config)
         cache_key = f"clearledger:settlement:{settlement_id}"
+        settlement_schema = json.loads((CONTRACTS_DIR / "schemas" / "settlement.schema.json").read_text())
         rclient.delete(cache_key)
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             r1 = client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {tokens['read']}"})
             assert r1.status_code == 200 and r1.headers.get("X-ClearLedger-Source") == "projection"
-            assert rclient.get(cache_key) is not None
+            cached_raw = rclient.get(cache_key)
+            assert cached_raw is not None
+            ttl_val = int(rclient.ttl(cache_key))
+            assert 0 < ttl_val <= 90, f"Expected Valkey cache TTL in (0, 90], got {ttl_val}"
+            jsonschema.validate(instance=json.loads(cached_raw), schema=settlement_schema)
 
             r2 = client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {tokens['read']}"})
             assert r2.status_code == 200 and r2.headers.get("X-ClearLedger-Source") == "cache"
@@ -258,7 +290,7 @@ def test_projection_and_valkey_cache(ctx: VerifierContext) -> None:
             meta["last_status"] = "RECONCILED"
             meta["last_stage"] = "CACHE_REFRESH_STAGE"
 
-        return "Verified projection miss -> Valkey cache populate -> cache hit -> write invalidation"
+        return "Verified projection miss -> Valkey cache populate (TTL & schema) -> cache hit -> write invalidation"
 
     _run_block(ctx, "functional.cache", _check)
 
@@ -831,7 +863,7 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             ),
         )
 
-        # Corrupt S3 audit archive inside ledger-audit/ (tampered payload + orphan batch)
+        # Corrupt S3 audit archive inside ledger-audit/ (tampered payload + forged-digest batch + orphan batch)
         existing_s3 = s3.list_objects_v2(Bucket=m["audit"]["bucket_name"], Prefix=m["audit"]["prefix"]).get("Contents", [])
         if existing_s3:
             target_key = existing_s3[0]["Key"]
@@ -841,6 +873,7 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 if ln.strip()
             ]
             if orig_lines:
+                forged_line = orig_lines.pop() if len(orig_lines) >= 2 else orig_lines[0]
                 first_rec = json.loads(orig_lines[0])
                 first_rec.setdefault("data", {})["clearingStage"] = "TAMPERED_S3_AUDIT_STAGE"
                 orig_lines[0] = json.dumps(first_rec)
@@ -848,6 +881,12 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                     Bucket=m["audit"]["bucket_name"],
                     Key=target_key,
                     Body=("\n".join(orig_lines) + "\n").encode("utf-8"),
+                    ContentType="application/x-ndjson",
+                )
+                s3.put_object(
+                    Bucket=m["audit"]["bucket_name"],
+                    Key=f"{m['audit']['prefix']}batch-00000001-00000001-0000000000000000.ndjson",
+                    Body=(forged_line + "\n").encode("utf-8"),
                     ContentType="application/x-ndjson",
                 )
 
@@ -879,6 +918,17 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             Body=(json.dumps(orphan_s3_env) + "\n").encode("utf-8"),
             ContentType="application/x-ndjson",
         )
+
+        try:
+            proj_cfg = lam.get_function_configuration(FunctionName=m["workers"]["projector"]["function_name"])
+            drifted_proj_env = dict((proj_cfg.get("Environment") or {}).get("Variables") or {})
+            drifted_proj_env["PROJECTION_TABLE"] = "drifted-missing-projection-table"
+            lam.update_function_configuration(
+                FunctionName=m["workers"]["projector"]["function_name"],
+                Environment={"Variables": drifted_proj_env},
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
         try:
             lam.delete_event_source_mapping(UUID=m["messaging"]["event_source_mapping_uuid"])
@@ -942,17 +992,30 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 assert unarch == 0, (
                     f"deploy.sh exited before archiving outbox rows ({unarch} rows still have archived_at IS NULL)"
                 )
-                cur.execute("SELECT event_id::text, payload FROM clearledger.outbox")
+                cur.execute("SELECT seq, event_id::text, payload FROM clearledger.outbox")
                 pg_outbox_map = {
-                    ev_id: (json.loads(pay) if isinstance(pay, str) else pay)
-                    for ev_id, pay in cur.fetchall()
+                    ev_id: (int(seq), (json.loads(pay) if isinstance(pay, str) else pay))
+                    for seq, ev_id, pay in cur.fetchall()
                 }
 
-        # Verify 1-to-1 S3 audit archive integrity against clearledger.outbox
+        # Verify 1-to-1 S3 audit archive integrity, canonical key format, SHA-256 digest, and seq order against clearledger.outbox
         s3_records_by_eid: dict[str, dict] = {}
         total_s3_lines = 0
-        for obj in s3.list_objects_v2(Bucket=m["audit"]["bucket_name"], Prefix=m["audit"]["prefix"]).get("Contents", []):
-            body = s3.get_object(Bucket=m["audit"]["bucket_name"], Key=obj["Key"])["Body"].read().decode()
+        key_pattern = re.compile(rf"^{re.escape(str(m['audit']['prefix']))}batch-(\d{{8}})-(\d{{8}})-([0-9a-f]{{16}})\.ndjson$")
+        for obj in s3.list_objects_v2(Bucket=m["audit"]["bucket_name"]).get("Contents", []):
+            key = obj["Key"]
+            key_match = key_pattern.match(key)
+            assert key_match is not None, (
+                f"Expected S3 audit batch key {key} to match canonical format batch-<first_seq:08d>-<last_seq:08d>-<16_char_sha256_hex>.ndjson"
+            )
+            first_seq_str, last_seq_str, key_digest = key_match.groups()
+            raw_bytes = s3.get_object(Bucket=m["audit"]["bucket_name"], Key=key)["Body"].read()
+            actual_digest = hashlib.sha256(raw_bytes).hexdigest()[:16]
+            assert actual_digest == key_digest, (
+                f"Expected deploy.sh to purge/re-archive S3 batch {key} with mismatched SHA-256 digest (expected {actual_digest})"
+            )
+            body = raw_bytes.decode()
+            batch_seqs: list[int] = []
             for line in body.splitlines():
                 if line.strip():
                     total_s3_lines += 1
@@ -964,10 +1027,18 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                     assert ev_id not in s3_records_by_eid, (
                         f"Duplicate S3 audit record found for eventId {ev_id} under {m['audit']['prefix']}"
                     )
-                    assert rec == pg_outbox_map[ev_id], (
-                        f"Expected deploy.sh to heal tampered S3 audit record for eventId {ev_id}: got {rec.get('data')}, expected {pg_outbox_map[ev_id].get('data')}"
+                    row_seq, auth_pay = pg_outbox_map[ev_id]
+                    assert rec == auth_pay, (
+                        f"Expected deploy.sh to heal tampered S3 audit record for eventId {ev_id}: got {rec.get('data')}, expected {auth_pay.get('data')}"
                     )
                     s3_records_by_eid[ev_id] = rec
+                    batch_seqs.append(row_seq)
+            assert batch_seqs == sorted(batch_seqs), (
+                f"Expected S3 audit batch {key} records to be ordered by ascending clearledger.outbox.seq, got {batch_seqs}"
+            )
+            assert batch_seqs[0] == int(first_seq_str) and batch_seqs[-1] == int(last_seq_str), (
+                f"Expected S3 audit batch {key} sequence bounds ({first_seq_str}..{last_seq_str}) to match outbox.seq range ({batch_seqs[0]}..{batch_seqs[-1]})"
+            )
         assert total_s3_lines == len(pg_outbox_map) and set(s3_records_by_eid.keys()) == set(pg_outbox_map.keys()), (
             f"Expected S3 audit archive under {m['audit']['prefix']} to match clearledger.outbox 1-to-1 "
             f"(pg={len(pg_outbox_map)}, s3={total_s3_lines})"
