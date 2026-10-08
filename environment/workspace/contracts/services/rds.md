@@ -41,7 +41,7 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
   - `current_status` must be one of `'INITIATED'`, `'VALIDATED'`, `'RESERVED'`, `'CLEARED'`, `'SETTLED'`, `'RECONCILED'`, `'DISPUTED'`.
   - `version >= 1`.
   - Initiation vs. post-initiation coherence:
-    - At initial creation (`version = 1`), `entry_count` must be `0`, `current_status` must be `'INITIATED'`, and `last_entry_id` must be `NULL`.
+    - At initial creation (`version = 1`), `entry_count` must be `0`, `current_status` must be `'INITIATED'`, `last_entry_id` must be `NULL`, and `last_memo` (when provided) must be non-empty after whitespace trimming.
     - After any ledger entry is appended (`version > 1`), `entry_count` must equal `version - 1`, `current_status` must not be `'INITIATED'`, and `last_entry_id` must be `NOT NULL`.
 - **Update state-transition invariants (`BEFORE UPDATE` trigger)**:
   - Immutable settlement header fields (`settlement_id`, `account_id`, `reference`, `debit_party`, `credit_party`, `created_at`) must never be modified after insertion.
@@ -78,7 +78,7 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
   - On `INSERT`:
     - Per-settlement event versions must be strictly contiguous starting at `1`: `aggregate_version` must equal `COALESCE(MAX(aggregate_version), 0) + 1` for `settlement_id` in `clearledger.events` (no version gaps).
     - Within any single settlement (`settlement_id`), `data.entryId` across `LedgerEntryRecorded` events (`aggregate_version >= 2`) must be unique: inserting a `LedgerEntryRecorded` event whose `payload->'data'->>'entryId'` already exists in an earlier event for that `settlement_id` must be rejected.
-    - Because `clearledger-api` inserts/updates `clearledger.settlements` prior to inserting into `clearledger.events` within the same transaction, the inserted event row must match the current parent row in `clearledger.settlements` for `settlement_id`: `aggregate_version = settlements.version`, `data.accountId = settlements.account_id`, `data.status = settlements.current_status`, `data.clearingStage = settlements.current_stage`, `COALESCE(data.reference, settlements.reference) = settlements.reference`, `COALESCE(data.debitParty, settlements.debit_party) = settlements.debit_party`, `COALESCE(data.creditParty, settlements.credit_party) = settlements.credit_party`, and (for `aggregate_version >= 2`) `data.entryId = settlements.last_entry_id::text`.
+    - Because `clearledger-api` inserts/updates `clearledger.settlements` prior to inserting into `clearledger.events` within the same transaction, the inserted event row must match the current parent row in `clearledger.settlements` for `settlement_id`: `aggregate_version = settlements.version`, `data.accountId = settlements.account_id`, `data.status = settlements.current_status`, `data.clearingStage = settlements.current_stage`, `COALESCE(data.reference, settlements.reference) = settlements.reference`, `COALESCE(data.debitParty, settlements.debit_party) = settlements.debit_party`, `COALESCE(data.creditParty, settlements.credit_party) = settlements.credit_party`, `COALESCE(data.memo, '') = COALESCE(settlements.last_memo, '')`, and (for `aggregate_version >= 2`) `data.entryId = settlements.last_entry_id::text`.
   - On `UPDATE` or `DELETE`:
     - `clearledger.events` is strictly an immutable append-only event log: any `UPDATE` or `DELETE` operation on `clearledger.events` must be rejected by raising an exception.
 
@@ -104,10 +104,14 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
     - `archived_at` must be `NULL` unless `published_at IS NOT NULL` and `archived_at >= published_at`.
   - Full `ClearLedgerDomainEventEnvelope` (`schemas/events.schema.json`) coherence on `payload`:
     - `payload` must be a JSON object whose top-level (`schemaVersion`, `aggregateType`, `eventId`, `aggregateId`, `aggregateVersion`, `eventType`, `correlationId`, `idempotencyKey`, `occurredAt`) and nested `payload.data` fields satisfy `schemas/events.schema.json` and match `event_id`, `settlement_id`, `aggregate_version`, and `correlation_id`.
-- **Cross-table event-mirror coherence & envelope immutability (`BEFORE INSERT` and `BEFORE UPDATE OR DELETE` triggers)**:
-  - On `INSERT`, the outbox row's `settlement_id`, `aggregate_version`, `correlation_id`, and `payload` must exactly equal the referenced row in `clearledger.events` for `event_id`.
+- **Cross-table event-mirror coherence, contiguous sequencing & state-transition immutability (`BEFORE INSERT` and `BEFORE UPDATE OR DELETE` triggers)**:
+  - On `INSERT`:
+    - Per-settlement outbox versions must be strictly contiguous starting at `1`: `aggregate_version` must equal `COALESCE(MAX(aggregate_version), 0) + 1` for `settlement_id` in `clearledger.outbox` (no version gaps).
+    - The outbox row's `settlement_id`, `aggregate_version`, `correlation_id`, and `payload` must exactly equal the referenced row in `clearledger.events` for `event_id`.
   - Outbox rows are never deleted (`DELETE` on `clearledger.outbox` must be rejected).
-  - On `UPDATE`, the envelope identity columns (`seq`, `event_id`, `settlement_id`, `aggregate_version`, `correlation_id`, `payload`, `created_at`) must remain unchanged, and `attempts` must be monotonically non-decreasing (`NEW.attempts >= OLD.attempts`).
+  - On `UPDATE`:
+    - The envelope identity columns (`seq`, `event_id`, `settlement_id`, `aggregate_version`, `correlation_id`, `payload`, `created_at`) must remain unchanged, and `attempts` must be monotonically non-decreasing (`NEW.attempts >= OLD.attempts`).
+    - Delivery/archival transition order: transitioning an unpublished row (`OLD.published_at IS NULL`) to published (`NEW.published_at IS NOT NULL`) requires incrementing `attempts` (`NEW.attempts >= OLD.attempts + 1`) and keeping `NEW.archived_at IS NULL` (an unpublished row cannot jump directly to archived in the same transition).
 
 ### 4. Table `clearledger.idempotency_keys`
 

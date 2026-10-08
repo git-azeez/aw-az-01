@@ -286,6 +286,15 @@ def test_projection_and_valkey_cache(ctx: VerifierContext) -> None:
                 return resp.status_code == 200 and resp.json().get("version") == target_version
 
             wait_until(_fresh, timeout_sec=30.0, interval_sec=0.8, description="updated projection after cache invalidation")
+            meta["spec"]["entries"].append(
+                {
+                    "entryId": new_entry_id,
+                    "status": "RECONCILED",
+                    "clearingStage": "CACHE_REFRESH_STAGE",
+                    "memo": "Cache invalidation verification",
+                    "expectedVersion": next_expected,
+                }
+            )
             meta["expected_version"] = target_version
             meta["last_status"] = "RECONCILED"
             meta["last_stage"] = "CACHE_REFRESH_STAGE"
@@ -708,6 +717,7 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         corrupted_sid, corrupted_meta = committed_items[0]
         ledger_corrupted_sid, ledger_corrupted_meta = committed_items[1]
         same_ver_sid, same_ver_meta = committed_items[2]
+        cache_drift_sid, cache_drift_meta = committed_items[3]
         orphan_sid = str(uuid.uuid4())
         now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -762,20 +772,31 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         ddb.update_item(
             TableName=m["projections"]["table_name"],
             Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "STATE"}},
-            UpdateExpression="SET clearing_stage = :cs, #st = :st, GSI1PK = :gpk, GSI1SK = :gsk",
-            ExpressionAttributeNames={"#st": "status"},
+            UpdateExpression="SET last_memo = :lm, last_entry_id = :leid, GSI1PK = :gpk, GSI1SK = :gsk",
             ExpressionAttributeValues={
-                ":cs": {"S": "SILENT_SAME_VER_STATE_DRIFT"},
-                ":st": {"S": "DISPUTED"},
+                ":lm": {"S": "SILENT_SAME_VER_LAST_MEMO_DRIFT"},
+                ":leid": {"S": "00000000-0000-0000-0000-000000000000"},
                 ":gpk": {"S": "ACCOUNT#SILENT-DRIFT-GSI"},
                 ":gsk": {"S": f"CORRUPTED#{same_ver_sid}"},
             },
         )
         ddb.update_item(
             TableName=m["projections"]["table_name"],
-            Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000001"}},
-            UpdateExpression="SET clearing_stage = :cs",
-            ExpressionAttributeValues={":cs": {"S": "SILENT_SAME_VER_EVENT_DRIFT"}},
+            Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000002"}},
+            UpdateExpression="SET memo = :m, entry_id = :eid",
+            ExpressionAttributeValues={
+                ":m": {"S": "SILENT_SAME_VER_EVENT_MEMO_DRIFT"},
+                ":eid": {"S": "00000000-0000-0000-0000-000000000000"},
+            },
+        )
+        ddb.put_item(
+            TableName=m["projections"]["table_name"],
+            Item={
+                "PK": {"S": f"SETTLEMENT#{same_ver_sid}"},
+                "SK": {"S": "META#STRAY"},
+                "settlement_id": {"S": same_ver_sid},
+                "note": {"S": "stray non-STATE/non-EVENT item in partition"},
+            },
         )
         ddb.put_item(
             TableName=m["projections"]["table_name"],
@@ -829,18 +850,20 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             ),
         )
         rclient.set(
-            f"clearledger:settlement:{same_ver_sid}",
+            f"clearledger:settlement:{cache_drift_sid}",
             json.dumps(
                 {
-                    "settlementId": same_ver_sid,
-                    "accountId": same_ver_meta["spec"]["accountId"],
-                    "reference": same_ver_meta["spec"]["reference"],
-                    "debitParty": same_ver_meta["spec"]["debitParty"],
-                    "creditParty": same_ver_meta["spec"]["creditParty"],
-                    "status": same_ver_meta["last_status"],
-                    "clearingStage": "SILENT_SAME_VER_CACHE_POISON",
-                    "version": same_ver_meta["expected_version"],
-                    "entryCount": same_ver_meta["expected_version"] - 1,
+                    "settlementId": cache_drift_sid,
+                    "accountId": cache_drift_meta["spec"]["accountId"],
+                    "reference": cache_drift_meta["spec"]["reference"],
+                    "debitParty": cache_drift_meta["spec"]["debitParty"],
+                    "creditParty": cache_drift_meta["spec"]["creditParty"],
+                    "status": cache_drift_meta["last_status"],
+                    "clearingStage": cache_drift_meta["last_stage"],
+                    "lastEntryId": "00000000-0000-0000-0000-000000000000",
+                    "lastMemo": "SILENT_CACHE_ONLY_MEMO_POISON",
+                    "version": cache_drift_meta["expected_version"],
+                    "entryCount": cache_drift_meta["expected_version"] - 1,
                     "updatedAt": now_iso,
                 }
             ),
@@ -863,7 +886,11 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             ),
         )
 
-        # Corrupt S3 audit archive inside ledger-audit/ (tampered payload + forged-digest batch + orphan batch)
+        # Corrupt S3 audit archive inside ledger-audit/:
+        # 1) Drop one archived event completely from S3 while keeping its remaining peer records in a valid-digest batch
+        #    (so object-only S3 validation passes unless deploy.sh cross-checks every archived_at IS NOT NULL row against S3)
+        # 2) Write a forged-digest batch key and a tampered payload batch
+        # 3) Write an orphan batch key
         existing_s3 = s3.list_objects_v2(Bucket=m["audit"]["bucket_name"], Prefix=m["audit"]["prefix"]).get("Contents", [])
         if existing_s3:
             target_key = existing_s3[0]["Key"]
@@ -872,15 +899,34 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 for ln in s3.get_object(Bucket=m["audit"]["bucket_name"], Key=target_key)["Body"].read().decode().splitlines()
                 if ln.strip()
             ]
-            if orig_lines:
-                forged_line = orig_lines.pop() if len(orig_lines) >= 2 else orig_lines[0]
-                first_rec = json.loads(orig_lines[0])
+            if len(orig_lines) >= 4:
+                with pg_connect(m, ctx.config) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT event_id::text, seq FROM clearledger.outbox")
+                        eid_to_seq = {r[0]: int(r[1]) for r in cur.fetchall()}
+                # Drop the last line completely from S3 (while archived_at remains NOT NULL in PostgreSQL)
+                _dropped_line = orig_lines.pop()
+                forged_line = orig_lines.pop()
+                valid_subset = orig_lines[:2]
+                tampered_subset = orig_lines[2:]
+                valid_raw = ("\n".join(valid_subset) + "\n").encode("utf-8")
+                valid_s1 = eid_to_seq[json.loads(valid_subset[0])["eventId"]]
+                valid_s2 = eid_to_seq[json.loads(valid_subset[-1])["eventId"]]
+                valid_dig = hashlib.sha256(valid_raw).hexdigest()[:16]
+                s3.delete_object(Bucket=m["audit"]["bucket_name"], Key=target_key)
+                s3.put_object(
+                    Bucket=m["audit"]["bucket_name"],
+                    Key=f"{m['audit']['prefix']}batch-{valid_s1:08d}-{valid_s2:08d}-{valid_dig}.ndjson",
+                    Body=valid_raw,
+                    ContentType="application/x-ndjson",
+                )
+                first_rec = json.loads(tampered_subset[0])
                 first_rec.setdefault("data", {})["clearingStage"] = "TAMPERED_S3_AUDIT_STAGE"
-                orig_lines[0] = json.dumps(first_rec)
+                tampered_subset[0] = json.dumps(first_rec)
                 s3.put_object(
                     Bucket=m["audit"]["bucket_name"],
                     Key=target_key,
-                    Body=("\n".join(orig_lines) + "\n").encode("utf-8"),
+                    Body=("\n".join(tampered_subset) + "\n").encode("utf-8"),
                     ContentType="application/x-ndjson",
                 )
                 s3.put_object(
@@ -1088,15 +1134,33 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             r_same_ver = client.get(f"/v1/settlements/{same_ver_sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
             assert r_same_ver.status_code == 200
             sv_body = r_same_ver.json()
-            assert sv_body.get("status") == same_ver_meta["last_status"] and sv_body.get("clearingStage") == same_ver_meta["last_stage"], (
-                f"deploy.sh did not reconcile same-version corrupted STATE/cache for {same_ver_sid}: got {sv_body}"
+            expected_sv_last_entry = same_ver_meta["spec"]["entries"][-1]
+            assert (
+                sv_body.get("status") == same_ver_meta["last_status"]
+                and sv_body.get("clearingStage") == same_ver_meta["last_stage"]
+                and sv_body.get("lastEntryId") == expected_sv_last_entry["entryId"]
+                and sv_body.get("lastMemo") == expected_sv_last_entry["memo"]
+            ), (
+                f"deploy.sh did not reconcile same-version corrupted STATE (lastEntryId/lastMemo) for {same_ver_sid}: got {sv_body}"
             )
             r_sv_ledger = client.get(f"/v1/settlements/{same_ver_sid}/ledger", headers={"Authorization": f"Bearer {tokens['read']}"})
             assert r_sv_ledger.status_code == 200
             sv_events = r_sv_ledger.json().get("events", [])
-            expected_v1_stage = f"INITIATED@{same_ver_meta['spec']['debitParty']}"
-            assert sv_events and sv_events[0].get("clearingStage") == expected_v1_stage, (
-                f"deploy.sh did not reconcile same-version mutated EVENT#00000001 for {same_ver_sid}: got {sv_events[0] if sv_events else None}"
+            expected_sv_v2 = same_ver_meta["spec"]["entries"][0]
+            assert (
+                len(sv_events) >= 2
+                and sv_events[1].get("entryId") == expected_sv_v2["entryId"]
+                and sv_events[1].get("memo") == expected_sv_v2["memo"]
+            ), (
+                f"deploy.sh did not reconcile same-version mutated EVENT#00000002 (entryId/memo) for {same_ver_sid}: got {sv_events[1] if len(sv_events) >= 2 else sv_events}"
+            )
+            stray_item = ddb.get_item(
+                TableName=m["projections"]["table_name"],
+                Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "META#STRAY"}},
+                ConsistentRead=True,
+            ).get("Item")
+            assert stray_item is None, (
+                f"Expected deploy.sh to purge stray non-STATE/non-EVENT item SK=META#STRAY under SETTLEMENT#{same_ver_sid}"
             )
 
             gsi_q = ddb.query(
@@ -1110,6 +1174,20 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             ).get("Items", [])
             assert len(gsi_q) == 1, (
                 f"Expected deploy.sh to heal AccountIndex GSI attributes (GSI1PK/GSI1SK) for {same_ver_sid}, found {gsi_q}"
+            )
+
+            r_cache_drift = client.get(
+                f"/v1/settlements/{cache_drift_sid}",
+                headers={"Authorization": f"Bearer {tokens['read']}"},
+            )
+            assert r_cache_drift.status_code == 200
+            cd_body = r_cache_drift.json()
+            expected_cd_last_entry = cache_drift_meta["spec"]["entries"][-1]
+            assert (
+                cd_body.get("lastEntryId") == expected_cd_last_entry["entryId"]
+                and cd_body.get("lastMemo") == expected_cd_last_entry["memo"]
+            ), (
+                f"Expected deploy.sh to evict/reconcile Valkey cache entry with poisoned lastEntryId/lastMemo for {cache_drift_sid}, got {cd_body}"
             )
 
             r_orphan_state = client.get(f"/v1/settlements/{orphan_sid}", headers={"Authorization": f"Bearer {tokens['read']}"})

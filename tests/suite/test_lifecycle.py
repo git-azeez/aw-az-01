@@ -55,6 +55,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         ledger_sid, ledger_meta = committed_items[1]
         s3_loss_sid, s3_loss_meta = committed_items[2]
         same_ver_sid, same_ver_meta = committed_items[3]
+        cache_drift_sid, cache_drift_meta = committed_items[4]
         orphan_sid = str(uuid.uuid4())
         now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -72,10 +73,15 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 )
             conn.commit()
 
-        # Corrupt S3 audit archive for s3_loss_sid in-place (while archived_at remains NOT NULL in PostgreSQL)
-        # and split one valid archived record into a forged-digest batch key under ledger-audit/.
+        # Corrupt S3 audit archive for s3_loss_sid in-place (while archived_at remains NOT NULL in PostgreSQL),
+        # drop one archived event completely while keeping a valid-digest subset batch, and write a forged-digest batch key.
         # Note: we do NOT delete sample_sid's existing S3 batch here, so if deploy.sh merely runs audit_archiver
         # without deduplicating S3 batches against unarchived PostgreSQL rows, sample_sid will be duplicated in S3!
+        with pg_connect(before_manifest, ctx.config) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT event_id::text, seq FROM clearledger.outbox")
+                eid_to_seq = {r[0]: int(r[1]) for r in cur.fetchall()}
+
         for obj in s3.list_objects_v2(Bucket=before_bucket, Prefix="ledger-audit/").get("Contents", []):
             body = s3.get_object(Bucket=before_bucket, Key=obj["Key"])["Body"].read().decode()
             lines = [ln for ln in body.splitlines() if ln.strip()]
@@ -89,7 +95,23 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                     lines[idx] = json.dumps(rec)
                     tampered = True
             if tampered:
-                forged_line = lines.pop() if len(lines) >= 2 and json.loads(lines[-1]).get("aggregateId") != s3_loss_sid else lines[0]
+                if len(lines) >= 4:
+                    _dropped_line = lines.pop()
+                    forged_line = lines.pop()
+                    valid_subset = [ln for ln in lines[:2] if json.loads(ln).get("aggregateId") != sample_sid]
+                    if valid_subset:
+                        valid_raw = ("\n".join(valid_subset) + "\n").encode("utf-8")
+                        valid_s1 = eid_to_seq[json.loads(valid_subset[0])["eventId"]]
+                        valid_s2 = eid_to_seq[json.loads(valid_subset[-1])["eventId"]]
+                        valid_dig = hashlib.sha256(valid_raw).hexdigest()[:16]
+                        s3.put_object(
+                            Bucket=before_bucket,
+                            Key=f"ledger-audit/batch-{valid_s1:08d}-{valid_s2:08d}-{valid_dig}.ndjson",
+                            Body=valid_raw,
+                            ContentType="application/x-ndjson",
+                        )
+                else:
+                    forged_line = lines.pop() if len(lines) >= 2 and json.loads(lines[-1]).get("aggregateId") != s3_loss_sid else lines[0]
                 s3.put_object(
                     Bucket=before_bucket,
                     Key=obj["Key"],
@@ -181,7 +203,8 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         # 2. Data-plane drift:
         # - Inflated-version STATE corruption on sample_sid + poisoned Valkey cache
         # - Missing EVENT#00000001 + in-place mutated EVENT#00000002 + phantom EVENT#00000099 on ledger_sid
-        # - Same-version / same-SK attribute + AccountIndex GSI + Valkey corruption on same_ver_sid
+        # - Same-version / same-SK attribute (last_memo, last_entry_id, entry_id, memo, GSI) + stray SK item on same_ver_sid
+        # - Valkey-only cache poison (lastEntryId/lastMemo) on cache_drift_sid (whose DynamoDB items remain valid)
         # - Orphan settlement partition in DynamoDB and Valkey absent from PostgreSQL
         ddb.put_item(
             TableName=before_manifest["projections"]["table_name"],
@@ -234,20 +257,31 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         ddb.update_item(
             TableName=before_manifest["projections"]["table_name"],
             Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "STATE"}},
-            UpdateExpression="SET clearing_stage = :cs, #st = :st, GSI1PK = :gpk, GSI1SK = :gsk",
-            ExpressionAttributeNames={"#st": "status"},
+            UpdateExpression="SET last_memo = :lm, last_entry_id = :leid, GSI1PK = :gpk, GSI1SK = :gsk",
             ExpressionAttributeValues={
-                ":cs": {"S": "DRIFTED_SAME_VER_STATE"},
-                ":st": {"S": "DISPUTED"},
+                ":lm": {"S": "DRIFTED_SAME_VER_LAST_MEMO"},
+                ":leid": {"S": "00000000-0000-0000-0000-000000000000"},
                 ":gpk": {"S": "ACCOUNT#DRIFTED-GSI"},
                 ":gsk": {"S": f"CORRUPTED#{same_ver_sid}"},
             },
         )
         ddb.update_item(
             TableName=before_manifest["projections"]["table_name"],
-            Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000001"}},
-            UpdateExpression="SET clearing_stage = :cs",
-            ExpressionAttributeValues={":cs": {"S": "DRIFTED_SAME_VER_EVENT"}},
+            Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000002"}},
+            UpdateExpression="SET memo = :m, entry_id = :eid",
+            ExpressionAttributeValues={
+                ":m": {"S": "DRIFTED_SAME_VER_EVENT_MEMO"},
+                ":eid": {"S": "00000000-0000-0000-0000-000000000000"},
+            },
+        )
+        ddb.put_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Item={
+                "PK": {"S": f"SETTLEMENT#{same_ver_sid}"},
+                "SK": {"S": "META#STRAY"},
+                "settlement_id": {"S": same_ver_sid},
+                "note": {"S": "stray non-STATE/non-EVENT item in partition"},
+            },
         )
         ddb.put_item(
             TableName=before_manifest["projections"]["table_name"],
@@ -286,18 +320,20 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             ),
         )
         rclient.set(
-            f"clearledger:settlement:{same_ver_sid}",
+            f"clearledger:settlement:{cache_drift_sid}",
             json.dumps(
                 {
-                    "settlementId": same_ver_sid,
-                    "accountId": same_ver_meta["spec"]["accountId"],
-                    "reference": same_ver_meta["spec"]["reference"],
-                    "debitParty": same_ver_meta["spec"]["debitParty"],
-                    "creditParty": same_ver_meta["spec"]["creditParty"],
-                    "status": same_ver_meta["last_status"],
-                    "clearingStage": "DRIFTED_SAME_VER_CACHE_STAGE",
-                    "version": same_ver_meta["expected_version"],
-                    "entryCount": same_ver_meta["expected_version"] - 1,
+                    "settlementId": cache_drift_sid,
+                    "accountId": cache_drift_meta["spec"]["accountId"],
+                    "reference": cache_drift_meta["spec"]["reference"],
+                    "debitParty": cache_drift_meta["spec"]["debitParty"],
+                    "creditParty": cache_drift_meta["spec"]["creditParty"],
+                    "status": cache_drift_meta["last_status"],
+                    "clearingStage": cache_drift_meta["last_stage"],
+                    "lastEntryId": "00000000-0000-0000-0000-000000000000",
+                    "lastMemo": "DRIFTED_CACHE_ONLY_MEMO_POISON",
+                    "version": cache_drift_meta["expected_version"],
+                    "entryCount": cache_drift_meta["expected_version"] - 1,
                     "updatedAt": now_iso,
                 }
             ),
@@ -470,8 +506,14 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             )
             assert r_same_ver.status_code == 200
             sv_body = r_same_ver.json()
-            assert sv_body.get("status") == same_ver_meta["last_status"] and sv_body.get("clearingStage") == same_ver_meta["last_stage"], (
-                f"Expected deploy.sh to heal same-version drifted STATE/cache for {same_ver_sid}, got {sv_body}"
+            expected_sv_last_entry = same_ver_meta["spec"]["entries"][-1]
+            assert (
+                sv_body.get("status") == same_ver_meta["last_status"]
+                and sv_body.get("clearingStage") == same_ver_meta["last_stage"]
+                and sv_body.get("lastEntryId") == expected_sv_last_entry["entryId"]
+                and sv_body.get("lastMemo") == expected_sv_last_entry["memo"]
+            ), (
+                f"Expected deploy.sh to heal same-version drifted STATE (lastEntryId/lastMemo) for {same_ver_sid}, got {sv_body}"
             )
             r_sv_ledger = client.get(
                 f"/v1/settlements/{same_ver_sid}/ledger",
@@ -479,9 +521,21 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             )
             assert r_sv_ledger.status_code == 200
             sv_events = r_sv_ledger.json().get("events", [])
-            expected_v1_stage = f"INITIATED@{same_ver_meta['spec']['debitParty']}"
-            assert sv_events and sv_events[0].get("clearingStage") == expected_v1_stage, (
-                f"Expected deploy.sh to heal same-version mutated EVENT#00000001 for {same_ver_sid}, got {sv_events[0] if sv_events else None}"
+            expected_sv_v2 = same_ver_meta["spec"]["entries"][0]
+            assert (
+                len(sv_events) >= 2
+                and sv_events[1].get("entryId") == expected_sv_v2["entryId"]
+                and sv_events[1].get("memo") == expected_sv_v2["memo"]
+            ), (
+                f"Expected deploy.sh to heal same-version mutated EVENT#00000002 (entryId/memo) for {same_ver_sid}, got {sv_events[1] if len(sv_events) >= 2 else sv_events}"
+            )
+            stray_item = ddb.get_item(
+                TableName=after_manifest["projections"]["table_name"],
+                Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "META#STRAY"}},
+                ConsistentRead=True,
+            ).get("Item")
+            assert stray_item is None, (
+                f"Expected deploy.sh to purge stray non-STATE/non-EVENT item SK=META#STRAY under SETTLEMENT#{same_ver_sid}"
             )
             gsi_q = ddb.query(
                 TableName=after_manifest["projections"]["table_name"],
@@ -494,6 +548,20 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             ).get("Items", [])
             assert len(gsi_q) == 1, (
                 f"Expected deploy.sh to heal AccountIndex GSI attributes (GSI1PK/GSI1SK) for {same_ver_sid}, found {gsi_q}"
+            )
+
+            r_cache_drift = client.get(
+                f"/v1/settlements/{cache_drift_sid}",
+                headers={"Authorization": f"Bearer {read_tok}"},
+            )
+            assert r_cache_drift.status_code == 200
+            cd_body = r_cache_drift.json()
+            expected_cd_last_entry = cache_drift_meta["spec"]["entries"][-1]
+            assert (
+                cd_body.get("lastEntryId") == expected_cd_last_entry["entryId"]
+                and cd_body.get("lastMemo") == expected_cd_last_entry["memo"]
+            ), (
+                f"Expected deploy.sh to evict/reconcile Valkey cache entry with poisoned lastEntryId/lastMemo for {cache_drift_sid}, got {cd_body}"
             )
 
             r_orphan = client.get(

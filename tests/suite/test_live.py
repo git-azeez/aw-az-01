@@ -235,6 +235,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         kind: str | None = None,
                         debit: str = "BANK-A",
                         credit: str = "BANK-B",
+                        memo: str | None = None,
                     ) -> str:
                         eff_status = status or ("INITIATED" if ver == 1 else "CLEARED")
                         eff_stage = stage or ("INIT" if ver == 1 else "CLR-1")
@@ -260,7 +261,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                     "entryId": eff_entry_id,
                                     "status": eff_status,
                                     "clearingStage": eff_stage,
-                                    "memo": None,
+                                    "memo": memo,
                                 },
                             }
                         )
@@ -481,6 +482,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             SET current_status = 'SETTLED',
                                 current_stage = 'STL-HDR',
                                 last_entry_id = %s,
+                                last_memo = 'Expected parent memo',
                                 version = 3,
                                 entry_count = 2
                             WHERE settlement_id = %s
@@ -508,7 +510,33 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                     stage="STL-HDR",
                                     entry_id=hdr_entry_3,
                                     debit="BANK-TAMPERED",
+                                    memo="Expected parent memo",
                                     idem="idem-probe-hdr-mismatch",
+                                ),
+                            ),
+                        )
+                        memo_mismatch_eid = str(uuid.uuid4())
+                        _assert_pg_rejects(
+                            "events trigger: event payload data.memo must match parent settlement last_memo",
+                            """
+                            INSERT INTO clearledger.events (
+                                event_id, settlement_id, aggregate_version, event_type,
+                                correlation_id, idempotency_key, occurred_at, payload
+                            ) VALUES (%s, %s, 3, 'LedgerEntryRecorded', 'corr-probe', 'idem-probe-memo-mismatch', NOW(), %s::jsonb)
+                            """,
+                            (
+                                memo_mismatch_eid,
+                                probe_sid,
+                                _make_event_payload(
+                                    memo_mismatch_eid,
+                                    probe_sid,
+                                    3,
+                                    "LedgerEntryRecorded",
+                                    status="SETTLED",
+                                    stage="STL-HDR",
+                                    entry_id=hdr_entry_3,
+                                    memo="Tampered event memo",
+                                    idem="idem-probe-memo-mismatch",
                                 ),
                             ),
                         )
@@ -780,6 +808,15 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         ),
                     )
                     _assert_pg_rejects(
+                        "outbox trigger: per-settlement contiguous aggregate_version starting at 1",
+                        """
+                        INSERT INTO clearledger.outbox (
+                            event_id, settlement_id, aggregate_version, correlation_id, payload
+                        ) VALUES (%s, %s, 2, 'corr-probe', %s::jsonb)
+                        """,
+                        (probe_eid_2, probe_sid, valid_evt_2),
+                    )
+                    _assert_pg_rejects(
                         "outbox.payload JSONB envelope coherence with columns",
                         """
                         INSERT INTO clearledger.outbox (
@@ -870,6 +907,20 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         "outbox trigger: forbid decrementing attempts on UPDATE",
                         """
                         UPDATE clearledger.outbox SET attempts = 1 WHERE event_id = %s
+                        """,
+                        (probe_eid,),
+                    )
+                    _assert_pg_rejects(
+                        "outbox trigger: publishing an unpublished row requires incrementing attempts",
+                        """
+                        UPDATE clearledger.outbox SET published_at = NOW() WHERE event_id = %s
+                        """,
+                        (probe_eid,),
+                    )
+                    _assert_pg_rejects(
+                        "outbox trigger: unpublished row cannot transition directly to archived in one UPDATE",
+                        """
+                        UPDATE clearledger.outbox SET published_at = NOW(), archived_at = NOW(), attempts = attempts + 1 WHERE event_id = %s
                         """,
                         (probe_eid,),
                     )

@@ -100,7 +100,13 @@ CREATE TABLE IF NOT EXISTS clearledger.settlements (
     CONSTRAINT chk_settlements_version_positive CHECK (version >= 1),
     CONSTRAINT chk_settlements_entry_count_version CHECK (entry_count >= 0 AND entry_count = version - 1),
     CONSTRAINT chk_settlements_lifecycle_state CHECK (
-        (version = 1 AND entry_count = 0 AND current_status = 'INITIATED' AND last_entry_id IS NULL)
+        (
+            version = 1
+            AND entry_count = 0
+            AND current_status = 'INITIATED'
+            AND last_entry_id IS NULL
+            AND (last_memo IS NULL OR btrim(last_memo) <> '')
+        )
         OR
         (version > 1 AND entry_count = version - 1 AND current_status <> 'INITIATED' AND last_entry_id IS NOT NULL)
     ),
@@ -386,6 +392,7 @@ DECLARE
     v_status text;
     v_stage text;
     v_last_entry uuid;
+    v_last_memo text;
     v_parent_ver integer;
     v_dup_entry integer;
 BEGIN
@@ -399,8 +406,8 @@ BEGIN
             USING ERRCODE = '23514';
     END IF;
 
-    SELECT account_id, reference, debit_party, credit_party, current_status, current_stage, last_entry_id, version
-      INTO v_acct, v_ref, v_debit, v_credit, v_status, v_stage, v_last_entry, v_parent_ver
+    SELECT account_id, reference, debit_party, credit_party, current_status, current_stage, last_entry_id, last_memo, version
+      INTO v_acct, v_ref, v_debit, v_credit, v_status, v_stage, v_last_entry, v_last_memo, v_parent_ver
       FROM clearledger.settlements
      WHERE settlement_id = NEW.settlement_id;
 
@@ -415,7 +422,8 @@ BEGIN
        OR v_stage <> (NEW.payload #>> '{data,clearingStage}')
        OR COALESCE(NEW.payload #>> '{data,reference}', v_ref) <> v_ref
        OR COALESCE(NEW.payload #>> '{data,debitParty}', v_debit) <> v_debit
-       OR COALESCE(NEW.payload #>> '{data,creditParty}', v_credit) <> v_credit THEN
+       OR COALESCE(NEW.payload #>> '{data,creditParty}', v_credit) <> v_credit
+       OR COALESCE(v_last_memo, '') <> COALESCE(NEW.payload #>> '{data,memo}', '') THEN
         RAISE EXCEPTION 'Event row does not match parent settlement state at version %', NEW.aggregate_version
             USING ERRCODE = '23514';
     END IF;
@@ -470,12 +478,23 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 DECLARE
+    v_max_outbox_ver integer;
     v_ev_sid uuid;
     v_ev_ver integer;
     v_ev_corr text;
     v_ev_payload jsonb;
 BEGIN
     IF TG_OP = 'INSERT' THEN
+        SELECT COALESCE(MAX(aggregate_version), 0)
+          INTO v_max_outbox_ver
+          FROM clearledger.outbox
+         WHERE settlement_id = NEW.settlement_id;
+
+        IF NEW.aggregate_version <> v_max_outbox_ver + 1 THEN
+            RAISE EXCEPTION 'Non-contiguous outbox aggregate_version % (expected %)', NEW.aggregate_version, v_max_outbox_ver + 1
+                USING ERRCODE = '23514';
+        END IF;
+
         SELECT settlement_id, aggregate_version, correlation_id, payload
           INTO v_ev_sid, v_ev_ver, v_ev_corr, v_ev_payload
           FROM clearledger.events
@@ -512,6 +531,13 @@ BEGIN
        OR NEW.attempts < OLD.attempts THEN
         RAISE EXCEPTION 'clearledger.outbox envelope is immutable and attempts cannot decrease'
             USING ERRCODE = '23514';
+    END IF;
+
+    IF OLD.published_at IS NULL AND NEW.published_at IS NOT NULL THEN
+        IF NEW.attempts < OLD.attempts + 1 OR NEW.archived_at IS NOT NULL THEN
+            RAISE EXCEPTION 'Publishing an unpublished outbox row requires incrementing attempts and keeping archived_at NULL'
+                USING ERRCODE = '23514';
+        END IF;
     END IF;
 
     RETURN NEW;
@@ -677,7 +703,8 @@ with psycopg.connect(pg_conninfo) as conn:
         cur.execute(
             """
             SELECT settlement_id::text, account_id, reference, debit_party, credit_party,
-                   current_status, current_stage, version, entry_count
+                   current_status, current_stage, version, entry_count,
+                   last_entry_id::text, last_memo
             FROM clearledger.settlements
             """
         )
@@ -707,7 +734,7 @@ with psycopg.connect(pg_conninfo) as conn:
                 rclient.delete(rkey)
 
         # 4. Reconcile each PostgreSQL settlement's DynamoDB STATE + EVENT#* items and Valkey cache
-        for sid, (acct, ref, debit, credit, status, stage, pg_ver, pg_ec) in pg_settlements.items():
+        for sid, (acct, ref, debit, credit, status, stage, pg_ver, pg_ec, pg_last_entry, pg_last_memo) in pg_settlements.items():
             pk = f"SETTLEMENT#{sid}"
             cur.execute(
                 """
@@ -719,6 +746,13 @@ with psycopg.connect(pg_conninfo) as conn:
                 (sid,),
             )
             pg_events = cur.fetchall()
+
+            expected_ddb_last_memo = pg_last_memo
+            for _, _, _, ev_payload in pg_events:
+                ev_obj = json.loads(ev_payload) if isinstance(ev_payload, str) else ev_payload
+                ev_memo = (ev_obj.get("data") or {}).get("memo")
+                if ev_memo is not None:
+                    expected_ddb_last_memo = ev_memo
 
             q_items = ddb.query(
                 TableName=table_name,
@@ -737,10 +771,11 @@ with psycopg.connect(pg_conninfo) as conn:
                     event_items_by_sk[sk_val] = it
 
             state_ok = False
-            if state_item is not None:
+            if state_item is not None and len(q_items) == 1 + len(pg_events):
                 try:
                     state_ok = (
-                        int((state_item.get("version") or {}).get("N", -1)) == pg_ver
+                        (state_item.get("settlement_id") or {}).get("S") == sid
+                        and int((state_item.get("version") or {}).get("N", -1)) == pg_ver
                         and int((state_item.get("entry_count") or {}).get("N", -1)) == pg_ec
                         and (state_item.get("status") or {}).get("S") == status
                         and (state_item.get("clearing_stage") or {}).get("S") == stage
@@ -748,13 +783,15 @@ with psycopg.connect(pg_conninfo) as conn:
                         and (state_item.get("reference") or {}).get("S") == ref
                         and (state_item.get("debit_party") or {}).get("S") == debit
                         and (state_item.get("credit_party") or {}).get("S") == credit
+                        and (state_item.get("last_entry_id") or {}).get("S") == pg_last_entry
+                        and (state_item.get("last_memo") or {}).get("S") == expected_ddb_last_memo
                         and (state_item.get("GSI1PK") or {}).get("S") == f"ACCOUNT#{acct}"
                         and (state_item.get("GSI1SK") or {}).get("S") == f"SETTLEMENT#{sid}"
                     )
                 except Exception:
                     state_ok = False
 
-            events_ok = len(event_items_by_sk) == len(pg_events)
+            events_ok = len(event_items_by_sk) == len(pg_events) and len(q_items) == 1 + len(pg_events)
             if events_ok:
                 for ev_ver, ev_id, ev_type, ev_payload in pg_events:
                     expected_sk = f"EVENT#{ev_ver:08d}"
@@ -772,11 +809,15 @@ with psycopg.connect(pg_conninfo) as conn:
                         except Exception:
                             ddb_env_ok = False
                     if (
-                        int((ddb_ev.get("version") or {}).get("N", -1)) != ev_ver
+                        (ddb_ev.get("settlement_id") or {}).get("S") != sid
+                        or int((ddb_ev.get("version") or {}).get("N", -1)) != ev_ver
                         or (ddb_ev.get("event_id") or {}).get("S") != ev_id
                         or (ddb_ev.get("event_type") or {}).get("S") != ev_type
                         or (ddb_ev.get("status") or {}).get("S") != ev_data.get("status")
                         or (ddb_ev.get("clearing_stage") or {}).get("S") != ev_data.get("clearingStage")
+                        or (ddb_ev.get("entry_id") or {}).get("S") != ev_data.get("entryId")
+                        or (ddb_ev.get("memo") or {}).get("S") != ev_data.get("memo")
+                        or (ddb_ev.get("correlation_id") or {}).get("S") != ev_obj.get("correlationId")
                         or not ddb_env_ok
                     ):
                         events_ok = False
@@ -800,20 +841,29 @@ with psycopg.connect(pg_conninfo) as conn:
                     )
                 rclient.delete(f"clearledger:settlement:{sid}")
             else:
-                cached_raw = rclient.get(f"clearledger:settlement:{sid}")
+                rkey = f"clearledger:settlement:{sid}"
+                cached_raw = rclient.get(rkey)
                 if cached_raw:
                     try:
+                        ttl_val = int(rclient.ttl(rkey))
                         cached_obj = json.loads(cached_raw)
                         if (
-                            int(cached_obj.get("version", -1)) != pg_ver
+                            not (0 < ttl_val <= 90)
+                            or cached_obj.get("settlementId") != sid
+                            or int(cached_obj.get("version", -1)) != pg_ver
+                            or int(cached_obj.get("entryCount", -1)) != pg_ec
                             or cached_obj.get("status") != status
                             or cached_obj.get("clearingStage") != stage
                             or cached_obj.get("accountId") != acct
                             or cached_obj.get("reference") != ref
+                            or cached_obj.get("debitParty") != debit
+                            or cached_obj.get("creditParty") != credit
+                            or cached_obj.get("lastEntryId") != pg_last_entry
+                            or cached_obj.get("lastMemo") != expected_ddb_last_memo
                         ):
-                            rclient.delete(f"clearledger:settlement:{sid}")
+                            rclient.delete(rkey)
                     except Exception:
-                        rclient.delete(f"clearledger:settlement:{sid}")
+                        rclient.delete(rkey)
 
         # 5. Reconcile S3 audit archive objects 1-to-1 against clearledger.outbox
         cur.execute("SELECT seq, event_id::text, archived_at, payload FROM clearledger.outbox ORDER BY seq ASC")
