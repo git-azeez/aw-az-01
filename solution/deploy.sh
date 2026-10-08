@@ -91,13 +91,15 @@ CREATE TABLE IF NOT EXISTS clearledger.settlements (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_settlements_nonempty_fields CHECK (
-        char_length(btrim(account_id)) >= 3
-        AND btrim(reference) <> ''
-        AND btrim(debit_party) <> ''
-        AND btrim(credit_party) <> ''
-        AND char_length(btrim(current_stage)) >= 2
+        char_length(btrim(account_id)) BETWEEN 3 AND 64
+        AND char_length(btrim(reference)) BETWEEN 3 AND 64
+        AND char_length(btrim(debit_party)) BETWEEN 2 AND 64
+        AND char_length(btrim(credit_party)) BETWEEN 2 AND 64
+        AND char_length(btrim(current_stage)) BETWEEN 2 AND 64
+        AND (last_memo IS NULL OR char_length(btrim(last_memo)) BETWEEN 1 AND 256)
+        AND updated_at >= created_at
     ),
-    CONSTRAINT chk_settlements_distinct_parties CHECK (debit_party <> credit_party),
+    CONSTRAINT chk_settlements_distinct_parties CHECK (btrim(debit_party) <> btrim(credit_party)),
     CONSTRAINT chk_settlements_version_positive CHECK (version >= 1),
     CONSTRAINT chk_settlements_entry_count_version CHECK (entry_count >= 0 AND entry_count = version - 1),
     CONSTRAINT chk_settlements_lifecycle_state CHECK (
@@ -106,7 +108,7 @@ CREATE TABLE IF NOT EXISTS clearledger.settlements (
             AND entry_count = 0
             AND current_status = 'INITIATED'
             AND last_entry_id IS NULL
-            AND (last_memo IS NULL OR btrim(last_memo) <> '')
+            AND (last_memo IS NULL OR char_length(btrim(last_memo)) BETWEEN 1 AND 256)
         )
         OR
         (version > 1 AND entry_count = version - 1 AND current_status <> 'INITIATED' AND last_entry_id IS NOT NULL)
@@ -136,8 +138,9 @@ CREATE TABLE IF NOT EXISTS clearledger.events (
     payload JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (settlement_id, aggregate_version),
+    UNIQUE (settlement_id, idempotency_key),
     CONSTRAINT chk_events_nonempty_fields CHECK (
-        char_length(btrim(correlation_id)) >= 4
+        char_length(btrim(correlation_id)) BETWEEN 4 AND 128
         AND char_length(btrim(idempotency_key)) BETWEEN 8 AND 128
     ),
     CONSTRAINT chk_events_version_positive CHECK (aggregate_version >= 1),
@@ -149,6 +152,7 @@ CREATE TABLE IF NOT EXISTS clearledger.events (
     CONSTRAINT chk_events_payload_coherence CHECK (
         (
             jsonb_typeof(payload) = 'object'
+            AND (payload - ARRAY['schemaVersion','eventId','eventType','aggregateType','aggregateId','aggregateVersion','occurredAt','correlationId','idempotencyKey','data']) = '{}'::jsonb
             AND payload->>'schemaVersion' = '1.0'
             AND payload->>'aggregateType' = 'settlement'
             AND payload->>'eventId' = event_id::text
@@ -160,25 +164,31 @@ CREATE TABLE IF NOT EXISTS clearledger.events (
             AND payload->>'idempotencyKey' = idempotency_key
             AND btrim(COALESCE(payload->>'occurredAt', '')) <> ''
             AND jsonb_typeof(payload->'data') = 'object'
-            AND char_length(btrim(COALESCE(payload #>> '{data,accountId}', ''))) >= 3
-            AND char_length(btrim(COALESCE(payload #>> '{data,clearingStage}', ''))) >= 2
+            AND ((payload->'data') - ARRAY['kind','accountId','reference','debitParty','creditParty','entryId','status','clearingStage','memo']) = '{}'::jsonb
+            AND char_length(btrim(COALESCE(payload #>> '{data,accountId}', ''))) BETWEEN 3 AND 64
+            AND char_length(btrim(COALESCE(payload #>> '{data,clearingStage}', ''))) BETWEEN 2 AND 64
+            AND char_length(btrim(COALESCE(payload #>> '{data,reference}', ''))) BETWEEN 3 AND 64
+            AND char_length(btrim(COALESCE(payload #>> '{data,debitParty}', ''))) BETWEEN 2 AND 64
+            AND char_length(btrim(COALESCE(payload #>> '{data,creditParty}', ''))) BETWEEN 2 AND 64
+            AND btrim(COALESCE(payload #>> '{data,debitParty}', '')) <> btrim(COALESCE(payload #>> '{data,creditParty}', ''))
+            AND (
+                payload->'data'->'memo' IS NULL
+                OR jsonb_typeof(payload->'data'->'memo') = 'null'
+                OR char_length(btrim(COALESCE(payload #>> '{data,memo}', ''))) BETWEEN 1 AND 256
+            )
             AND (
                 (
                     event_type = 'SettlementInitiated'
                     AND payload #>> '{data,kind}' = 'settlementInitiated'
                     AND payload #>> '{data,status}' = 'INITIATED'
                     AND (payload->'data'->'entryId' IS NULL OR jsonb_typeof(payload->'data'->'entryId') = 'null')
-                    AND btrim(COALESCE(payload #>> '{data,reference}', '')) <> ''
-                    AND btrim(COALESCE(payload #>> '{data,debitParty}', '')) <> ''
-                    AND btrim(COALESCE(payload #>> '{data,creditParty}', '')) <> ''
-                    AND (payload #>> '{data,debitParty}') <> (payload #>> '{data,creditParty}')
                 )
                 OR
                 (
                     event_type = 'LedgerEntryRecorded'
                     AND payload #>> '{data,kind}' = 'ledgerEntryRecorded'
                     AND (payload #>> '{data,status}') IN ('VALIDATED', 'RESERVED', 'CLEARED', 'SETTLED', 'RECONCILED', 'DISPUTED')
-                    AND btrim(COALESCE(payload #>> '{data,entryId}', '')) <> ''
+                    AND (payload #>> '{data,entryId}') ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
                 )
             )
         ) IS TRUE
@@ -200,7 +210,7 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
     UNIQUE (settlement_id, aggregate_version),
     FOREIGN KEY (settlement_id, aggregate_version)
         REFERENCES clearledger.events(settlement_id, aggregate_version) ON DELETE CASCADE,
-    CONSTRAINT chk_outbox_nonempty_corr CHECK (char_length(btrim(correlation_id)) >= 4),
+    CONSTRAINT chk_outbox_nonempty_corr CHECK (char_length(btrim(correlation_id)) BETWEEN 4 AND 128),
     CONSTRAINT chk_outbox_version_positive CHECK (aggregate_version >= 1),
     CONSTRAINT chk_outbox_attempts_nonnegative CHECK (attempts >= 0),
     CONSTRAINT chk_outbox_published_attempts CHECK (
@@ -212,6 +222,7 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
     CONSTRAINT chk_outbox_payload_coherence CHECK (
         (
             jsonb_typeof(payload) = 'object'
+            AND (payload - ARRAY['schemaVersion','eventId','eventType','aggregateType','aggregateId','aggregateVersion','occurredAt','correlationId','idempotencyKey','data']) = '{}'::jsonb
             AND payload->>'schemaVersion' = '1.0'
             AND payload->>'aggregateType' = 'settlement'
             AND payload->>'eventId' = event_id::text
@@ -222,8 +233,18 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
             AND char_length(btrim(COALESCE(payload->>'idempotencyKey', ''))) BETWEEN 8 AND 128
             AND btrim(COALESCE(payload->>'occurredAt', '')) <> ''
             AND jsonb_typeof(payload->'data') = 'object'
-            AND char_length(btrim(COALESCE(payload #>> '{data,accountId}', ''))) >= 3
-            AND char_length(btrim(COALESCE(payload #>> '{data,clearingStage}', ''))) >= 2
+            AND ((payload->'data') - ARRAY['kind','accountId','reference','debitParty','creditParty','entryId','status','clearingStage','memo']) = '{}'::jsonb
+            AND char_length(btrim(COALESCE(payload #>> '{data,accountId}', ''))) BETWEEN 3 AND 64
+            AND char_length(btrim(COALESCE(payload #>> '{data,clearingStage}', ''))) BETWEEN 2 AND 64
+            AND char_length(btrim(COALESCE(payload #>> '{data,reference}', ''))) BETWEEN 3 AND 64
+            AND char_length(btrim(COALESCE(payload #>> '{data,debitParty}', ''))) BETWEEN 2 AND 64
+            AND char_length(btrim(COALESCE(payload #>> '{data,creditParty}', ''))) BETWEEN 2 AND 64
+            AND btrim(COALESCE(payload #>> '{data,debitParty}', '')) <> btrim(COALESCE(payload #>> '{data,creditParty}', ''))
+            AND (
+                payload->'data'->'memo' IS NULL
+                OR jsonb_typeof(payload->'data'->'memo') = 'null'
+                OR char_length(btrim(COALESCE(payload #>> '{data,memo}', ''))) BETWEEN 1 AND 256
+            )
             AND (
                 (
                     aggregate_version = 1
@@ -238,7 +259,7 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
                     AND payload->>'eventType' = 'LedgerEntryRecorded'
                     AND payload #>> '{data,kind}' = 'ledgerEntryRecorded'
                     AND (payload #>> '{data,status}') IN ('VALIDATED', 'RESERVED', 'CLEARED', 'SETTLED', 'RECONCILED', 'DISPUTED')
-                    AND btrim(COALESCE(payload #>> '{data,entryId}', '')) <> ''
+                    AND (payload #>> '{data,entryId}') ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
                 )
             )
         ) IS TRUE
@@ -259,6 +280,7 @@ CREATE TABLE IF NOT EXISTS clearledger.idempotency_keys (
             AND request_hash ~ '^[0-9a-f]{64}$'
             AND char_length(btrim(idempotency_key)) BETWEEN 8 AND 128
             AND jsonb_typeof(response_body) = 'object'
+            AND (response_body - ARRAY['settlementId','eventId','version','accepted','idempotentReplay']) = '{}'::jsonb
             AND response_body->>'settlementId' = split_part(scope, ':', 2)
             AND (response_body->>'eventId') ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
             AND (response_body->>'version') ~ '^[0-9]+$'
@@ -300,6 +322,17 @@ BEGIN
            OR v_ev_idem <> NEW.idempotency_key THEN
             RAISE EXCEPTION 'Idempotency row does not match referenced clearledger.events row'
                 USING ERRCODE = '23514';
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1
+              FROM clearledger.outbox
+             WHERE event_id = (NEW.response_body->>'eventId')::uuid
+               AND settlement_id = v_ev_sid
+               AND aggregate_version = v_ev_ver
+        ) THEN
+            RAISE EXCEPTION 'Idempotency eventId % not found in clearledger.outbox', NEW.response_body->>'eventId'
+                USING ERRCODE = '23503';
         END IF;
 
         RETURN NEW;
@@ -352,6 +385,16 @@ BEGIN
             USING ERRCODE = '23514';
     END IF;
 
+    IF NEW.updated_at < OLD.updated_at THEN
+        RAISE EXCEPTION 'Settlement updated_at cannot regress backward'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF NEW.last_entry_id IS NOT DISTINCT FROM OLD.last_entry_id THEN
+        RAISE EXCEPTION 'Settlement update must record a distinct last_entry_id'
+            USING ERRCODE = '23514';
+    END IF;
+
     IF OLD.current_status = 'RECONCILED' AND NEW.current_status <> 'RECONCILED' THEN
         RAISE EXCEPTION 'RECONCILED settlement is terminal and cannot transition to %', NEW.current_status
             USING ERRCODE = '23514';
@@ -397,6 +440,11 @@ DECLARE
     v_parent_ver integer;
     v_dup_entry integer;
 BEGIN
+    IF (NEW.payload->>'occurredAt')::timestamptz <> NEW.occurred_at THEN
+        RAISE EXCEPTION 'Event payload occurredAt does not match occurred_at column'
+            USING ERRCODE = '23514';
+    END IF;
+
     SELECT COALESCE(MAX(aggregate_version), 0)
       INTO v_max_ver
       FROM clearledger.events
@@ -419,11 +467,11 @@ BEGIN
 
     IF v_parent_ver <> NEW.aggregate_version
        OR v_acct <> (NEW.payload #>> '{data,accountId}')
+       OR v_ref <> (NEW.payload #>> '{data,reference}')
+       OR v_debit <> (NEW.payload #>> '{data,debitParty}')
+       OR v_credit <> (NEW.payload #>> '{data,creditParty}')
        OR v_status <> (NEW.payload #>> '{data,status}')
        OR v_stage <> (NEW.payload #>> '{data,clearingStage}')
-       OR COALESCE(NEW.payload #>> '{data,reference}', v_ref) <> v_ref
-       OR COALESCE(NEW.payload #>> '{data,debitParty}', v_debit) <> v_debit
-       OR COALESCE(NEW.payload #>> '{data,creditParty}', v_credit) <> v_credit
        OR COALESCE(v_last_memo, '') <> COALESCE(NEW.payload #>> '{data,memo}', '') THEN
         RAISE EXCEPTION 'Event row does not match parent settlement state at version %', NEW.aggregate_version
             USING ERRCODE = '23514';
@@ -537,6 +585,15 @@ BEGIN
     IF OLD.published_at IS NULL AND NEW.published_at IS NOT NULL THEN
         IF NEW.attempts < OLD.attempts + 1 OR NEW.archived_at IS NOT NULL THEN
             RAISE EXCEPTION 'Publishing an unpublished outbox row requires incrementing attempts and keeping archived_at NULL'
+                USING ERRCODE = '23514';
+        END IF;
+    END IF;
+
+    IF OLD.published_at IS NOT NULL THEN
+        IF NEW.published_at IS DISTINCT FROM OLD.published_at
+           OR NEW.attempts <> OLD.attempts
+           OR NEW.last_error IS DISTINCT FROM OLD.last_error THEN
+            RAISE EXCEPTION 'Once published_at is set on clearledger.outbox, published_at, attempts, and last_error are immutable'
                 USING ERRCODE = '23514';
         END IF;
     END IF;
@@ -676,6 +733,7 @@ PY
 fi
 
 /opt/venv/bin/python3 - <<'PY'
+from datetime import datetime
 import hashlib
 import json
 import time
@@ -684,6 +742,16 @@ from urllib.parse import urlparse
 import boto3
 import psycopg
 import redis
+
+
+def same_ts(a: str | None, b: str | None) -> bool:
+    if not a or not b:
+        return False
+    try:
+        return datetime.fromisoformat(a) == datetime.fromisoformat(b)
+    except Exception:
+        return False
+
 
 with open("/workspace/config/config.json", encoding="utf-8") as f:
     cfg = json.load(f)
@@ -793,11 +861,13 @@ with psycopg.connect(pg_conninfo) as conn:
             pg_events = cur.fetchall()
 
             expected_ddb_last_memo = pg_last_memo
+            expected_updated_at = None
             for _, _, _, ev_payload in pg_events:
                 ev_obj = json.loads(ev_payload) if isinstance(ev_payload, str) else ev_payload
                 ev_memo = (ev_obj.get("data") or {}).get("memo")
                 if ev_memo is not None:
                     expected_ddb_last_memo = ev_memo
+                expected_updated_at = ev_obj.get("occurredAt")
 
             q_items = ddb.query(
                 TableName=table_name,
@@ -830,6 +900,7 @@ with psycopg.connect(pg_conninfo) as conn:
                         and (state_item.get("credit_party") or {}).get("S") == credit
                         and (state_item.get("last_entry_id") or {}).get("S") == pg_last_entry
                         and (state_item.get("last_memo") or {}).get("S") == expected_ddb_last_memo
+                        and same_ts((state_item.get("updated_at") or {}).get("S"), expected_updated_at)
                         and (state_item.get("GSI1PK") or {}).get("S") == f"ACCOUNT#{acct}"
                         and (state_item.get("GSI1SK") or {}).get("S") == f"SETTLEMENT#{sid}"
                     )
@@ -863,6 +934,7 @@ with psycopg.connect(pg_conninfo) as conn:
                         or (ddb_ev.get("entry_id") or {}).get("S") != ev_data.get("entryId")
                         or (ddb_ev.get("memo") or {}).get("S") != ev_data.get("memo")
                         or (ddb_ev.get("correlation_id") or {}).get("S") != ev_obj.get("correlationId")
+                        or not same_ts((ddb_ev.get("occurred_at") or {}).get("S"), ev_obj.get("occurredAt"))
                         or not ddb_env_ok
                     ):
                         events_ok = False
@@ -905,6 +977,7 @@ with psycopg.connect(pg_conninfo) as conn:
                             or cached_obj.get("creditParty") != credit
                             or cached_obj.get("lastEntryId") != pg_last_entry
                             or cached_obj.get("lastMemo") != expected_ddb_last_memo
+                            or not same_ts(cached_obj.get("updatedAt"), expected_updated_at)
                         ):
                             rclient.delete(rkey)
                     except Exception:

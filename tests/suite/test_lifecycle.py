@@ -46,6 +46,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         sqs = boto_client("sqs", ctx.config)
         lam = boto_client("lambda", ctx.config)
         scheduler = boto_client("scheduler", ctx.config)
+        logs = boto_client("logs", ctx.config)
         ddb = boto_client("dynamodb", ctx.config)
         s3 = boto_client("s3", ctx.config)
         rclient = valkey_connect(before_manifest, ctx.config)
@@ -74,7 +75,8 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             conn.commit()
 
         # Corrupt S3 audit archive for s3_loss_sid in-place (while archived_at remains NOT NULL in PostgreSQL),
-        # drop one archived event completely while keeping a valid-digest subset batch, and write a forged-digest batch key.
+        # drop one archived event completely while keeping a valid-digest subset batch, write an overlapping valid-digest
+        # single-event batch, and write a forged-digest batch key.
         # Note: we do NOT delete sample_sid's existing S3 batch here, so if deploy.sh merely runs audit_archiver
         # without deduplicating S3 batches against unarchived PostgreSQL rows, sample_sid will be duplicated in S3!
         with pg_connect(before_manifest, ctx.config) as conn:
@@ -104,10 +106,18 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                         valid_s1 = eid_to_seq[json.loads(valid_subset[0])["eventId"]]
                         valid_s2 = eid_to_seq[json.loads(valid_subset[-1])["eventId"]]
                         valid_dig = hashlib.sha256(valid_raw).hexdigest()[:16]
+                        dup_raw = (valid_subset[0] + "\n").encode("utf-8")
+                        dup_dig = hashlib.sha256(dup_raw).hexdigest()[:16]
                         s3.put_object(
                             Bucket=before_bucket,
                             Key=f"ledger-audit/batch-{valid_s1:08d}-{valid_s2:08d}-{valid_dig}.ndjson",
                             Body=valid_raw,
+                            ContentType="application/x-ndjson",
+                        )
+                        s3.put_object(
+                            Bucket=before_bucket,
+                            Key=f"ledger-audit/batch-{valid_s1:08d}-{valid_s1:08d}-{dup_dig}.ndjson",
+                            Body=dup_raw,
                             ContentType="application/x-ndjson",
                         )
                 else:
@@ -162,7 +172,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             ContentType="application/x-ndjson",
         )
 
-        # 1. Control-plane drift across SQS, DLQ, EventBridge Scheduler, and Lambda worker environments
+        # 1. Control-plane drift across SQS, DLQ, EventBridge Scheduler, CloudWatch Logs, and Lambda worker environments
         sqs.set_queue_attributes(
             QueueUrl=before_manifest["messaging"]["queue_url"],
             Attributes={"VisibilityTimeout": "19"},
@@ -180,6 +190,21 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             FlexibleTimeWindow=sched_cur["FlexibleTimeWindow"],
             Target=sched_cur["Target"],
             State="DISABLED",
+        )
+
+        archive_sched_name = before_manifest["schedules"]["archive_schedule_name"]
+        arch_sched_cur = scheduler.get_schedule(Name=archive_sched_name)
+        scheduler.update_schedule(
+            Name=archive_sched_name,
+            ScheduleExpression="rate(30 minutes)",
+            FlexibleTimeWindow=arch_sched_cur["FlexibleTimeWindow"],
+            Target=arch_sched_cur["Target"],
+            State="DISABLED",
+        )
+
+        logs.put_retention_policy(
+            logGroupName=before_manifest["logs"]["api_log_group"],
+            retentionInDays=7,
         )
 
         relay_fn = before_manifest["workers"]["outbox_relay"]["function_name"]
@@ -203,8 +228,8 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         # 2. Data-plane drift:
         # - Inflated-version STATE corruption on sample_sid + poisoned Valkey cache
         # - Missing EVENT#00000001 + in-place mutated EVENT#00000002 + phantom EVENT#00000099 on ledger_sid
-        # - Same-version / same-SK attribute (last_memo, last_entry_id, entry_id, memo, GSI) + stray SK item on same_ver_sid
-        # - Valkey-only cache poison (lastEntryId/lastMemo) on cache_drift_sid (whose DynamoDB items remain valid)
+        # - Same-version / same-SK attribute (last_memo, last_entry_id, updated_at, occurred_at, entry_id, memo, GSI) + stray SK item on same_ver_sid
+        # - Valkey-only cache poison (lastEntryId/lastMemo/updatedAt with valid TTL=80s) on cache_drift_sid (whose DynamoDB items remain valid)
         # - Orphan settlement partition in DynamoDB and Valkey absent from PostgreSQL
         ddb.put_item(
             TableName=before_manifest["projections"]["table_name"],
@@ -257,12 +282,21 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         ddb.update_item(
             TableName=before_manifest["projections"]["table_name"],
             Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "STATE"}},
-            UpdateExpression="SET last_memo = :lm, last_entry_id = :leid, GSI1PK = :gpk, GSI1SK = :gsk",
+            UpdateExpression="SET last_memo = :lm, last_entry_id = :leid, updated_at = :ua, GSI1PK = :gpk, GSI1SK = :gsk",
             ExpressionAttributeValues={
                 ":lm": {"S": "DRIFTED_SAME_VER_LAST_MEMO"},
                 ":leid": {"S": "00000000-0000-0000-0000-000000000000"},
+                ":ua": {"S": "1999-01-01T00:00:00Z"},
                 ":gpk": {"S": "ACCOUNT#DRIFTED-GSI"},
                 ":gsk": {"S": f"CORRUPTED#{same_ver_sid}"},
+            },
+        )
+        ddb.update_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000001"}},
+            UpdateExpression="SET occurred_at = :oa",
+            ExpressionAttributeValues={
+                ":oa": {"S": "1999-01-01T00:00:00Z"},
             },
         )
         ddb.update_item(
@@ -334,9 +368,10 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                     "lastMemo": "DRIFTED_CACHE_ONLY_MEMO_POISON",
                     "version": cache_drift_meta["expected_version"],
                     "entryCount": cache_drift_meta["expected_version"] - 1,
-                    "updatedAt": now_iso,
+                    "updatedAt": "1999-01-01T00:00:00Z",
                 }
             ),
+            ex=80,
         )
         rclient.set(
             f"clearledger:settlement:{orphan_sid}",
@@ -382,6 +417,18 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         sched_after = scheduler.get_schedule(Name=after_manifest["schedules"]["outbox_schedule_name"])
         assert sched_after.get("State") == "ENABLED", (
             f"Expected deploy.sh to re-enable drifted EventBridge schedule, got {sched_after.get('State')}"
+        )
+        arch_sched_after = scheduler.get_schedule(Name=after_manifest["schedules"]["archive_schedule_name"])
+        assert arch_sched_after.get("State") == "ENABLED" and arch_sched_after.get("ScheduleExpression") == "rate(5 minutes)", (
+            f"Expected deploy.sh to restore drifted archive EventBridge schedule to ENABLED / rate(5 minutes), got {arch_sched_after}"
+        )
+
+        api_lg_after = logs.describe_log_groups(
+            logGroupNamePrefix=after_manifest["logs"]["api_log_group"]
+        ).get("logGroups", [])
+        api_lg_match = [g for g in api_lg_after if g.get("logGroupName") == after_manifest["logs"]["api_log_group"]]
+        assert api_lg_match and int(api_lg_match[0].get("retentionInDays") or 0) >= 14, (
+            f"Expected deploy.sh to restore drifted api_log_group retentionInDays >= 14, got {api_lg_match}"
         )
 
         relay_after = lam.get_function_configuration(
@@ -512,8 +559,9 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 and sv_body.get("clearingStage") == same_ver_meta["last_stage"]
                 and sv_body.get("lastEntryId") == expected_sv_last_entry["entryId"]
                 and sv_body.get("lastMemo") == expected_sv_last_entry["memo"]
+                and not str(sv_body.get("updatedAt", "")).startswith("1999-")
             ), (
-                f"Expected deploy.sh to heal same-version drifted STATE (lastEntryId/lastMemo) for {same_ver_sid}, got {sv_body}"
+                f"Expected deploy.sh to heal same-version drifted STATE (lastEntryId/lastMemo/updatedAt) for {same_ver_sid}, got {sv_body}"
             )
             r_sv_ledger = client.get(
                 f"/v1/settlements/{same_ver_sid}/ledger",
@@ -524,10 +572,11 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             expected_sv_v2 = same_ver_meta["spec"]["entries"][0]
             assert (
                 len(sv_events) >= 2
+                and not str(sv_events[0].get("occurredAt", "")).startswith("1999-")
                 and sv_events[1].get("entryId") == expected_sv_v2["entryId"]
                 and sv_events[1].get("memo") == expected_sv_v2["memo"]
             ), (
-                f"Expected deploy.sh to heal same-version mutated EVENT#00000002 (entryId/memo) for {same_ver_sid}, got {sv_events[1] if len(sv_events) >= 2 else sv_events}"
+                f"Expected deploy.sh to heal same-version mutated EVENT#00000001..2 (occurredAt/entryId/memo) for {same_ver_sid}, got {sv_events[:2]}"
             )
             stray_item = ddb.get_item(
                 TableName=after_manifest["projections"]["table_name"],
@@ -560,8 +609,9 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             assert (
                 cd_body.get("lastEntryId") == expected_cd_last_entry["entryId"]
                 and cd_body.get("lastMemo") == expected_cd_last_entry["memo"]
+                and not str(cd_body.get("updatedAt", "")).startswith("1999-")
             ), (
-                f"Expected deploy.sh to evict/reconcile Valkey cache entry with poisoned lastEntryId/lastMemo for {cache_drift_sid}, got {cd_body}"
+                f"Expected deploy.sh to evict/reconcile Valkey cache entry with poisoned lastEntryId/lastMemo/updatedAt for {cache_drift_sid}, got {cd_body}"
             )
 
             r_orphan = client.get(
@@ -590,6 +640,8 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
         prefix = m["resource_prefix"]
         iam = boto_client("iam", ctx.config)
         sqs = boto_client("sqs", ctx.config)
+        s3 = boto_client("s3", ctx.config)
+        ddb = boto_client("dynamodb", ctx.config)
         logs = boto_client("logs", ctx.config)
         scheduler = boto_client("scheduler", ctx.config)
         kms = boto_client("kms", ctx.config)
@@ -613,7 +665,7 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
                 }
             ),
         )
-        # 2) Out-of-band customer-managed IAM policy attached to a deployment IAM role
+        # 2) Out-of-band multi-version customer-managed IAM policy attached to a deployment IAM role
         task_role_name = m["iam"]["ecs_task_role_arn"].rsplit("/", 1)[-1]
         managed_pol = iam.create_policy(
             PolicyName=f"{prefix}-ops-managed-policy",
@@ -630,6 +682,25 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
                 }
             ),
         )["Policy"]
+        try:
+            iam.create_policy_version(
+                PolicyArn=managed_pol["Arn"],
+                PolicyDocument=json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Action": ["sqs:GetQueueUrl", "sqs:GetQueueAttributes"],
+                                "Resource": m["messaging"]["queue_arn"],
+                            }
+                        ],
+                    }
+                ),
+                SetAsDefault=True,
+            )
+        except Exception:  # noqa: BLE001
+            pass
         iam.attach_role_policy(RoleName=task_role_name, PolicyArn=managed_pol["Arn"])
 
         # 3) Out-of-band prefix-scoped IAM role with inline policy
@@ -671,7 +742,8 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
             ),
         )
 
-        # 4) Out-of-band prefix-scoped SQS queue, CloudWatch log group, EventBridge schedule, and KMS alias
+        # 4) Out-of-band prefix-scoped SQS queue, versioned S3 bucket, DynamoDB table,
+        #    CloudWatch log group, EventBridge schedule, KMS alias, and customer-managed KMS key
         sqs.create_queue(
             QueueName=f"{prefix}-ops-dlq",
             tags={
@@ -681,6 +753,35 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
                 "ManagedBy": "ops-runbook",
             },
         )
+        ops_bucket_name = f"{prefix}-ops-quarantine"
+        try:
+            s3.create_bucket(Bucket=ops_bucket_name)
+            s3.put_bucket_versioning(
+                Bucket=ops_bucket_name,
+                VersioningConfiguration={"Status": "Enabled"},
+            )
+            s3.put_object(
+                Bucket=ops_bucket_name,
+                Key="quarantine/diag-001.ndjson",
+                Body=b'{"diag":1}\n',
+                ContentType="application/x-ndjson",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            ddb.create_table(
+                TableName=f"{prefix}-ops-scratch",
+                AttributeDefinitions=[{"AttributeName": "PK", "AttributeType": "S"}],
+                KeySchema=[{"AttributeName": "PK", "KeyType": "HASH"}],
+                BillingMode="PAY_PER_REQUEST",
+                Tags=[
+                    {"Key": "ClearLedgerDeployment", "Value": prefix},
+                    {"Key": "Environment", "Value": m.get("environment", "eval")},
+                    {"Key": "Service", "Value": "clearledger"},
+                ],
+            )
+        except Exception:  # noqa: BLE001
+            pass
         ops_log_group = f"/clearledger/{prefix}/ops-audit"
         try:
             logs.create_log_group(
@@ -708,9 +809,17 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
         except Exception:  # noqa: BLE001
             pass
         try:
+            ops_kms_key = kms.create_key(
+                Description=f"{prefix} ops diagnostic key",
+                Tags=[
+                    {"TagKey": "ClearLedgerDeployment", "TagValue": prefix},
+                    {"TagKey": "Environment", "TagValue": m.get("environment", "eval")},
+                    {"TagKey": "Service", "TagValue": "clearledger"},
+                ],
+            )["KeyMetadata"]["KeyId"]
             kms.create_alias(
                 AliasName=f"alias/{prefix}-ops-alias",
-                TargetKeyId=m["kms"]["messaging_arn"],
+                TargetKeyId=ops_kms_key,
             )
         except Exception:  # noqa: BLE001
             pass

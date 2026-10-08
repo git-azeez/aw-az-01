@@ -68,8 +68,15 @@ for role in iam.list_roles().get("Roles", []):
 
 for pol in iam.list_policies(Scope="Local").get("Policies", []):
     if pol.get("PolicyName", "").startswith(prefix):
+        parn = pol["Arn"]
         try:
-            iam.delete_policy(PolicyArn=pol["Arn"])
+            for ver in iam.list_policy_versions(PolicyArn=parn).get("Versions", []):
+                if not ver.get("IsDefaultVersion"):
+                    try:
+                        iam.delete_policy_version(PolicyArn=parn, VersionId=ver["VersionId"])
+                    except Exception:
+                        pass
+            iam.delete_policy(PolicyArn=parn)
         except Exception:
             pass
 
@@ -82,6 +89,12 @@ for b in s3.list_buckets().get("Buckets", []):
             for item in (vers.get("Versions") or []) + (vers.get("DeleteMarkers") or []):
                 try:
                     s3.delete_object(Bucket=bname, Key=item["Key"], VersionId=item["VersionId"])
+                except Exception:
+                    pass
+            objs = s3.list_objects_v2(Bucket=bname).get("Contents", [])
+            for obj in objs:
+                try:
+                    s3.delete_object(Bucket=bname, Key=obj["Key"])
                 except Exception:
                     pass
         except Exception:
@@ -130,6 +143,35 @@ for qurl in sqs.list_queues().get("QueueUrls", []):
         except Exception:
             pass
 
+ddb = boto3.client("dynamodb", **kwargs)
+for tname in ddb.list_tables().get("TableNames", []):
+    if tname.startswith(prefix):
+        try:
+            ddb.delete_table(TableName=tname)
+        except Exception:
+            pass
+
+s3 = boto3.client("s3", **kwargs)
+for b in s3.list_buckets().get("Buckets", []):
+    bname = b["Name"]
+    if bname.startswith(prefix):
+        try:
+            vers = s3.list_object_versions(Bucket=bname)
+            for item in (vers.get("Versions") or []) + (vers.get("DeleteMarkers") or []):
+                try:
+                    s3.delete_object(Bucket=bname, Key=item["Key"], VersionId=item["VersionId"])
+                except Exception:
+                    pass
+            objs = s3.list_objects_v2(Bucket=bname).get("Contents", [])
+            for obj in objs:
+                try:
+                    s3.delete_object(Bucket=bname, Key=obj["Key"])
+                except Exception:
+                    pass
+            s3.delete_bucket(Bucket=bname)
+        except Exception:
+            pass
+
 logs = boto3.client("logs", **kwargs)
 for lg in logs.describe_log_groups(logGroupNamePrefix=f"/clearledger/{prefix}").get("logGroups", []):
     try:
@@ -155,6 +197,20 @@ for al in kms.list_aliases().get("Aliases", []):
         except Exception:
             pass
 
+for kentry in kms.list_keys().get("Keys", []):
+    kid = kentry.get("KeyId")
+    if not kid:
+        continue
+    try:
+        meta = kms.describe_key(KeyId=kid)["KeyMetadata"]
+        if meta.get("KeyManager") == "AWS" or meta.get("KeyState") in {"PendingDeletion", "PendingReplicaDeletion"}:
+            continue
+        tags = kms.list_resource_tags(KeyId=kid).get("Tags", [])
+        if any(t.get("TagKey") == "ClearLedgerDeployment" and t.get("TagValue") == prefix for t in tags):
+            kms.schedule_key_deletion(KeyId=kid, PendingWindowInDays=7)
+    except Exception:
+        pass
+
 iam = boto3.client("iam", **kwargs)
 for role in iam.list_roles().get("Roles", []):
     rname = role["RoleName"]
@@ -176,8 +232,15 @@ for role in iam.list_roles().get("Roles", []):
 
 for pol in iam.list_policies(Scope="Local").get("Policies", []):
     if pol.get("PolicyName", "").startswith(prefix):
+        parn = pol["Arn"]
         try:
-            iam.delete_policy(PolicyArn=pol["Arn"])
+            for ver in iam.list_policy_versions(PolicyArn=parn).get("Versions", []):
+                if not ver.get("IsDefaultVersion"):
+                    try:
+                        iam.delete_policy_version(PolicyArn=parn, VersionId=ver["VersionId"])
+                    except Exception:
+                        pass
+            iam.delete_policy(PolicyArn=parn)
         except Exception:
             pass
 PY

@@ -1,6 +1,6 @@
 # RDS PostgreSQL (`services/rds.md`)
 
-- Provision a DB subnet group (`aws_db_subnet_group`) spanning the private subnets.
+- Provision a DB subnet group (`aws_db_subnet_group`) spanning strictly the private subnets (`network.private_subnet_ids`).
 - Provision a single PostgreSQL 16 RDS instance (`aws_db_instance`) with:
   - `engine = "postgres"`
   - `engine_version = "16.3"` (or `16.*`)
@@ -13,11 +13,11 @@
   - `vpc_security_group_ids` containing the `rds` security group
 - Re-running `deploy.sh` must never replace the RDS instance or lose committed data.
 
-## Required Database Schema, Relational Invariants, and State-Transition Triggers
+## Required Database Schema, Relational Invariants, and Triggers
 
-The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and `clearledger-audit-archiver`) do **not** run database migrations on startup. Moreover, `clearledger-api` relies on PostgreSQL constraints and triggers to enforce domain and state-transition invariants (mapping SQLSTATE `23514`, `23503`, `23502`, and PL/pgSQL `P0001` exceptions to HTTP `400 Bad Request`).
+The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and `clearledger-audit-archiver`) do **not** run database migrations on startup. `clearledger-api` relies on PostgreSQL constraints and triggers to enforce domain, schema, and state-transition invariants (mapping SQLSTATE `23514`, `23503`, `23502`, `23505`, and PL/pgSQL `P0001` exceptions to HTTP `400 Bad Request`), and `GET /health/ready` verifies that all four tables, all three indexes, and user-defined triggers on all four tables exist in the `clearledger` schema before reporting `checks.postgres = "UP"`.
 
-`deploy.sh` must idempotently initialize the `clearledger` schema, all four tables, their relational `CHECK` / `UNIQUE` / `FOREIGN KEY` constraints, their state-transition and append-only triggers, and all three indexes on the RDS PostgreSQL instance before `/health/ready` reports `200 OK` (`checks.postgres = "UP"`). Re-running `deploy.sh` against an already-initialized database must succeed cleanly without failing on existing tables, constraints, functions, triggers, or indexes.
+`deploy.sh` must idempotently initialize the `clearledger` schema, all four tables, their relational constraints, their triggers, and all three indexes on the RDS PostgreSQL instance. Re-running `deploy.sh` against an already-initialized database must succeed cleanly.
 
 ### 1. Table `clearledger.settlements`
 
@@ -36,21 +36,21 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
   - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
   - `updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - **Row-level & cross-column invariants**:
-  - `account_id`, `reference`, `debit_party`, `credit_party`, and `current_stage` must be non-empty after whitespace trimming (`account_id` at least 3 trimmed characters; `current_stage` at least 2 trimmed characters).
-  - Self-dealing is prohibited: `debit_party` and `credit_party` must be distinct.
+  - Trimmed string bounds must match `CreateSettlementRequest` / `AppendEntryRequest` in `openapi.yaml`: `account_id` (`3..64` trimmed chars), `reference` (`3..64` trimmed chars), `debit_party` (`2..64` trimmed chars), `credit_party` (`2..64` trimmed chars), `current_stage` (`2..64` trimmed chars), and `last_memo` (either `NULL` or `1..256` trimmed chars).
+  - Self-dealing is prohibited: trimmed `debit_party` and trimmed `credit_party` must be distinct.
   - `current_status` must be one of `'INITIATED'`, `'VALIDATED'`, `'RESERVED'`, `'CLEARED'`, `'SETTLED'`, `'RECONCILED'`, `'DISPUTED'`.
-  - `version >= 1`.
+  - `version >= 1` and `updated_at >= created_at`.
   - Initiation vs. post-initiation coherence:
-    - At initial creation (`version = 1`), `entry_count` must be `0`, `current_status` must be `'INITIATED'`, `last_entry_id` must be `NULL`, and `last_memo` (when provided) must be non-empty after whitespace trimming.
+    - At initial creation (`version = 1`), `entry_count` must be `0`, `current_status` must be `'INITIATED'`, and `last_entry_id` must be `NULL`.
     - After any ledger entry is appended (`version > 1`), `entry_count` must equal `version - 1`, `current_status` must not be `'INITIATED'`, and `last_entry_id` must be `NOT NULL`.
 - **Update state-transition invariants (`BEFORE UPDATE` trigger)**:
   - Immutable settlement header fields (`settlement_id`, `account_id`, `reference`, `debit_party`, `credit_party`, `created_at`) must never be modified after insertion.
-  - Optimistic version step invariant: every update must increment `version` by exactly `+1` and increment `entry_count` by `+1`.
+  - Optimistic version & entry progression: every update must increment `version` by `+1`, increment `entry_count` by `+1`, advance or preserve `updated_at` (`NEW.updated_at >= OLD.updated_at`), and set a distinct `last_entry_id` (`NEW.last_entry_id IS DISTINCT FROM OLD.last_entry_id`).
   - Ordered clearing lifecycle state machine:
-    - The normal clearing stage progression order is `INITIATED` -> `VALIDATED` -> `RESERVED` -> `CLEARED` -> `SETTLED` -> `RECONCILED`.
-    - When neither the prior status nor the new status is `'DISPUTED'`, `current_status` must advance or stay at the same stage in this progression order (backward regressions such as `RESERVED` -> `VALIDATED`, `CLEARED` -> `RESERVED`, `SETTLED` -> `CLEARED`, or `RECONCILED` -> `SETTLED` must be rejected).
-    - `'DISPUTED'` is an exception status reachable from any status except terminal `'RECONCILED'`. Once a settlement is in `'DISPUTED'`, subsequent updates may only remain `'DISPUTED'` or resolve to terminal `'RECONCILED'` (never regress from `'DISPUTED'` back to `'VALIDATED'`, `'RESERVED'`, `'CLEARED'`, or `'SETTLED'`).
-    - `'RECONCILED'` is terminal: once `current_status` is `'RECONCILED'`, subsequent updates may only keep `current_status = 'RECONCILED'` (never transition to `'DISPUTED'` or any earlier status).
+    - Normal clearing stage progression order is `INITIATED` -> `VALIDATED` -> `RESERVED` -> `CLEARED` -> `SETTLED` -> `RECONCILED`.
+    - When neither the prior status nor the new status is `'DISPUTED'`, `current_status` must advance or remain at the same stage in this progression order (backward regressions such as `RESERVED` -> `VALIDATED`, `CLEARED` -> `RESERVED`, `SETTLED` -> `CLEARED`, or `RECONCILED` -> `SETTLED` must be rejected).
+    - `'DISPUTED'` is an exception status reachable from any status except terminal `'RECONCILED'`. Once in `'DISPUTED'`, subsequent updates may only remain `'DISPUTED'` or resolve to terminal `'RECONCILED'`.
+    - `'RECONCILED'` is terminal: once `current_status` is `'RECONCILED'`, subsequent updates may only keep `current_status = 'RECONCILED'`.
 
 ### 2. Table `clearledger.events`
 
@@ -66,21 +66,21 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
   - `payload JSONB NOT NULL`
   - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
 - **Row-level & cross-column invariants**:
-  - Composite `UNIQUE (settlement_id, aggregate_version)`.
-  - `aggregate_version >= 1`, `correlation_id` must have at least 4 non-whitespace characters, and `idempotency_key` must be between 8 and 128 trimmed characters.
+  - Composite `UNIQUE (settlement_id, aggregate_version)` and composite `UNIQUE (settlement_id, idempotency_key)`.
+  - `aggregate_version >= 1`, `correlation_id` must be `4..128` trimmed characters, and `idempotency_key` must be `8..128` trimmed characters.
   - Event-type / version coupling: `'SettlementInitiated'` is permitted only when `aggregate_version = 1`; `'LedgerEntryRecorded'` is permitted only when `aggregate_version >= 2`.
-  - Full `ClearLedgerDomainEventEnvelope` (`schemas/events.schema.json`) coherence on `payload`:
-    - `payload` must be a JSON object whose top-level envelope fields (`schemaVersion = "1.0"`, `aggregateType = "settlement"`, `eventId`, `aggregateId`, `aggregateVersion`, `eventType`, `correlationId`, `idempotencyKey`, and non-empty `occurredAt`) are present and match the row columns (`event_id`, `settlement_id`, `aggregate_version`, `event_type`, `correlation_id`, `idempotency_key`).
-    - `payload.data` must be a nested JSON object satisfying the domain event data contract in `schemas/events.schema.json`: non-empty `accountId` (`>= 3` trimmed chars) and `clearingStage` (`>= 2` trimmed chars), and:
-      - When `event_type = 'SettlementInitiated'` (`aggregate_version = 1`): `data.kind = "settlementInitiated"`, `data.status = "INITIATED"`, `data.entryId` is absent or JSON `null`, and `data.reference`, `data.debitParty`, `data.creditParty` are non-empty trimmed strings with `data.debitParty <> data.creditParty`.
-      - When `event_type = 'LedgerEntryRecorded'` (`aggregate_version >= 2`): `data.kind = "ledgerEntryRecorded"`, `data.status` is one of `'VALIDATED'`, `'RESERVED'`, `'CLEARED'`, `'SETTLED'`, `'RECONCILED'`, `'DISPUTED'`, and `data.entryId` is a non-empty UUID string.
+  - Strict `ClearLedgerDomainEventEnvelope` (`schemas/events.schema.json`) coherence on `payload`:
+    - `payload` must be a JSON object with no unknown top-level properties (`additionalProperties: false`: only the 10 schema properties are permitted) whose top-level fields (`schemaVersion = "1.0"`, `aggregateType = "settlement"`, `eventId`, `aggregateId`, `aggregateVersion`, `eventType`, `correlationId`, `idempotencyKey`, and `occurredAt`) match the row columns (`event_id`, `settlement_id`, `aggregate_version`, `event_type`, `correlation_id`, `idempotency_key`, and `occurred_at` as a `TIMESTAMPTZ` instant).
+    - `payload.data` must be a JSON object with no unknown properties (`additionalProperties: false`: only `kind`, `accountId`, `reference`, `debitParty`, `creditParty`, `entryId`, `status`, `clearingStage`, `memo` are permitted), non-empty `accountId` (`3..64` trimmed chars), `clearingStage` (`2..64` trimmed chars), `reference` (`3..64` trimmed chars), `debitParty` (`2..64` trimmed chars), `creditParty` (`2..64` trimmed chars) with `debitParty <> creditParty`, and:
+      - When `event_type = 'SettlementInitiated'` (`aggregate_version = 1`): `data.kind = "settlementInitiated"`, `data.status = "INITIATED"`, and `data.entryId` is absent or JSON `null`.
+      - When `event_type = 'LedgerEntryRecorded'` (`aggregate_version >= 2`): `data.kind = "ledgerEntryRecorded"`, `data.status` is one of `'VALIDATED'`, `'RESERVED'`, `'CLEARED'`, `'SETTLED'`, `'RECONCILED'`, `'DISPUTED'`, and `data.entryId` is a valid UUID string.
 - **Cross-table parent coherence, contiguous sequencing, unique entryId & append-only immutability (`BEFORE INSERT` and `BEFORE UPDATE OR DELETE` triggers)**:
   - On `INSERT`:
-    - Per-settlement event versions must be strictly contiguous starting at `1`: `aggregate_version` must equal `COALESCE(MAX(aggregate_version), 0) + 1` for `settlement_id` in `clearledger.events` (no version gaps).
-    - Within any single settlement (`settlement_id`), `data.entryId` across `LedgerEntryRecorded` events (`aggregate_version >= 2`) must be unique: inserting a `LedgerEntryRecorded` event whose `payload->'data'->>'entryId'` already exists in an earlier event for that `settlement_id` must be rejected.
-    - Because `clearledger-api` inserts/updates `clearledger.settlements` prior to inserting into `clearledger.events` within the same transaction, the inserted event row must match the current parent row in `clearledger.settlements` for `settlement_id`: `aggregate_version = settlements.version`, `data.accountId = settlements.account_id`, `data.status = settlements.current_status`, `data.clearingStage = settlements.current_stage`, `COALESCE(data.reference, settlements.reference) = settlements.reference`, `COALESCE(data.debitParty, settlements.debit_party) = settlements.debit_party`, `COALESCE(data.creditParty, settlements.credit_party) = settlements.credit_party`, `COALESCE(data.memo, '') = COALESCE(settlements.last_memo, '')`, and (for `aggregate_version >= 2`) `data.entryId = settlements.last_entry_id::text`.
+    - Per-settlement event versions must be strictly contiguous starting at `1` (`1, 2, 3, ...` with no version gaps).
+    - Within any single settlement (`settlement_id`), `data.entryId` across `LedgerEntryRecorded` events (`aggregate_version >= 2`) must be unique.
+    - Because `clearledger-api` inserts/updates `clearledger.settlements` prior to inserting into `clearledger.events` within the same transaction, the inserted event row must match the current parent row in `clearledger.settlements` for `settlement_id` across `version`, `account_id`, `reference`, `debit_party`, `credit_party`, `current_status`, `current_stage`, `last_memo`, and (for `aggregate_version >= 2`) `last_entry_id`.
   - On `UPDATE` or `DELETE`:
-    - `clearledger.events` is strictly an immutable append-only event log: any `UPDATE` or `DELETE` operation on `clearledger.events` must be rejected by raising an exception.
+    - `clearledger.events` is strictly an immutable append-only event log: any `UPDATE` or `DELETE` operation must be rejected.
 
 ### 3. Table `clearledger.outbox`
 
@@ -98,20 +98,20 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
   - `last_error TEXT NULL`
 - **Row-level & cross-column invariants**:
   - Composite `UNIQUE (settlement_id, aggregate_version)` and composite `FOREIGN KEY (settlement_id, aggregate_version) REFERENCES clearledger.events(settlement_id, aggregate_version) ON DELETE CASCADE`.
-  - `aggregate_version >= 1`, `attempts >= 0`, and `correlation_id` must have at least 4 trimmed characters.
+  - `aggregate_version >= 1`, `attempts >= 0`, and `correlation_id` must be `4..128` trimmed characters.
   - Delivery & archival state coherence:
     - When `published_at IS NOT NULL`, `attempts` must be `>= 1` and `last_error` must be `NULL`.
     - `archived_at` must be `NULL` unless `published_at IS NOT NULL` and `archived_at >= published_at`.
-  - Full `ClearLedgerDomainEventEnvelope` (`schemas/events.schema.json`) coherence on `payload`:
-    - `payload` must be a JSON object whose top-level (`schemaVersion`, `aggregateType`, `eventId`, `aggregateId`, `aggregateVersion`, `eventType`, `correlationId`, `idempotencyKey`, `occurredAt`) and nested `payload.data` fields satisfy `schemas/events.schema.json` and match `event_id`, `settlement_id`, `aggregate_version`, and `correlation_id`.
+  - Strict `ClearLedgerDomainEventEnvelope` (`schemas/events.schema.json`) coherence on `payload` (including `additionalProperties: false` on top-level `payload` and `payload.data`, and matching `event_id`, `settlement_id`, `aggregate_version`, and `correlation_id`).
 - **Cross-table event-mirror coherence, contiguous sequencing & state-transition immutability (`BEFORE INSERT` and `BEFORE UPDATE OR DELETE` triggers)**:
   - On `INSERT`:
-    - Per-settlement outbox versions must be strictly contiguous starting at `1`: `aggregate_version` must equal `COALESCE(MAX(aggregate_version), 0) + 1` for `settlement_id` in `clearledger.outbox` (no version gaps).
+    - Per-settlement outbox versions must be strictly contiguous starting at `1` (no version gaps).
     - The outbox row's `settlement_id`, `aggregate_version`, `correlation_id`, and `payload` must exactly equal the referenced row in `clearledger.events` for `event_id`.
   - Outbox rows are never deleted (`DELETE` on `clearledger.outbox` must be rejected).
   - On `UPDATE`:
-    - The envelope identity columns (`seq`, `event_id`, `settlement_id`, `aggregate_version`, `correlation_id`, `payload`, `created_at`) must remain unchanged, and `attempts` must be monotonically non-decreasing (`NEW.attempts >= OLD.attempts`).
-    - Delivery/archival transition order: transitioning an unpublished row (`OLD.published_at IS NULL`) to published (`NEW.published_at IS NOT NULL`) requires incrementing `attempts` (`NEW.attempts >= OLD.attempts + 1`) and keeping `NEW.archived_at IS NULL` (an unpublished row cannot jump directly to archived in the same transition).
+    - The envelope identity columns (`seq`, `event_id`, `settlement_id`, `aggregate_version`, `correlation_id`, `payload`, `created_at`) must remain unchanged, and `attempts` must be monotonically non-decreasing.
+    - Transitioning an unpublished row (`OLD.published_at IS NULL`) to published (`NEW.published_at IS NOT NULL`) requires incrementing `attempts` and keeping `NEW.archived_at IS NULL`.
+    - Transitioning a published row (`OLD.published_at IS NOT NULL AND OLD.archived_at IS NULL`) to archived (`NEW.archived_at IS NOT NULL`) must preserve `NEW.published_at = OLD.published_at` and `NEW.attempts = OLD.attempts`.
 
 ### 4. Table `clearledger.idempotency_keys`
 
@@ -124,16 +124,16 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
   - `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`
   - Composite `PRIMARY KEY (scope, idempotency_key)`
 - **Row-level & cross-column invariants**:
-  - `scope` must follow `'^(create|entry):[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'` (`create:<settlement_uuid>` or `entry:<settlement_uuid>`).
-  - `idempotency_key` length must be between `8` and `128` trimmed characters.
-  - `request_hash` must be a 64-character lowercase hexadecimal SHA-256 digest (`request_hash ~ '^[0-9a-f]{64}$'`).
-  - `response_body` must be a JSON object (`jsonb_typeof(response_body) = 'object'`) containing `settlementId` equal to `split_part(scope, ':', 2)`, a valid UUID string `eventId`, integer `version`, `accepted = true` (`response_body->'accepted' = 'true'::jsonb`), and `idempotentReplay = false` (`response_body->'idempotentReplay' = 'false'::jsonb`).
+  - `scope` must be formatted as `create:<settlement_uuid>` or `entry:<settlement_uuid>`.
+  - `idempotency_key` must be `8..128` trimmed characters.
+  - `request_hash` must be a 64-character lowercase hexadecimal SHA-256 digest.
+  - `response_body` must be a JSON object conforming strictly to `WriteAcceptedResponse` in `openapi.yaml` (containing only the 5 keys `settlementId`, `eventId`, `version`, `accepted`, and `idempotentReplay`, with `settlementId` matching the UUID in `scope`, valid UUID `eventId`, integer `version`, `accepted = true`, and `idempotentReplay = false`).
   - Scope / status / version coupling:
-    - When `scope LIKE 'create:%'`: `status_code` must be `201` and `(response_body->>'version')::integer = 1`.
-    - When `scope LIKE 'entry:%'`: `status_code` must be `202` and `(response_body->>'version')::integer >= 2`.
-- **Cross-table event coherence & append-only immutability (`BEFORE INSERT` and `BEFORE UPDATE OR DELETE` triggers)**:
-  - On `INSERT`: because `clearledger-api` records the idempotency entry after inserting into `clearledger.events` within the same transaction, the trigger must verify that a row exists in `clearledger.events` with `event_id = (NEW.response_body->>'eventId')::uuid`, `settlement_id = (NEW.response_body->>'settlementId')::uuid`, `aggregate_version = (NEW.response_body->>'version')::integer`, and `idempotency_key = NEW.idempotency_key` (rejecting orphan or mismatched idempotency rows).
-  - On `UPDATE` or `DELETE`: `clearledger.idempotency_keys` is strictly an append-only idempotency ledger; any `UPDATE` or `DELETE` operation on `clearledger.idempotency_keys` must be rejected by raising an exception.
+    - For `create:<settlement_uuid>`: `status_code = 201` and `version = 1`.
+    - For `entry:<settlement_uuid>`: `status_code = 202` and `version >= 2`.
+- **Cross-table event/outbox coherence & append-only immutability (`BEFORE INSERT` and `BEFORE UPDATE OR DELETE` triggers)**:
+  - On `INSERT`: because `clearledger-api` records the idempotency entry after inserting into `clearledger.events` and `clearledger.outbox` within the same transaction, the trigger must verify that the referenced event (`eventId`, `settlementId`, `version`, `idempotency_key`) exists in **both** `clearledger.events` and `clearledger.outbox`.
+  - On `UPDATE` or `DELETE`: `clearledger.idempotency_keys` is strictly an append-only idempotency ledger; any `UPDATE` or `DELETE` operation must be rejected.
 
 ### 5. Required Indexes in `clearledger` Schema
 

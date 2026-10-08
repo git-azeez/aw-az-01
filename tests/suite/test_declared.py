@@ -57,6 +57,7 @@ def test_iac_discipline(ctx: VerifierContext) -> None:
             "aws_subnet",
             "aws_internet_gateway",
             "aws_route_table",
+            "aws_route_table_association",
             "aws_security_group",
             "aws_lb",
             "aws_lb_target_group",
@@ -144,6 +145,41 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
         priv = [s for s in subnets if not s.get("map_public_ip_on_launch")]
         assert len(pub) >= 2 and len({s.get("availability_zone") for s in pub}) >= 2
         assert len(priv) >= 2 and len({s.get("availability_zone") for s in priv}) >= 2
+        pub_ids = set(manifest["network"]["public_subnet_ids"])
+        priv_ids = set(manifest["network"]["private_subnet_ids"])
+        assert pub_ids == {s["id"] for s in pub}, "Manifest public_subnet_ids must match public subnets (map_public_ip_on_launch=true)"
+        assert priv_ids == {s["id"] for s in priv}, "Manifest private_subnet_ids must match private subnets (map_public_ip_on_launch=false)"
+
+        igws = _by_type(items, "aws_internet_gateway")
+        assert len(igws) == 1 and igws[0].get("vpc_id") == vpc["id"]
+        igw_id = igws[0]["id"]
+
+        rts = {rt["id"]: rt for rt in _by_type(items, "aws_route_table")}
+        standalone_routes = _by_type(items, "aws_route")
+        rt_assocs = _by_type(items, "aws_route_table_association")
+        subnet_to_rt = {a.get("subnet_id"): a.get("route_table_id") for a in rt_assocs if a.get("subnet_id")}
+        assert (pub_ids | priv_ids).issubset(set(subnet_to_rt.keys())), (
+            f"All public and private subnets must have explicit aws_route_table_association; missing {(pub_ids | priv_ids) - set(subnet_to_rt.keys())}"
+        )
+
+        def _rt_has_igw_default_route(rt_id: str) -> bool:
+            rt_obj = rts.get(rt_id) or {}
+            for r in rt_obj.get("route") or []:
+                if r.get("cidr_block") == "0.0.0.0/0" and r.get("gateway_id") == igw_id:
+                    return True
+            for sr in standalone_routes:
+                if sr.get("route_table_id") == rt_id and sr.get("destination_cidr_block") == "0.0.0.0/0" and sr.get("gateway_id") == igw_id:
+                    return True
+            return False
+
+        for psid in pub_ids:
+            assert _rt_has_igw_default_route(str(subnet_to_rt[psid])), (
+                f"Public subnet {psid} route table must have 0.0.0.0/0 route to aws_internet_gateway {igw_id}"
+            )
+        for prsid in priv_ids:
+            assert not _rt_has_igw_default_route(str(subnet_to_rt[prsid])), (
+                f"Private subnet {prsid} route table must NOT route 0.0.0.0/0 to the Internet Gateway"
+            )
 
         sgs = {s["id"]: s for s in _by_type(items, "aws_security_group")}
         sg_ids = manifest["network"]["security_group_ids"]
@@ -156,6 +192,7 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
 
         sg_rules = _by_type(items, "aws_security_group_rule")
         vpc_sg_rules = _by_type(items, "aws_vpc_security_group_ingress_rule")
+        vpc_egress_rules = _by_type(items, "aws_vpc_security_group_egress_rule")
         for restricted_key in ("ecs", "rds", "valkey"):
             sg_id = sg_ids[restricted_key]
             sg = sgs[sg_id]
@@ -201,12 +238,47 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
                             f"ecs VPC security group ingress rule must reference alb security group {sg_ids['alb']}"
                         )
 
+        # Verify least-privilege egress on alb, rds, and valkey security groups
+        for egress_restricted_key in ("alb", "rds", "valkey"):
+            sg_id = sg_ids[egress_restricted_key]
+            sg = sgs[sg_id]
+            for erule in sg.get("egress", []) or []:
+                cidrs = erule.get("cidr_blocks") or []
+                v6_cidrs = erule.get("ipv6_cidr_blocks") or []
+                assert "0.0.0.0/0" not in cidrs and "::/0" not in v6_cidrs, (
+                    f"{egress_restricted_key} security group must not allow unrestricted egress to 0.0.0.0/0 or ::/0"
+                )
+                if egress_restricted_key == "alb":
+                    assert str(erule.get("protocol", "")).lower() == "tcp" and int(erule.get("from_port", 0)) == 8080 and int(erule.get("to_port", 0)) == 8080, (
+                        f"alb security group egress must be restricted to TCP port 8080, got {erule}"
+                    )
+            for srule in sg_rules:
+                if srule.get("security_group_id") == sg_id and srule.get("type") == "egress":
+                    cidrs = srule.get("cidr_blocks") or []
+                    v6_cidrs = srule.get("ipv6_cidr_blocks") or []
+                    assert "0.0.0.0/0" not in cidrs and "::/0" not in v6_cidrs, (
+                        f"{egress_restricted_key} security group rule must not allow unrestricted egress to 0.0.0.0/0 or ::/0"
+                    )
+                    if egress_restricted_key == "alb":
+                        assert str(srule.get("protocol", "")).lower() == "tcp" and int(srule.get("from_port", 0)) == 8080 and int(srule.get("to_port", 0)) == 8080, (
+                            f"alb security group egress rule must be restricted to TCP port 8080, got {srule}"
+                        )
+            for verule in vpc_egress_rules:
+                if verule.get("security_group_id") == sg_id:
+                    assert verule.get("cidr_ipv4") != "0.0.0.0/0" and verule.get("cidr_ipv6") != "::/0", (
+                        f"{egress_restricted_key} VPC security group egress rule must not allow 0.0.0.0/0 or ::/0"
+                    )
+                    if egress_restricted_key == "alb":
+                        assert str(verule.get("ip_protocol", "")).lower() == "tcp" and int(verule.get("from_port", 0)) == 8080 and int(verule.get("to_port", 0)) == 8080, (
+                            f"alb VPC security group egress rule must be restricted to TCP port 8080, got {verule}"
+                        )
+
         lbs = _by_type(items, "aws_lb")
         assert len(lbs) == 1
         lb = lbs[0]
         assert lb.get("load_balancer_type") == "application"
         assert lb.get("internal") is False
-        assert set(lb.get("subnets") or []) == set(manifest["network"]["public_subnet_ids"])
+        assert set(lb.get("subnets") or []) == pub_ids
 
         tgs = _by_type(items, "aws_lb_target_group")
         assert len(tgs) == 1
@@ -219,11 +291,30 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
         assert len(listeners) == 1
         assert int(listeners[0].get("port", 0)) == 80
 
+        clusters = _by_type(items, "aws_ecs_cluster")
+        assert len(clusters) == 1
+        cluster_settings = clusters[0].get("setting") or []
+        assert any(
+            s.get("name") == "containerInsights" and s.get("value") == "enabled"
+            for s in cluster_settings
+            if isinstance(s, dict)
+        ), f"aws_ecs_cluster must enable containerInsights, got {cluster_settings}"
+
         services = _by_type(items, "aws_ecs_service")
         assert len(services) == 1
         svc = services[0]
         assert int(svc.get("desired_count", 0)) >= 2
         assert svc.get("launch_type") == "FARGATE"
+        net_cfg = (svc.get("network_configuration") or [{}])[0]
+        assert set(net_cfg.get("subnets") or []) == priv_ids, (
+            f"aws_ecs_service network_configuration.subnets must equal private_subnet_ids {priv_ids}, got {net_cfg.get('subnets')}"
+        )
+        assert net_cfg.get("assign_public_ip") is False, (
+            f"aws_ecs_service network_configuration.assign_public_ip must be false, got {net_cfg.get('assign_public_ip')}"
+        )
+        assert sg_ids["ecs"] in (net_cfg.get("security_groups") or []), (
+            f"aws_ecs_service network_configuration.security_groups must include ecs security group {sg_ids['ecs']}"
+        )
 
         task_defs = _by_type(items, "aws_ecs_task_definition")
         assert len(task_defs) == 1
@@ -240,6 +331,14 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
         assert len(cdefs) == 1
         cdef = cdefs[0]
         assert cdef["image"] == ctx.config["api_image"]
+        log_cfg = cdef.get("logConfiguration") or {}
+        assert log_cfg.get("logDriver") == "awslogs", (
+            f"ECS api container must configure logConfiguration.logDriver='awslogs', got {log_cfg}"
+        )
+        log_opts = log_cfg.get("options") or {}
+        assert log_opts.get("awslogs-group") == manifest["logs"]["api_log_group"], (
+            f"ECS api container awslogs-group must equal {manifest['logs']['api_log_group']}, got {log_opts}"
+        )
         env_map = {e["name"]: e["value"] for e in cdef.get("environment", [])}
         for req_env in (
             "DATABASE_URL",
@@ -268,7 +367,7 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
             f"ECS container AUTH_AUDIENCES ({declared_audiences}) missing Cognito client IDs {expected_audiences}"
         )
 
-        return "VPC, ALB, and ECS Fargate declarations and role bindings verified"
+        return "VPC, route tables, ALB/ECS/RDS/Valkey security groups, and ECS Fargate declarations verified"
 
     _run_block(ctx, "declared.compute_ingress", _check)
 
@@ -280,6 +379,19 @@ def test_declared_data_and_async(ctx: VerifierContext) -> None:
         items = _collect_resources(state)
         manifest = ctx.manifest
         cfg_map = load_iac_configuration(INFRA_DIR)
+        priv_ids = set(manifest["network"]["private_subnet_ids"])
+
+        db_subnet_groups = _by_type(items, "aws_db_subnet_group")
+        assert len(db_subnet_groups) == 1
+        assert set(db_subnet_groups[0].get("subnet_ids") or []) == priv_ids, (
+            f"aws_db_subnet_group subnet_ids must equal private_subnet_ids {priv_ids}"
+        )
+
+        ec_subnet_groups = _by_type(items, "aws_elasticache_subnet_group")
+        assert len(ec_subnet_groups) == 1
+        assert set(ec_subnet_groups[0].get("subnet_ids") or []) == priv_ids, (
+            f"aws_elasticache_subnet_group subnet_ids must equal private_subnet_ids {priv_ids}"
+        )
 
         kms_by_arn = {k["arn"]: k for k in _by_type(items, "aws_kms_key")}
         db_kms_arn = manifest["kms"]["database_arn"]
@@ -569,18 +681,25 @@ def test_declared_security(ctx: VerifierContext) -> None:
             expected_key_ids.add(str(key.get("key_id") or arn.rsplit("/", 1)[-1]))
             expected_key_ids.add(arn)
 
+        prefix = ctx.config["resource_prefix"]
         aliases = _by_type(items, "aws_kms_alias")
         assert len(aliases) >= 4, f"Expected at least 4 aws_kms_alias resources, found {len(aliases)}"
-        alias_targets: set[str] = set()
-        for al in aliases:
-            name = str(al.get("name") or "")
-            assert name.startswith("alias/"), f"KMS alias '{name}' must start with 'alias/'"
-            target = str(al.get("target_key_id") or al.get("target_key_arn") or "")
-            if target:
-                alias_targets.add(target)
-        for arn in kms_arns:
-            kid = str((keys.get(arn) or {}).get("key_id") or arn.rsplit("/", 1)[-1])
-            assert arn in alias_targets or kid in alias_targets, f"KMS key {arn} has no declared aws_kms_alias"
+        alias_by_name = {str(al.get("name") or ""): al for al in aliases}
+        for kms_role, kms_arn in (
+            ("database", manifest["kms"]["database_arn"]),
+            ("messaging", manifest["kms"]["messaging_arn"]),
+            ("projection", manifest["kms"]["projection_arn"]),
+            ("audit", manifest["kms"]["audit_arn"]),
+        ):
+            expected_alias_name = f"alias/{prefix}-{kms_role}"
+            assert expected_alias_name in alias_by_name, (
+                f"Expected aws_kms_alias with name '{expected_alias_name}', found {sorted(alias_by_name.keys())}"
+            )
+            al_target = str(alias_by_name[expected_alias_name].get("target_key_id") or alias_by_name[expected_alias_name].get("target_key_arn") or "")
+            kid = str((keys.get(kms_arn) or {}).get("key_id") or kms_arn.rsplit("/", 1)[-1])
+            assert al_target in {kms_arn, kid}, (
+                f"KMS alias {expected_alias_name} target ({al_target}) does not match {kms_role} KMS key ({kms_arn})"
+            )
 
         pools = _by_type(items, "aws_cognito_user_pool")
         assert len(pools) == 1

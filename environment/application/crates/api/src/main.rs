@@ -91,7 +91,8 @@ async fn main() -> Result<()> {
     let valkey_url = env::var("VALKEY_URL")
         .or_else(|_| env::var("VALKEY_ENDPOINT"))
         .context("VALKEY_URL is required")?;
-    let cache_ttl_raw = env::var("CACHE_TTL_SECONDS").unwrap_or_else(|_| "90".to_string());
+    let cache_ttl_raw =
+        env::var("CACHE_TTL_SECONDS").context("CACHE_TTL_SECONDS is required")?;
     let cache_ttl_seconds: u64 = cache_ttl_raw
         .trim()
         .parse()

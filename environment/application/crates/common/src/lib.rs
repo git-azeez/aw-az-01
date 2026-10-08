@@ -474,12 +474,22 @@ pub async fn verify_postgres_schema(pool: &PgPool) -> bool {
     if !tables_ok {
         return false;
     }
-    sqlx::query_scalar::<_, i64>(
+    let indexes_ok = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'clearledger' AND indexname IN ('idx_clearledger_outbox_unpublished', 'idx_clearledger_outbox_unarchived', 'idx_clearledger_events_settlement_version')",
     )
     .fetch_one(pool)
     .await
     .map(|count| count == 3)
+    .unwrap_or(false);
+    if !indexes_ok {
+        return false;
+    }
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(DISTINCT c.relname) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'clearledger' AND NOT t.tgisinternal AND c.relname IN ('settlements', 'events', 'outbox', 'idempotency_keys')",
+    )
+    .fetch_one(pool)
+    .await
+    .map(|count| count == 4)
     .unwrap_or(false)
 }
 

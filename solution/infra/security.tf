@@ -234,7 +234,7 @@ resource "aws_iam_role_policy" "ecs_task" {
         ]
         Resource = [
           aws_dynamodb_table.projections.arn,
-          "${aws_dynamodb_table.projections.arn}/index/*"
+          "${aws_dynamodb_table.projections.arn}/index/AccountIndex"
         ]
       },
       {
@@ -307,7 +307,7 @@ resource "aws_iam_role_policy" "projector" {
         ]
         Resource = [
           aws_dynamodb_table.projections.arn,
-          "${aws_dynamodb_table.projections.arn}/index/*"
+          "${aws_dynamodb_table.projections.arn}/index/AccountIndex"
         ]
       },
       {

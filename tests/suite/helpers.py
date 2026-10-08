@@ -399,6 +399,9 @@ def verify_iam_roles_and_policies(
     assert policy_allows(task_docs, "dynamodb:Query", index_arn), (
         f"{label}: ecs_task_role_arn must allow dynamodb:Query on AccountIndex"
     )
+    assert not policy_allows(task_docs, "dynamodb:Query", f"{table_arn}/index/UnscopedOtherIndex"), (
+        f"{label}: ecs_task_role_arn dynamodb:Query must be scoped to {index_arn}, not {table_arn}/index/*"
+    )
     for act in ("kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"):
         assert policy_allows(task_docs, act, kms_msg), f"{label}: ecs_task_role_arn must allow {act} on messaging KMS"
         assert policy_allows(task_docs, act, kms_proj), (
@@ -444,6 +447,9 @@ def verify_iam_roles_and_policies(
         assert policy_allows(proj_docs, act, table_arn), f"{label}: projector_role_arn must allow {act} on table"
     assert policy_allows(proj_docs, "dynamodb:Query", index_arn), (
         f"{label}: projector_role_arn must allow dynamodb:Query on AccountIndex"
+    )
+    assert not policy_allows(proj_docs, "dynamodb:Query", f"{table_arn}/index/UnscopedOtherIndex"), (
+        f"{label}: projector_role_arn dynamodb:Query must be scoped to {index_arn}, not {table_arn}/index/*"
     )
     for act in ("kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"):
         assert policy_allows(proj_docs, act, kms_msg), f"{label}: projector_role_arn must allow {act} on messaging KMS"
@@ -522,6 +528,9 @@ def verify_iam_roles_and_policies(
     assert not policy_allows(arch_docs, "s3:PutObject", f"{bucket_arn}/unscoped-root-object.ndjson"), (
         f"{label}: archiver_role_arn s3:PutObject must be scoped to {bucket_arn}/ledger-audit/*, not {bucket_arn}/*"
     )
+    assert not policy_allows(arch_docs, "s3:PutObject", bucket_arn), (
+        f"{label}: archiver_role_arn s3:PutObject must not be granted on bucket ARN {bucket_arn}"
+    )
     for del_act in ("s3:DeleteObject", "s3:DeleteObjectVersion"):
         assert not policy_allows(arch_docs, del_act, audit_obj_arn), (
             f"{label}: archiver_role_arn must not allow {del_act} on immutable audit archive {audit_obj_arn}"
@@ -530,6 +539,9 @@ def verify_iam_roles_and_policies(
         assert policy_allows(arch_docs, act, bucket_arn), (
             f"{label}: archiver_role_arn must allow {act} on {bucket_arn}"
         )
+    assert not policy_allows(arch_docs, "s3:ListBucket", audit_obj_arn), (
+        f"{label}: archiver_role_arn s3:ListBucket must be scoped to {bucket_arn}, not object ARN {audit_obj_arn}"
+    )
     for act in ("kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"):
         assert policy_allows(arch_docs, act, kms_audit), f"{label}: archiver_role_arn must allow {act} on audit KMS"
         assert policy_allows(arch_docs, act, kms_db), f"{label}: archiver_role_arn must allow {act} on database KMS"

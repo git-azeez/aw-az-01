@@ -18,18 +18,18 @@ Provision six distinct IAM roles (`aws_iam_role`) with role-specific inline or a
    - **Trust principal**: `ecs-tasks.amazonaws.com`.
    - **Allowed access**:
      - Publish-only access on the main SQS queue ARN (`sqs:SendMessage`, `sqs:GetQueueAttributes`, `sqs:GetQueueUrl`).
-     - Read-only access on the projection DynamoDB table ARN and its `AccountIndex` GSI ARN `<table_arn>/index/AccountIndex` (`dynamodb:GetItem`, `dynamodb:Query`, `dynamodb:DescribeTable`).
+     - Read-only access on the projection DynamoDB table ARN and its specific `AccountIndex` GSI ARN `<table_arn>/index/AccountIndex` (`dynamodb:GetItem`, `dynamodb:Query`, `dynamodb:DescribeTable`; do not use `<table_arn>/index/*` or `<table_arn>/*` wildcards).
      - Cryptographic usage (`kms:Decrypt`, `kms:GenerateDataKey`, `kms:DescribeKey`) on the `messaging` and `projection` KMS key ARNs only.
      - CloudWatch Logs stream creation/writing scoped strictly to `logs.api_log_group`.
-   - **Forbidden access**: Must not allow consuming or deleting SQS messages (`sqs:ReceiveMessage`, `sqs:DeleteMessage`) or publishing to the DLQ; must not allow mutating DynamoDB (`dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:DeleteItem`); must not allow S3 access; must not allow `kms:Decrypt` or `kms:GenerateDataKey` on the `database` or `audit` KMS keys; must not allow writing to any non-API log group.
+   - **Forbidden access**: Must not allow consuming or deleting SQS messages (`sqs:ReceiveMessage`, `sqs:DeleteMessage`) or publishing to the DLQ; must not allow mutating DynamoDB (`dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:DeleteItem`) or querying arbitrary indexes (`<table_arn>/index/*`); must not allow S3 access; must not allow `kms:Decrypt` or `kms:GenerateDataKey` on the `database` or `audit` KMS keys; must not allow writing to any non-API log group.
 3. **`projector_role_arn`**:
    - **Trust principal**: `lambda.amazonaws.com`.
    - **Allowed access**:
      - Consume-only access on the main SQS queue ARN (`sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:GetQueueAttributes`, `sqs:ChangeMessageVisibility`) and dead-letter forwarding (`sqs:SendMessage`) on the DLQ ARN.
-     - Append/monotonic-upsert access on the projection DynamoDB table ARN and its `AccountIndex` GSI ARN (`dynamodb:GetItem`, `dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:Query`).
+     - Append/monotonic-upsert access on the projection DynamoDB table ARN and its specific `AccountIndex` GSI ARN `<table_arn>/index/AccountIndex` (`dynamodb:GetItem`, `dynamodb:PutItem`, `dynamodb:UpdateItem`, `dynamodb:Query`; do not use `<table_arn>/index/*` or `<table_arn>/*` wildcards).
      - Cryptographic usage (`kms:Decrypt`, `kms:GenerateDataKey`, `kms:DescribeKey`) on the `messaging` and `projection` KMS key ARNs only.
      - CloudWatch Logs stream creation/writing scoped strictly to `logs.projector_log_group`.
-   - **Forbidden access**: Must not allow `sqs:SendMessage` on the main queue or `sqs:ReceiveMessage`/`sqs:DeleteMessage` on the DLQ; must not allow deleting DynamoDB items (`dynamodb:DeleteItem`) or tables (`dynamodb:DeleteTable`); must not allow S3 access; must not allow `kms:Decrypt` or `kms:GenerateDataKey` on the `database` or `audit` KMS keys; must not allow writing to any non-projector log group.
+   - **Forbidden access**: Must not allow `sqs:SendMessage` on the main queue or `sqs:ReceiveMessage`/`sqs:DeleteMessage` on the DLQ; must not allow deleting DynamoDB items (`dynamodb:DeleteItem`) or tables (`dynamodb:DeleteTable`) or querying arbitrary indexes (`<table_arn>/index/*`); must not allow S3 access; must not allow `kms:Decrypt` or `kms:GenerateDataKey` on the `database` or `audit` KMS keys; must not allow writing to any non-projector log group.
 4. **`relay_role_arn`**:
    - **Trust principal**: `lambda.amazonaws.com`.
    - **Allowed access**:
@@ -40,10 +40,10 @@ Provision six distinct IAM roles (`aws_iam_role`) with role-specific inline or a
 5. **`archiver_role_arn`**:
    - **Trust principal**: `lambda.amazonaws.com`.
    - **Allowed access**:
-     - Append-only object access (`s3:PutObject`, `s3:GetObject`, `s3:AbortMultipartUpload`) scoped strictly to `<audit_bucket_arn>/ledger-audit/*`, plus bucket-level read metadata (`s3:ListBucket`, `s3:GetBucketLocation`) on `<audit_bucket_arn>`.
+     - Append-only object access (`s3:PutObject`, `s3:GetObject`, `s3:AbortMultipartUpload`) scoped strictly to `<audit_bucket_arn>/ledger-audit/*`, and bucket-level metadata (`s3:ListBucket`, `s3:GetBucketLocation`) scoped strictly to `<audit_bucket_arn>` (keep object-level and bucket-level statements separated by resource type).
      - Cryptographic usage (`kms:Decrypt`, `kms:GenerateDataKey`, `kms:DescribeKey`) on the `audit` and `database` KMS key ARNs only.
      - CloudWatch Logs stream creation/writing scoped strictly to `logs.archiver_log_group`.
-   - **Forbidden access**: Must not grant `s3:PutObject` on the unscoped `<audit_bucket_arn>/*` root wildcard; must not grant `s3:DeleteObject` or `s3:DeleteObjectVersion` anywhere on the audit bucket; must not allow any SQS or DynamoDB actions; must not allow `kms:Decrypt` or `kms:GenerateDataKey` on the `messaging` or `projection` KMS keys; must not allow writing to any non-archiver log group.
+   - **Forbidden access**: Must not grant `s3:PutObject` on the bucket ARN `<audit_bucket_arn>` or unscoped `<audit_bucket_arn>/*` root wildcard; must not grant `s3:ListBucket` on object ARNs; must not grant `s3:DeleteObject` or `s3:DeleteObjectVersion` anywhere on the audit bucket; must not allow any SQS or DynamoDB actions; must not allow `kms:Decrypt` or `kms:GenerateDataKey` on the `messaging` or `projection` KMS keys; must not allow writing to any non-archiver log group.
 6. **`scheduler_role_arn`**:
    - **Trust principal**: `scheduler.amazonaws.com`.
    - **Allowed access**:

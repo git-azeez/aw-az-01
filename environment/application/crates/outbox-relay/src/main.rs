@@ -38,7 +38,8 @@ async fn main() -> Result<(), LambdaError> {
         .or_else(|_| env::var("QUEUE_URL"))
         .context("SQS_QUEUE_URL is required")?;
     let queue_url = normalize_http_endpoint_url(&raw_queue_url);
-    let batch_size_raw = env::var("OUTBOX_BATCH_SIZE").unwrap_or_else(|_| "50".to_string());
+    let batch_size_raw =
+        env::var("OUTBOX_BATCH_SIZE").context("OUTBOX_BATCH_SIZE is required")?;
     let batch_size: i64 = batch_size_raw
         .trim()
         .parse()

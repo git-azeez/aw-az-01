@@ -35,7 +35,7 @@ async fn main() -> Result<(), LambdaError> {
 
     let database_url = env::var("DATABASE_URL").context("DATABASE_URL is required")?;
     let bucket = env::var("AUDIT_BUCKET").context("AUDIT_BUCKET is required")?;
-    let prefix = env::var("AUDIT_PREFIX").unwrap_or_else(|_| "ledger-audit/".to_string());
+    let prefix = env::var("AUDIT_PREFIX").context("AUDIT_PREFIX is required")?;
     if prefix.trim().is_empty() {
         return Err("AUDIT_PREFIX must not be empty".into());
     }

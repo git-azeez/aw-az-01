@@ -813,12 +813,21 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         ddb.update_item(
             TableName=m["projections"]["table_name"],
             Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "STATE"}},
-            UpdateExpression="SET last_memo = :lm, last_entry_id = :leid, GSI1PK = :gpk, GSI1SK = :gsk",
+            UpdateExpression="SET last_memo = :lm, last_entry_id = :leid, updated_at = :ua, GSI1PK = :gpk, GSI1SK = :gsk",
             ExpressionAttributeValues={
                 ":lm": {"S": "SILENT_SAME_VER_LAST_MEMO_DRIFT"},
                 ":leid": {"S": "00000000-0000-0000-0000-000000000000"},
+                ":ua": {"S": "1999-01-01T00:00:00Z"},
                 ":gpk": {"S": "ACCOUNT#SILENT-DRIFT-GSI"},
                 ":gsk": {"S": f"CORRUPTED#{same_ver_sid}"},
+            },
+        )
+        ddb.update_item(
+            TableName=m["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000001"}},
+            UpdateExpression="SET occurred_at = :oa",
+            ExpressionAttributeValues={
+                ":oa": {"S": "1999-01-01T00:00:00Z"},
             },
         )
         ddb.update_item(
@@ -905,9 +914,10 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                     "lastMemo": "SILENT_CACHE_ONLY_MEMO_POISON",
                     "version": cache_drift_meta["expected_version"],
                     "entryCount": cache_drift_meta["expected_version"] - 1,
-                    "updatedAt": now_iso,
+                    "updatedAt": "1999-01-01T00:00:00Z",
                 }
             ),
+            ex=80,
         )
         rclient.set(
             f"clearledger:settlement:{orphan_sid}",
@@ -930,8 +940,9 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         # Corrupt S3 audit archive inside ledger-audit/:
         # 1) Drop one archived event completely from S3 while keeping its remaining peer records in a valid-digest batch
         #    (so object-only S3 validation passes unless deploy.sh cross-checks every archived_at IS NOT NULL row against S3)
-        # 2) Write a forged-digest batch key and a tampered payload batch
-        # 3) Write an orphan batch key
+        # 2) Write an overlapping valid-digest single-event batch so valid_subset[0] is duplicated across two valid-digest S3 keys
+        # 3) Write a forged-digest batch key and a tampered payload batch
+        # 4) Write an orphan batch key
         existing_s3 = s3.list_objects_v2(Bucket=m["audit"]["bucket_name"], Prefix=m["audit"]["prefix"]).get("Contents", [])
         if existing_s3:
             target_key = existing_s3[0]["Key"]
@@ -954,11 +965,19 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 valid_s1 = eid_to_seq[json.loads(valid_subset[0])["eventId"]]
                 valid_s2 = eid_to_seq[json.loads(valid_subset[-1])["eventId"]]
                 valid_dig = hashlib.sha256(valid_raw).hexdigest()[:16]
+                dup_raw = (valid_subset[0] + "\n").encode("utf-8")
+                dup_dig = hashlib.sha256(dup_raw).hexdigest()[:16]
                 s3.delete_object(Bucket=m["audit"]["bucket_name"], Key=target_key)
                 s3.put_object(
                     Bucket=m["audit"]["bucket_name"],
                     Key=f"{m['audit']['prefix']}batch-{valid_s1:08d}-{valid_s2:08d}-{valid_dig}.ndjson",
                     Body=valid_raw,
+                    ContentType="application/x-ndjson",
+                )
+                s3.put_object(
+                    Bucket=m["audit"]["bucket_name"],
+                    Key=f"{m['audit']['prefix']}batch-{valid_s1:08d}-{valid_s1:08d}-{dup_dig}.ndjson",
+                    Body=dup_raw,
                     ContentType="application/x-ndjson",
                 )
                 first_rec = json.loads(tampered_subset[0])
@@ -1181,8 +1200,9 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 and sv_body.get("clearingStage") == same_ver_meta["last_stage"]
                 and sv_body.get("lastEntryId") == expected_sv_last_entry["entryId"]
                 and sv_body.get("lastMemo") == expected_sv_last_entry["memo"]
+                and not str(sv_body.get("updatedAt", "")).startswith("1999-")
             ), (
-                f"deploy.sh did not reconcile same-version corrupted STATE (lastEntryId/lastMemo) for {same_ver_sid}: got {sv_body}"
+                f"deploy.sh did not reconcile same-version corrupted STATE (lastEntryId/lastMemo/updatedAt) for {same_ver_sid}: got {sv_body}"
             )
             r_sv_ledger = client.get(f"/v1/settlements/{same_ver_sid}/ledger", headers={"Authorization": f"Bearer {tokens['read']}"})
             assert r_sv_ledger.status_code == 200
@@ -1190,10 +1210,11 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             expected_sv_v2 = same_ver_meta["spec"]["entries"][0]
             assert (
                 len(sv_events) >= 2
+                and not str(sv_events[0].get("occurredAt", "")).startswith("1999-")
                 and sv_events[1].get("entryId") == expected_sv_v2["entryId"]
                 and sv_events[1].get("memo") == expected_sv_v2["memo"]
             ), (
-                f"deploy.sh did not reconcile same-version mutated EVENT#00000002 (entryId/memo) for {same_ver_sid}: got {sv_events[1] if len(sv_events) >= 2 else sv_events}"
+                f"deploy.sh did not reconcile same-version mutated EVENT#00000001..2 (occurredAt/entryId/memo) for {same_ver_sid}: got {sv_events[:2]}"
             )
             stray_item = ddb.get_item(
                 TableName=m["projections"]["table_name"],
@@ -1227,8 +1248,9 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             assert (
                 cd_body.get("lastEntryId") == expected_cd_last_entry["entryId"]
                 and cd_body.get("lastMemo") == expected_cd_last_entry["memo"]
+                and not str(cd_body.get("updatedAt", "")).startswith("1999-")
             ), (
-                f"Expected deploy.sh to evict/reconcile Valkey cache entry with poisoned lastEntryId/lastMemo for {cache_drift_sid}, got {cd_body}"
+                f"Expected deploy.sh to evict/reconcile Valkey cache entry with poisoned lastEntryId/lastMemo/updatedAt for {cache_drift_sid}, got {cd_body}"
             )
 
             r_orphan_state = client.get(f"/v1/settlements/{orphan_sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
