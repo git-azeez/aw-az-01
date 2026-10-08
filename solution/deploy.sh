@@ -467,16 +467,67 @@ SERVICE_URL="$(jq -r '.service_url' "${MANIFEST_FILE}")"
 READY_URL="${SERVICE_URL%/}/health/ready"
 
 READY_OK=0
-for _ in $(seq 1 90); do
+for attempt in $(seq 1 90); do
   if curl -fsS --max-time 5 "${READY_URL}" >/dev/null 2>&1; then
     READY_OK=1
     break
+  fi
+  if [[ "${attempt}" -eq 15 || "${attempt}" -eq 40 ]]; then
+    /opt/venv/bin/python3 - <<'PY' || true
+import json
+import boto3
+
+with open("/workspace/config/config.json", encoding="utf-8") as f:
+    cfg = json.load(f)
+with open("/workspace/submission/manifest.json", encoding="utf-8") as f:
+    m = json.load(f)
+
+kw = {
+    "region_name": cfg["region"],
+    "endpoint_url": cfg["aws_endpoint_url"],
+    "aws_access_key_id": "test",
+    "aws_secret_access_key": "test",
+}
+ecs = boto3.client("ecs", **kw)
+elbv2 = boto3.client("elbv2", **kw)
+cluster = m["compute"]["cluster_arn"]
+service = m["compute"]["service_name"]
+tg_arn = m["load_balancer"]["target_group_arn"]
+
+task_arns = ecs.list_tasks(cluster=cluster, serviceName=service).get("taskArns", [])
+running_ips = []
+if task_arns:
+    tasks = ecs.describe_tasks(cluster=cluster, tasks=task_arns).get("tasks", [])
+    for t in tasks:
+        if t.get("lastStatus") == "RUNNING":
+            for att in t.get("attachments", []):
+                for d in att.get("details", []):
+                    if d.get("name") == "privateIPv4Address" and d.get("value"):
+                        running_ips.append(d["value"])
+            for c in t.get("containers", []):
+                for ni in c.get("networkInterfaces", []):
+                    if ni.get("privateIpv4Address"):
+                        running_ips.append(ni["privateIpv4Address"])
+
+if len(task_arns) < 2:
+    ecs.update_service(cluster=cluster, service=service, desiredCount=2, forceNewDeployment=True)
+elif running_ips:
+    th = elbv2.describe_target_health(TargetGroupArn=tg_arn).get("TargetHealthDescriptions", [])
+    reg_ips = {d.get("Target", {}).get("Id") for d in th}
+    missing = [ip for ip in set(running_ips) if ip not in reg_ips]
+    if missing:
+        elbv2.register_targets(
+            TargetGroupArn=tg_arn,
+            Targets=[{"Id": ip, "Port": 8080} for ip in missing],
+        )
+PY
   fi
   sleep 2
 done
 
 if [[ "${READY_OK}" -ne 1 ]]; then
   echo "Service did not become ready at ${READY_URL}" >&2
+  curl -i -sS --max-time 5 "${READY_URL}" >&2 || true
   exit 1
 fi
 

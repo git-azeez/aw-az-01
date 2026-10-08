@@ -154,5 +154,9 @@ resource "aws_ecs_service" "api" {
     aws_lb_listener.http,
     aws_iam_role_policy.ecs_execution,
     aws_iam_role_policy.ecs_task,
+    aws_db_instance.main,
+    aws_dynamodb_table.projections,
+    aws_sqs_queue.events,
+    aws_elasticache_replication_group.valkey,
   ]
 }

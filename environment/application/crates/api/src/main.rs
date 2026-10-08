@@ -279,37 +279,49 @@ async fn health_ready(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         if pg_ok { "UP" } else { "DOWN" }.to_string(),
     );
 
-    let ddb_ok = state
-        .ddb
-        .describe_table()
-        .table_name(&state.projection_table)
-        .send()
-        .await
-        .is_ok();
+    let ddb_ok = tokio::time::timeout(
+        Duration::from_secs(2),
+        state
+            .ddb
+            .describe_table()
+            .table_name(&state.projection_table)
+            .send(),
+    )
+    .await
+    .map(|res| res.is_ok())
+    .unwrap_or(false);
     checks.insert(
         "dynamodb".to_string(),
         if ddb_ok { "UP" } else { "DOWN" }.to_string(),
     );
 
-    let sqs_ok = state
-        .sqs
-        .get_queue_attributes()
-        .queue_url(&state.queue_url)
-        .send()
-        .await
-        .is_ok();
+    let sqs_ok = tokio::time::timeout(
+        Duration::from_secs(2),
+        state
+            .sqs
+            .get_queue_attributes()
+            .queue_url(&state.queue_url)
+            .send(),
+    )
+    .await
+    .map(|res| res.is_ok())
+    .unwrap_or(false);
     checks.insert(
         "sqs".to_string(),
         if sqs_ok { "UP" } else { "DEGRADED" }.to_string(),
     );
 
-    let valkey_ok = match state.redis_client.get_multiplexed_async_connection().await {
-        Ok(mut conn) => redis::cmd("PING")
-            .query_async::<String>(&mut conn)
-            .await
-            .is_ok(),
-        Err(_) => false,
-    };
+    let valkey_ok = tokio::time::timeout(Duration::from_secs(2), async {
+        match state.redis_client.get_multiplexed_async_connection().await {
+            Ok(mut conn) => redis::cmd("PING")
+                .query_async::<String>(&mut conn)
+                .await
+                .is_ok(),
+            Err(_) => false,
+        }
+    })
+    .await
+    .unwrap_or(false);
     checks.insert(
         "valkey".to_string(),
         if valkey_ok { "UP" } else { "DEGRADED" }.to_string(),

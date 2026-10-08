@@ -21,21 +21,32 @@ wait_for_aws() {
 }
 
 register_host_dns() {
-  local aws_ip helper_image cid
-  aws_ip="$(getent hosts aws | awk 'NR==1 {print $1}' || true)"
-  if [[ -z "${aws_ip}" || ! -S /var/run/docker.sock ]]; then
+  local aws_ip helper_image cid containers_json
+  if [[ ! -S /var/run/docker.sock ]]; then
+    return 0
+  fi
+  containers_json="$(curl.real --unix-socket /var/run/docker.sock -fsS "http://localhost/containers/json" 2>/dev/null || echo "[]")"
+  aws_ip="$(printf '%s' "${containers_json}" | jq -r '
+    map(select((.Names // [] | any(test("aws"))) or (.Image // "" | test("floci"))))
+    | .[0].NetworkSettings.Networks // {}
+    | (to_entries | .[0].value.IPAddress) // empty
+  ' 2>/dev/null || true)"
+  if [[ -z "${aws_ip}" ]]; then
+    aws_ip="$(getent hosts aws | awk 'NR==1 {print $1}' || true)"
+  fi
+  if [[ -z "${aws_ip}" ]]; then
     return 0
   fi
   helper_image="$(curl.real --unix-socket /var/run/docker.sock -fsS "http://localhost/containers/$(hostname)/json" 2>/dev/null | jq -r '.Image // empty' || true)"
   if [[ -z "${helper_image}" ]]; then
-    helper_image="$(curl.real --unix-socket /var/run/docker.sock -fsS "http://localhost/containers/json" 2>/dev/null | jq -r '.[0].ImageID // empty' || true)"
+    helper_image="$(printf '%s' "${containers_json}" | jq -r '.[0].ImageID // empty' 2>/dev/null || true)"
   fi
   if [[ -z "${helper_image}" ]]; then
     return 0
   fi
   cid="$(curl.real --unix-socket /var/run/docker.sock -fsS -X POST \
     -H "Content-Type: application/json" \
-    -d "{\"Image\":\"${helper_image}\",\"Entrypoint\":[\"/bin/sh\",\"-c\",\"for f in /host/etc/hosts /host/var/lib/docker/containers/*/hosts; do [ -f \\\"\\\$f\\\" ] && ! grep -qE '[[:space:]]aws([[:space:]]|\\\$)' \\\"\\\$f\\\" && printf '%s\\\\taws\\\\n' '${aws_ip}' >> \\\"\\\$f\\\" || true; done\"],\"HostConfig\":{\"Binds\":[\"/etc:/host/etc\",\"/var/lib/docker/containers:/host/var/lib/docker/containers\"]}}" \
+    -d "{\"Image\":\"${helper_image}\",\"Entrypoint\":[\"/bin/sh\",\"-c\",\"for f in /host/etc/hosts /host/var/lib/docker/containers/*/hosts; do if [ -f \\\"\\\$f\\\" ]; then grep -vE '[[:space:]]aws([[:space:]]|\\\$)' \\\"\\\$f\\\" > \\\"\\\${f}.tmp\\\" || true; printf '%s\\\\taws\\\\n' '${aws_ip}' >> \\\"\\\${f}.tmp\\\"; cat \\\"\\\${f}.tmp\\\" > \\\"\\\$f\\\"; rm -f \\\"\\\${f}.tmp\\\"; fi; done\"],\"HostConfig\":{\"Binds\":[\"/etc:/host/etc\",\"/var/lib/docker/containers:/host/var/lib/docker/containers\"]}}" \
     "http://localhost/containers/create" 2>/dev/null | jq -r '.Id // empty' || true)"
   if [[ -n "${cid}" ]]; then
     curl.real --unix-socket /var/run/docker.sock -fsS -X POST "http://localhost/containers/${cid}/start" >/dev/null 2>&1 || true
