@@ -1240,6 +1240,15 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             (probe_eid,),
                         )
                         _assert_pg_rejects(
+                            "outbox.archived_at >= published_at check",
+                            """
+                            UPDATE clearledger.outbox
+                            SET archived_at = published_at - interval '5 minutes'
+                            WHERE event_id = %s
+                            """,
+                            (probe_eid,),
+                        )
+                        _assert_pg_rejects(
                             "outbox trigger: once published_at is set, published_at and attempts are immutable during archival",
                             """
                             UPDATE clearledger.outbox
@@ -1253,6 +1262,16 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         cur.execute("RELEASE SAVEPOINT sp_outbox_pub_probe")
 
                     _assert_pg_rejects(
+                        "settlements.btrim(debit_party) <> btrim(credit_party)",
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', '  BANK-SAME  ', 'BANK-SAME', 'INITIATED', 'INIT', 1, 0)
+                        """,
+                        (str(uuid.uuid4()),),
+                    )
+                    _assert_pg_rejects(
                         "idempotency_keys.scope format check (create:<uuid> or entry:<uuid>)",
                         """
                         INSERT INTO clearledger.idempotency_keys (
@@ -1262,13 +1281,34 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         (valid_idem_hash, valid_create_body),
                     )
                     _assert_pg_rejects(
-                        "idempotency_keys.request_hash 64-char hex SHA-256 check",
+                        "idempotency_keys.request_hash 64-char lowercase hex SHA-256 check",
                         """
                         INSERT INTO clearledger.idempotency_keys (
                             scope, idempotency_key, request_hash, status_code, response_body
-                        ) VALUES (%s, 'idem-probe-1', 'non-hex-hash', 201, %s::jsonb)
+                        ) VALUES (%s, 'idem-probe-1', %s, 201, %s::jsonb)
                         """,
-                        (f"create:{probe_sid}", valid_create_body),
+                        (f"create:{probe_sid}", "A" * 64, valid_create_body),
+                    )
+                    _assert_pg_rejects(
+                        "idempotency_keys.response_body idempotentReplay must be false on stored record",
+                        """
+                        INSERT INTO clearledger.idempotency_keys (
+                            scope, idempotency_key, request_hash, status_code, response_body
+                        ) VALUES (%s, 'idem-probe-1', %s, 201, %s::jsonb)
+                        """,
+                        (
+                            f"create:{probe_sid}",
+                            valid_idem_hash,
+                            json.dumps(
+                                {
+                                    "settlementId": probe_sid,
+                                    "eventId": probe_eid,
+                                    "version": 1,
+                                    "accepted": True,
+                                    "idempotentReplay": True,
+                                }
+                            ),
+                        ),
                     )
                     _assert_pg_rejects(
                         "idempotency_keys.status_code coupling for create scope (must be 201)",

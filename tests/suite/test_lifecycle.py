@@ -83,6 +83,14 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             with conn.cursor() as cur:
                 cur.execute("SELECT event_id::text, seq FROM clearledger.outbox")
                 eid_to_seq = {r[0]: int(r[1]) for r in cur.fetchall()}
+                cur.execute(
+                    "SELECT envelope FROM clearledger.events WHERE settlement_id = %s AND version = 1",
+                    (same_ver_sid,),
+                )
+                sv_v1_row = cur.fetchone()
+                expected_sv_v1_env = (
+                    json.loads(sv_v1_row[0]) if isinstance(sv_v1_row[0], str) else sv_v1_row[0]
+                )
 
         for obj in s3.list_objects_v2(Bucket=before_bucket, Prefix="ledger-audit/").get("Contents", []):
             body = s3.get_object(Bucket=before_bucket, Key=obj["Key"])["Body"].read().decode()
@@ -120,6 +128,15 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                             Body=dup_raw,
                             ContentType="application/x-ndjson",
                         )
+                        if len(valid_subset) == 2 and valid_s1 < valid_s2:
+                            rev_raw = ("\n".join(reversed(valid_subset)) + "\n").encode("utf-8")
+                            rev_dig = hashlib.sha256(rev_raw).hexdigest()[:16]
+                            s3.put_object(
+                                Bucket=before_bucket,
+                                Key=f"ledger-audit/batch-{valid_s1:08d}-{valid_s2:08d}-{rev_dig}.ndjson",
+                                Body=rev_raw,
+                                ContentType="application/x-ndjson",
+                            )
                 else:
                     forged_line = lines.pop() if len(lines) >= 2 and json.loads(lines[-1]).get("aggregateId") != s3_loss_sid else lines[0]
                 s3.put_object(
@@ -294,9 +311,11 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         ddb.update_item(
             TableName=before_manifest["projections"]["table_name"],
             Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000001"}},
-            UpdateExpression="SET occurred_at = :oa",
+            UpdateExpression="SET occurred_at = :oa, correlation_id = :cid, envelope = :env",
             ExpressionAttributeValues={
                 ":oa": {"S": "1999-01-01T00:00:00Z"},
+                ":cid": {"S": "corr-drifted-same-ver"},
+                ":env": {"S": json.dumps({"corruptedEnvelope": True, "aggregateId": same_ver_sid})},
             },
         )
         ddb.update_item(
@@ -315,6 +334,14 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 "SK": {"S": "META#STRAY"},
                 "settlement_id": {"S": same_ver_sid},
                 "note": {"S": "stray non-STATE/non-EVENT item in partition"},
+            },
+        )
+        ddb.put_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Item={
+                "PK": {"S": "AUDIT#STRAY-PARTITION"},
+                "SK": {"S": "META#01"},
+                "note": {"S": "stray non-SETTLEMENT partition item"},
             },
         )
         ddb.put_item(
@@ -390,6 +417,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 }
             ),
         )
+        rclient.set("clearledger:lock:stray-marker", "poison-lock-value", ex=300)
 
         proc = run_script(SUBMISSION_DIR / "deploy.sh", timeout_sec=720)
         assert proc.returncode == 0, f"Second deploy.sh failed: {proc.stderr[-800:]}"
@@ -578,6 +606,17 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             ), (
                 f"Expected deploy.sh to heal same-version mutated EVENT#00000001..2 (occurredAt/entryId/memo) for {same_ver_sid}, got {sv_events[:2]}"
             )
+            sv_v1_ddb = ddb.get_item(
+                TableName=after_manifest["projections"]["table_name"],
+                Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000001"}},
+                ConsistentRead=True,
+            ).get("Item") or {}
+            assert json.loads(sv_v1_ddb.get("envelope", {}).get("S", "{}")) == expected_sv_v1_env, (
+                f"Expected deploy.sh to heal EVENT#00000001.envelope JSON attribute for {same_ver_sid}"
+            )
+            assert sv_v1_ddb.get("correlation_id", {}).get("S") != "corr-drifted-same-ver", (
+                f"Expected deploy.sh to heal EVENT#00000001.correlation_id attribute for {same_ver_sid}"
+            )
             stray_item = ddb.get_item(
                 TableName=after_manifest["projections"]["table_name"],
                 Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "META#STRAY"}},
@@ -585,6 +624,14 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             ).get("Item")
             assert stray_item is None, (
                 f"Expected deploy.sh to purge stray non-STATE/non-EVENT item SK=META#STRAY under SETTLEMENT#{same_ver_sid}"
+            )
+            stray_part_item = ddb.get_item(
+                TableName=after_manifest["projections"]["table_name"],
+                Key={"PK": {"S": "AUDIT#STRAY-PARTITION"}, "SK": {"S": "META#01"}},
+                ConsistentRead=True,
+            ).get("Item")
+            assert stray_part_item is None, (
+                "Expected deploy.sh to purge stray non-SETTLEMENT partition item PK=AUDIT#STRAY-PARTITION"
             )
             gsi_q = ddb.query(
                 TableName=after_manifest["projections"]["table_name"],
@@ -623,6 +670,9 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             )
             assert rclient.get(f"clearledger:settlement:{orphan_sid}") is None, (
                 f"Expected deploy.sh to purge orphan Valkey key clearledger:settlement:{orphan_sid}"
+            )
+            assert rclient.get("clearledger:lock:stray-marker") is None, (
+                "Expected deploy.sh to purge stray non-settlement Valkey key clearledger:lock:stray-marker"
             )
 
         return (

@@ -825,9 +825,11 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         ddb.update_item(
             TableName=m["projections"]["table_name"],
             Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000001"}},
-            UpdateExpression="SET occurred_at = :oa",
+            UpdateExpression="SET occurred_at = :oa, correlation_id = :cid, envelope = :env",
             ExpressionAttributeValues={
                 ":oa": {"S": "1999-01-01T00:00:00Z"},
+                ":cid": {"S": "corr-silent-drift-0001"},
+                ":env": {"S": '{"corruptedEnvelope":true}'},
             },
         )
         ddb.update_item(
@@ -846,6 +848,14 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 "SK": {"S": "META#STRAY"},
                 "settlement_id": {"S": same_ver_sid},
                 "note": {"S": "stray non-STATE/non-EVENT item in partition"},
+            },
+        )
+        ddb.put_item(
+            TableName=m["projections"]["table_name"],
+            Item={
+                "PK": {"S": "AUDIT#STRAY-PARTITION"},
+                "SK": {"S": "META#01"},
+                "note": {"S": "stray non-SETTLEMENT partition item"},
             },
         )
         ddb.put_item(
@@ -936,13 +946,15 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 }
             ),
         )
+        rclient.set("clearledger:lock:stray-marker", "poison-non-settlement-key")
 
         # Corrupt S3 audit archive inside ledger-audit/:
         # 1) Drop one archived event completely from S3 while keeping its remaining peer records in a valid-digest batch
         #    (so object-only S3 validation passes unless deploy.sh cross-checks every archived_at IS NOT NULL row against S3)
         # 2) Write an overlapping valid-digest single-event batch so valid_subset[0] is duplicated across two valid-digest S3 keys
-        # 3) Write a forged-digest batch key and a tampered payload batch
-        # 4) Write an orphan batch key
+        # 3) Write a reversed-sequence valid-digest batch (valid sha256 & min/max seq bounds, but descending line order)
+        # 4) Write a forged-digest batch key and a tampered payload batch
+        # 5) Write an orphan batch key
         existing_s3 = s3.list_objects_v2(Bucket=m["audit"]["bucket_name"], Prefix=m["audit"]["prefix"]).get("Contents", [])
         if existing_s3:
             target_key = existing_s3[0]["Key"]
@@ -967,6 +979,8 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 valid_dig = hashlib.sha256(valid_raw).hexdigest()[:16]
                 dup_raw = (valid_subset[0] + "\n").encode("utf-8")
                 dup_dig = hashlib.sha256(dup_raw).hexdigest()[:16]
+                rev_raw = ("\n".join(reversed(valid_subset)) + "\n").encode("utf-8")
+                rev_dig = hashlib.sha256(rev_raw).hexdigest()[:16]
                 s3.delete_object(Bucket=m["audit"]["bucket_name"], Key=target_key)
                 s3.put_object(
                     Bucket=m["audit"]["bucket_name"],
@@ -978,6 +992,12 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                     Bucket=m["audit"]["bucket_name"],
                     Key=f"{m['audit']['prefix']}batch-{valid_s1:08d}-{valid_s1:08d}-{dup_dig}.ndjson",
                     Body=dup_raw,
+                    ContentType="application/x-ndjson",
+                )
+                s3.put_object(
+                    Bucket=m["audit"]["bucket_name"],
+                    Key=f"{m['audit']['prefix']}batch-{valid_s1:08d}-{valid_s2:08d}-{rev_dig}.ndjson",
+                    Body=rev_raw,
                     ContentType="application/x-ndjson",
                 )
                 first_rec = json.loads(tampered_subset[0])
@@ -1033,6 +1053,19 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 FunctionName=m["workers"]["projector"]["function_name"],
                 Environment={"Variables": drifted_proj_env},
             )
+            arch_cfg = lam.get_function_configuration(FunctionName=m["workers"]["audit_archiver"]["function_name"])
+            drifted_arch_env = dict((arch_cfg.get("Environment") or {}).get("Variables") or {})
+            drifted_arch_env["AUDIT_BUCKET"] = "drifted-missing-audit-bucket"
+            lam.update_function_configuration(
+                FunctionName=m["workers"]["audit_archiver"]["function_name"],
+                Environment={"Variables": drifted_arch_env},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            scheduler = boto_client("scheduler", ctx.config)
+            scheduler.delete_schedule(Name=m["schedules"]["outbox_schedule_name"])
         except Exception:  # noqa: BLE001
             pass
 
@@ -1041,6 +1074,10 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         except Exception:  # noqa: BLE001
             pass
         sqs.delete_queue(QueueUrl=m["messaging"]["queue_url"])
+        try:
+            sqs.delete_queue(QueueUrl=m["messaging"]["dlq_url"])
+        except Exception:  # noqa: BLE001
+            pass
 
         spec = build_random_settlement_spec(ctx.rng, step_count=2)
         sid = spec["settlementId"]
@@ -1103,6 +1140,12 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                     ev_id: (int(seq), (json.loads(pay) if isinstance(pay, str) else pay))
                     for seq, ev_id, pay in cur.fetchall()
                 }
+                cur.execute(
+                    "SELECT correlation_id, payload FROM clearledger.events WHERE settlement_id = %s AND aggregate_version = 1",
+                    (same_ver_sid,),
+                )
+                sv_ev1_corr, sv_ev1_pay_raw = cur.fetchone()
+                sv_ev1_pay = json.loads(sv_ev1_pay_raw) if isinstance(sv_ev1_pay_raw, str) else sv_ev1_pay_raw
 
         # Verify 1-to-1 S3 audit archive integrity, canonical key format, SHA-256 digest, and seq order against clearledger.outbox
         s3_records_by_eid: dict[str, dict] = {}
@@ -1216,6 +1259,17 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             ), (
                 f"deploy.sh did not reconcile same-version mutated EVENT#00000001..2 (occurredAt/entryId/memo) for {same_ver_sid}: got {sv_events[:2]}"
             )
+            sv_ev1_ddb = ddb.get_item(
+                TableName=m["projections"]["table_name"],
+                Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000001"}},
+                ConsistentRead=True,
+            ).get("Item") or {}
+            assert (sv_ev1_ddb.get("correlation_id") or {}).get("S") == sv_ev1_corr, (
+                f"Expected deploy.sh to heal EVENT#00000001 correlation_id on {same_ver_sid}"
+            )
+            assert json.loads((sv_ev1_ddb.get("envelope") or {}).get("S", "{}")) == sv_ev1_pay, (
+                f"Expected deploy.sh to heal EVENT#00000001 envelope JSON on {same_ver_sid}"
+            )
             stray_item = ddb.get_item(
                 TableName=m["projections"]["table_name"],
                 Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "META#STRAY"}},
@@ -1223,6 +1277,17 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             ).get("Item")
             assert stray_item is None, (
                 f"Expected deploy.sh to purge stray non-STATE/non-EVENT item SK=META#STRAY under SETTLEMENT#{same_ver_sid}"
+            )
+            stray_part = ddb.get_item(
+                TableName=m["projections"]["table_name"],
+                Key={"PK": {"S": "AUDIT#STRAY-PARTITION"}, "SK": {"S": "META#01"}},
+                ConsistentRead=True,
+            ).get("Item")
+            assert stray_part is None, (
+                "Expected deploy.sh to purge stray non-SETTLEMENT partition item PK=AUDIT#STRAY-PARTITION"
+            )
+            assert rclient.get("clearledger:lock:stray-marker") is None, (
+                "Expected deploy.sh to purge stray Valkey key clearledger:lock:stray-marker"
             )
 
             gsi_q = ddb.query(

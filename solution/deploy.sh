@@ -830,20 +830,19 @@ with psycopg.connect(pg_conninfo) as conn:
             for item in scan_resp.get("Items", []):
                 pk_val = (item.get("PK") or {}).get("S", "")
                 sk_val = (item.get("SK") or {}).get("S", "")
-                if pk_val.startswith("SETTLEMENT#"):
-                    sid_candidate = pk_val.split("SETTLEMENT#", 1)[1]
-                    if sid_candidate not in pg_settlements:
-                        ddb.delete_item(
-                            TableName=table_name,
-                            Key={"PK": {"S": pk_val}, "SK": {"S": sk_val}},
-                        )
+                sid_candidate = pk_val.split("SETTLEMENT#", 1)[1] if pk_val.startswith("SETTLEMENT#") else ""
+                if not sid_candidate or sid_candidate not in pg_settlements:
+                    ddb.delete_item(
+                        TableName=table_name,
+                        Key={"PK": {"S": pk_val}, "SK": {"S": sk_val}},
+                    )
             if "LastEvaluatedKey" not in scan_resp:
                 break
             scan_kwargs["ExclusiveStartKey"] = scan_resp["LastEvaluatedKey"]
 
-        for rkey in rclient.keys("clearledger:settlement:*"):
-            sid_candidate = rkey.split("clearledger:settlement:", 1)[-1]
-            if sid_candidate not in pg_settlements:
+        for rkey in rclient.keys("*"):
+            sid_candidate = rkey.split("clearledger:settlement:", 1)[1] if rkey.startswith("clearledger:settlement:") else ""
+            if not sid_candidate or sid_candidate not in pg_settlements:
                 rclient.delete(rkey)
 
         # 4. Reconcile each PostgreSQL settlement's DynamoDB STATE + EVENT#* items and Valkey cache
