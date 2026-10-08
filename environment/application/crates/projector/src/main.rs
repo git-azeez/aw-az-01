@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use aws_sdk_dynamodb::Client as DynamoDbClient;
 use chrono::Utc;
 use clearledger::{
-    apply_event_to_dynamodb, build_aws_config, normalize_valkey_url, valkey_settlement_key,
-    CloudWatchEmit, DomainEventEnvelope,
+    apply_event_to_dynamodb, build_aws_config, init_runtime_env, normalize_valkey_url,
+    valkey_settlement_key, CloudWatchEmit, DomainEventEnvelope,
 };
 use lambda_runtime::{run, service_fn, Error as LambdaError, LambdaEvent};
 use redis::AsyncCommands;
@@ -36,6 +36,7 @@ struct BatchFailure {
 
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
+    init_runtime_env();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

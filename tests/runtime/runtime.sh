@@ -20,6 +20,8 @@ wait_for_aws() {
   return 1
 }
 
+GLOBAL_AWS_IP=""
+
 register_host_dns() {
   local aws_ip helper_image cid containers_json
   if [[ ! -S /var/run/docker.sock ]]; then
@@ -37,6 +39,7 @@ register_host_dns() {
   if [[ -z "${aws_ip}" ]]; then
     return 0
   fi
+  GLOBAL_AWS_IP="${aws_ip}"
   helper_image="$(curl.real --unix-socket /var/run/docker.sock -fsS "http://localhost/containers/$(hostname)/json" 2>/dev/null | jq -r '.Image // empty' || true)"
   if [[ -z "${helper_image}" ]]; then
     helper_image="$(printf '%s' "${containers_json}" | jq -r '.[0].ImageID // empty' 2>/dev/null || true)"
@@ -77,6 +80,9 @@ build_runtime_image() {
   cp /etc/ssl/certs/ca-certificates.crt "${workdir}/rootfs/etc/ssl/certs/ca-certificates.crt"
   [[ -f /etc/nsswitch.conf ]] && cp /etc/nsswitch.conf "${workdir}/rootfs/etc/nsswitch.conf"
   touch "${workdir}/rootfs/etc/hosts" "${workdir}/rootfs/etc/resolv.conf" "${workdir}/rootfs/etc/hostname"
+  if [[ -n "${GLOBAL_AWS_IP}" ]]; then
+    printf "127.0.0.1\tlocalhost\n%s\taws\n" "${GLOBAL_AWS_IP}" >"${workdir}/rootfs/etc/hosts"
+  fi
 
   while read -r lib; do
     [[ -z "${lib}" ]] && continue
@@ -116,7 +122,16 @@ build_runtime_image() {
     },
     "Env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+      "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt",
+      "AWS_EC2_METADATA_DISABLED=true",
+      "AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}",
+      "AWS_REGION=${AWS_REGION}",
+      "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}",
+      "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}",
+      "AWS_ENDPOINT_URL=${AWS_ENDPOINT_URL}",
+      "CLEARLEDGER_AWS_IP=${GLOBAL_AWS_IP}",
+      "NO_PROXY=localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal",
+      "no_proxy=localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal"
     ],
     "WorkingDir": "/"
   },

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
 export PATH="/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
-export NO_PROXY="localhost,127.0.0.1,::1,aws,runtime"
-export no_proxy="localhost,127.0.0.1,::1,aws,runtime"
+export NO_PROXY="localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal"
+export no_proxy="localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal"
+export AWS_EC2_METADATA_DISABLED="true"
 
 CONFIG_FILE="/workspace/config/config.json"
 SUBMISSION_DIR="/workspace/submission"
@@ -571,7 +572,7 @@ for attempt in $(seq 1 90); do
     READY_OK=1
     break
   fi
-  if [[ "${attempt}" -eq 15 || "${attempt}" -eq 40 ]]; then
+  if [[ "${attempt}" -eq 3 || "${attempt}" -eq 15 || "${attempt}" -eq 30 || "${attempt}" -eq 50 ]]; then
     /opt/venv/bin/python3 - <<'PY' || true
 import json
 import boto3
@@ -626,7 +627,51 @@ done
 
 if [[ "${READY_OK}" -ne 1 ]]; then
   echo "Service did not become ready at ${READY_URL}" >&2
-  curl -i -sS --max-time 5 "${READY_URL}" >&2 || true
+  /opt/venv/bin/python3 - <<'PY' >&2 || true
+import json
+import urllib.request
+import boto3
+
+with open("/workspace/config/config.json", encoding="utf-8") as f:
+    cfg = json.load(f)
+with open("/workspace/submission/manifest.json", encoding="utf-8") as f:
+    m = json.load(f)
+
+for path in ("/health/live", "/health/ready"):
+    url = m["service_url"].rstrip("/") + path
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            print(f"GET {url} -> {resp.status}: {resp.read().decode('utf-8', errors='replace')}")
+    except Exception as exc:
+        body = getattr(exc, "read", lambda: b"")()
+        print(f"GET {url} ERROR -> {exc} body={body!r}")
+
+kw = {
+    "region_name": cfg["region"],
+    "endpoint_url": cfg["aws_endpoint_url"],
+    "aws_access_key_id": "test",
+    "aws_secret_access_key": "test",
+}
+ecs = boto3.client("ecs", **kw)
+elbv2 = boto3.client("elbv2", **kw)
+logs = boto3.client("logs", **kw)
+cluster = m["compute"]["cluster_arn"]
+service = m["compute"]["service_name"]
+tg_arn = m["ingress"]["target_group_arn"]
+task_arns = ecs.list_tasks(cluster=cluster, serviceName=service).get("taskArns", [])
+print("ECS task_arns:", task_arns)
+if task_arns:
+    tasks = ecs.describe_tasks(cluster=cluster, tasks=task_arns).get("tasks", [])
+    for t in tasks:
+        print("Task:", t.get("taskArn"), t.get("lastStatus"), t.get("stoppedReason"), t.get("containers"))
+print("TargetHealth:", elbv2.describe_target_health(TargetGroupArn=tg_arn).get("TargetHealthDescriptions", []))
+lg = m["logs"]["api_log_group"]
+for stream in logs.describe_log_streams(logGroupName=lg).get("logStreams", [])[:4]:
+    sname = stream["logStreamName"]
+    evts = logs.get_log_events(logGroupName=lg, logStreamName=sname, limit=20).get("events", [])
+    for e in evts:
+        print(f"[{sname}] {e.get('message')}")
+PY
   exit 1
 fi
 

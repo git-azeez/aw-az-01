@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
 use chrono::Utc;
 use clearledger::{
-    build_aws_config, connect_postgres, parse_ndjson_batch_key, validate_envelope, CloudWatchEmit,
-    DomainEventEnvelope,
+    build_aws_config, connect_postgres, init_runtime_env, parse_ndjson_batch_key,
+    validate_envelope, CloudWatchEmit, DomainEventEnvelope,
 };
 use lambda_runtime::{run, service_fn, Error as LambdaError, LambdaEvent};
 use serde_json::{json, Value};
@@ -24,6 +24,7 @@ struct ArchiverState {
 
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
+    init_runtime_env();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

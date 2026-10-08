@@ -230,11 +230,82 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn resolve_reachable_host(host: &str) -> String {
+    use std::net::ToSocketAddrs;
+    if (host, 4566).to_socket_addrs().is_ok() {
+        return host.to_string();
+    }
+    if let Ok(ip) = env::var("CLEARLEDGER_AWS_IP") {
+        let trimmed = ip.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    host.to_string()
+}
+
+pub fn init_runtime_env() {
+    let no_proxy = "localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal";
+    // SAFETY: invoked at process startup before serving requests or Lambda invocations.
+    unsafe {
+        for key in [
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+            "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+            "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+            "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+            "AWS_WEB_IDENTITY_TOKEN_FILE",
+            "AWS_ROLE_ARN",
+            "AWS_PROFILE",
+            "AWS_DEFAULT_PROFILE",
+        ] {
+            env::remove_var(key);
+        }
+        env::set_var("NO_PROXY", no_proxy);
+        env::set_var("no_proxy", no_proxy);
+        env::set_var("AWS_EC2_METADATA_DISABLED", "true");
+        if let Ok(runtime_api) = env::var("AWS_LAMBDA_RUNTIME_API") {
+            let (host, port) = runtime_api
+                .split_once(':')
+                .unwrap_or((runtime_api.as_str(), "9001"));
+            let resolved = resolve_reachable_host(host);
+            if resolved != host {
+                env::set_var("AWS_LAMBDA_RUNTIME_API", format!("{resolved}:{port}"));
+            }
+        }
+    }
+}
+
 pub fn aws_endpoint_url() -> String {
-    env::var("AWS_ENDPOINT_URL")
+    let raw = env::var("AWS_ENDPOINT_URL")
         .ok()
         .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "http://aws:4566".to_string())
+        .unwrap_or_else(|| "http://aws:4566".to_string());
+    let (scheme, rest) = if let Some(r) = raw.strip_prefix("https://") {
+        ("https://", r)
+    } else if let Some(r) = raw.strip_prefix("http://") {
+        ("http://", r)
+    } else {
+        ("http://", raw.as_str())
+    };
+    let host_port = rest.split('/').next().unwrap_or("aws:4566");
+    let (host, port) = host_port.split_once(':').unwrap_or((host_port, "4566"));
+    let target_host = if host == "localhost"
+        || host == "127.0.0.1"
+        || host.contains(".amazonaws.com")
+        || host.ends_with(".local")
+        || host.ends_with(".internal")
+    {
+        resolve_reachable_host("aws")
+    } else {
+        resolve_reachable_host(host)
+    };
+    format!("{scheme}{target_host}:{port}")
 }
 
 pub fn aws_endpoint_host() -> String {
@@ -253,12 +324,41 @@ pub fn aws_endpoint_host() -> String {
         .to_string()
 }
 
+pub fn normalize_http_endpoint_url(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let ep_base = aws_endpoint_url();
+    let ep_base = ep_base.trim_end_matches('/');
+    if let Some(rest) = trimmed
+        .strip_prefix("http://")
+        .or_else(|| trimmed.strip_prefix("https://"))
+    {
+        let (host_port, path_part) = match rest.split_once('/') {
+            Some((hp, p)) => (hp, format!("/{p}")),
+            None => (rest, String::new()),
+        };
+        let host = host_port.split(':').next().unwrap_or(host_port);
+        if host == "localhost"
+            || host == "127.0.0.1"
+            || host == "aws"
+            || host.contains(".amazonaws.com")
+            || host.ends_with(".local")
+            || host.ends_with(".internal")
+        {
+            return format!("{ep_base}{path_part}");
+        }
+    }
+    trimmed.to_string()
+}
+
 pub fn normalize_database_url(raw: &str) -> String {
     let proxy_host = aws_endpoint_host();
     if let Some((prefix, rest)) = raw.rsplit_once('@') {
         if let Some((host_port, path_part)) = rest.split_once('/') {
             let (host, port) = host_port.split_once(':').unwrap_or((host_port, "5432"));
-            if host.contains(".amazonaws.com")
+            if host == "localhost"
+                || host == "127.0.0.1"
+                || host == "aws"
+                || host.contains(".amazonaws.com")
                 || host.contains(".rds.")
                 || host.ends_with(".local")
                 || host.ends_with(".internal")
@@ -283,7 +383,10 @@ pub fn normalize_valkey_url(raw: &str) -> String {
             None => (rest, String::new()),
         };
         let (host, port) = host_port.split_once(':').unwrap_or((host_port, "6379"));
-        if host.contains(".amazonaws.com")
+        if host == "localhost"
+            || host == "127.0.0.1"
+            || host == "aws"
+            || host.contains(".amazonaws.com")
             || host.contains(".cache.")
             || host.ends_with(".local")
             || host.ends_with(".internal")
@@ -295,20 +398,45 @@ pub fn normalize_valkey_url(raw: &str) -> String {
 }
 
 pub async fn build_aws_config() -> aws_config::SdkConfig {
+    init_runtime_env();
     let region = env::var("AWS_REGION")
         .or_else(|_| env::var("AWS_DEFAULT_REGION"))
         .unwrap_or_else(|_| "us-east-1".to_string());
     let endpoint = aws_endpoint_url();
-    let access_key = env::var("AWS_ACCESS_KEY_ID").unwrap_or_else(|_| "test".to_string());
-    let secret_key = env::var("AWS_SECRET_ACCESS_KEY").unwrap_or_else(|_| "test".to_string());
+    let access_key = env::var("AWS_ACCESS_KEY_ID")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "test".to_string());
+    let secret_key = env::var("AWS_SECRET_ACCESS_KEY")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "test".to_string());
+
+    let retry_config = aws_config::retry::RetryConfig::standard().with_max_attempts(2);
+    let timeout_config = aws_config::timeout::TimeoutConfig::builder()
+        .connect_timeout(Duration::from_secs(2))
+        .operation_timeout(Duration::from_secs(5))
+        .operation_attempt_timeout(Duration::from_secs(3))
+        .build();
+
+    tracing::info!(
+        aws_endpoint = %endpoint,
+        aws_region = %region,
+        credential_provider = "clearledger-static",
+        "resolved AWS SDK configuration"
+    );
 
     aws_config::defaults(BehaviorVersion::latest())
         .region(Region::new(region))
         .endpoint_url(endpoint)
+        .retry_config(retry_config)
+        .timeout_config(timeout_config)
         .credentials_provider(Credentials::new(
             access_key,
             secret_key,
-            env::var("AWS_SESSION_TOKEN").ok(),
+            env::var("AWS_SESSION_TOKEN")
+                .ok()
+                .filter(|v| !v.trim().is_empty()),
             None,
             "clearledger-static",
         ))
@@ -901,23 +1029,25 @@ impl JwksValidator {
         let ep_trimmed = ep.trim_end_matches('/');
 
         let mut accepted_issuers = vec![trimmed_issuer.clone()];
-        let localhost_iss = format!("http://localhost:4566/{pool_id}");
-        if !accepted_issuers.contains(&localhost_iss) {
-            accepted_issuers.push(localhost_iss);
-        }
-        let aws_iss = format!("{ep_trimmed}/{pool_id}");
-        if !accepted_issuers.contains(&aws_iss) {
-            accepted_issuers.push(aws_iss);
+        for candidate_iss in [
+            format!("http://localhost:4566/{pool_id}"),
+            format!("http://aws:4566/{pool_id}"),
+            format!("{ep_trimmed}/{pool_id}"),
+        ] {
+            if !accepted_issuers.contains(&candidate_iss) {
+                accepted_issuers.push(candidate_iss);
+            }
         }
 
-        let jwks_url = env::var("AUTH_JWKS_URL")
+        let raw_jwks_url = env::var("AUTH_JWKS_URL")
             .or_else(|_| env::var("COGNITO_JWKS_URL"))
             .context("AUTH_JWKS_URL is required")?
             .trim()
             .to_string();
-        if jwks_url.is_empty() {
+        if raw_jwks_url.is_empty() {
             bail!("AUTH_JWKS_URL must not be empty");
         }
+        let jwks_url = normalize_http_endpoint_url(&raw_jwks_url);
 
         let allowed_clients = env::var("AUTH_AUDIENCES")
             .or_else(|_| env::var("COGNITO_AUDIENCES"))
@@ -935,6 +1065,8 @@ impl JwksValidator {
             jwks_url,
             allowed_clients,
             http: HttpClient::builder()
+                .no_proxy()
+                .connect_timeout(Duration::from_secs(2))
                 .timeout(Duration::from_secs(5))
                 .build()?,
             cache: Arc::new(RwLock::new(None)),
@@ -1029,6 +1161,8 @@ impl CloudWatchEmit {
             .or_else(|_| env::var("HOSTNAME"))
             .unwrap_or_else(|_| default_stream_prefix.to_string());
         let http = HttpClient::builder()
+            .no_proxy()
+            .connect_timeout(Duration::from_secs(2))
             .timeout(Duration::from_secs(3))
             .build()
             .unwrap_or_default();

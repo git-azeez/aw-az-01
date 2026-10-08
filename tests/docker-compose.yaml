@@ -12,6 +12,9 @@ services:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_ENDPOINT_URL: http://aws:4566
+      AWS_EC2_METADATA_DISABLED: "true"
+      NO_PROXY: localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal
+      no_proxy: localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal
       TF_CLI_CONFIG_FILE: /etc/terraform.tfrc
     volumes:
       - shared-workspace:/workspace
@@ -79,6 +82,9 @@ services:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
       AWS_ENDPOINT_URL: http://aws:4566
+      AWS_EC2_METADATA_DISABLED: "true"
+      NO_PROXY: localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal
+      no_proxy: localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal
     volumes:
       - shared-workspace:/workspace
       - /var/run/docker.sock:/var/run/docker.sock
@@ -86,6 +92,10 @@ services:
       aws:
         condition: service_healthy
     entrypoint: ["/opt/clearledger/runtime.sh"]
+
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME}_default
 
 volumes:
   shared-workspace:

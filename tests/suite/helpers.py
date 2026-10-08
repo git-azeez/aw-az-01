@@ -16,9 +16,23 @@ from pathlib import Path
 from typing import Any, Callable
 
 import boto3
+from botocore.config import Config as BotoConfig
 import httpx
 import psycopg
 import redis
+
+for _proxy_var in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+    os.environ.pop(_proxy_var, None)
+os.environ["NO_PROXY"] = "localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal"
+os.environ["no_proxy"] = os.environ["NO_PROXY"]
+os.environ["AWS_EC2_METADATA_DISABLED"] = "true"
+
+_BOTO_CONFIG = BotoConfig(
+    retries={"max_attempts": 2, "mode": "standard"},
+    connect_timeout=3,
+    read_timeout=10,
+    proxies={},
+)
 
 WORKSPACE = Path("/workspace")
 CONFIG_PATH = WORKSPACE / "config" / "config.json"
@@ -62,17 +76,23 @@ def boto_client(service: str, config: dict[str, Any] | None = None):
         endpoint_url=cfg["aws_endpoint_url"],
         aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", "test"),
         aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", "test"),
+        config=_BOTO_CONFIG,
     )
 
 
 def _iac_env() -> dict[str, str]:
     env = os.environ.copy()
+    for pvar in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        env.pop(pvar, None)
     cfg = load_config()
     env.setdefault("AWS_DEFAULT_REGION", cfg["region"])
     env.setdefault("AWS_REGION", cfg["region"])
     env.setdefault("AWS_ENDPOINT_URL", cfg["aws_endpoint_url"])
     env.setdefault("AWS_ACCESS_KEY_ID", "test")
     env.setdefault("AWS_SECRET_ACCESS_KEY", "test")
+    env.setdefault("AWS_EC2_METADATA_DISABLED", "true")
+    env.setdefault("NO_PROXY", os.environ["NO_PROXY"])
+    env.setdefault("no_proxy", os.environ["NO_PROXY"])
     env.setdefault("TF_CLI_CONFIG_FILE", "/etc/terraform.tfrc")
     env.setdefault("TF_IN_AUTOMATION", "1")
     for key, val in cfg.items():

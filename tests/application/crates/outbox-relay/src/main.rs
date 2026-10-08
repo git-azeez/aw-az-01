@@ -3,7 +3,10 @@ use std::{env, sync::Arc};
 use anyhow::{Context, Result};
 use aws_sdk_sqs::Client as SqsClient;
 use chrono::Utc;
-use clearledger::{build_aws_config, connect_postgres, CloudWatchEmit};
+use clearledger::{
+    build_aws_config, connect_postgres, init_runtime_env, normalize_http_endpoint_url,
+    CloudWatchEmit,
+};
 use lambda_runtime::{run, service_fn, Error as LambdaError, LambdaEvent};
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
@@ -21,6 +24,7 @@ struct RelayState {
 
 #[tokio::main]
 async fn main() -> Result<(), LambdaError> {
+    init_runtime_env();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -30,9 +34,10 @@ async fn main() -> Result<(), LambdaError> {
         .init();
 
     let database_url = env::var("DATABASE_URL").context("DATABASE_URL is required")?;
-    let queue_url = env::var("SQS_QUEUE_URL")
+    let raw_queue_url = env::var("SQS_QUEUE_URL")
         .or_else(|_| env::var("QUEUE_URL"))
         .context("SQS_QUEUE_URL is required")?;
+    let queue_url = normalize_http_endpoint_url(&raw_queue_url);
     let batch_size_raw = env::var("OUTBOX_BATCH_SIZE").unwrap_or_else(|_| "50".to_string());
     let batch_size: i64 = batch_size_raw
         .trim()

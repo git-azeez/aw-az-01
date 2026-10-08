@@ -34,14 +34,17 @@ resource "aws_lambda_function" "projector" {
 
   environment {
     variables = {
-      AWS_REGION            = var.region
-      AWS_DEFAULT_REGION    = var.region
-      AWS_ACCESS_KEY_ID     = "test"
-      AWS_SECRET_ACCESS_KEY = "test"
-      AWS_ENDPOINT_URL      = var.aws_endpoint_url
-      PROJECTION_TABLE      = aws_dynamodb_table.projections.name
-      VALKEY_URL            = local.valkey_url
-      CLOUDWATCH_LOG_GROUP  = aws_cloudwatch_log_group.projector.name
+      AWS_REGION                = var.region
+      AWS_DEFAULT_REGION        = var.region
+      AWS_ACCESS_KEY_ID         = "test"
+      AWS_SECRET_ACCESS_KEY     = "test"
+      AWS_ENDPOINT_URL          = var.aws_endpoint_url
+      AWS_EC2_METADATA_DISABLED = "true"
+      NO_PROXY                  = "localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal"
+      no_proxy                  = "localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal"
+      PROJECTION_TABLE          = aws_dynamodb_table.projections.name
+      VALKEY_URL                = local.valkey_url
+      CLOUDWATCH_LOG_GROUP      = aws_cloudwatch_log_group.projector.name
     }
   }
 
@@ -71,15 +74,18 @@ resource "aws_lambda_function" "outbox_relay" {
 
   environment {
     variables = {
-      AWS_REGION            = var.region
-      AWS_DEFAULT_REGION    = var.region
-      AWS_ACCESS_KEY_ID     = "test"
-      AWS_SECRET_ACCESS_KEY = "test"
-      AWS_ENDPOINT_URL      = var.aws_endpoint_url
-      DATABASE_URL          = local.database_url
-      SQS_QUEUE_URL         = aws_sqs_queue.events.url
-      OUTBOX_BATCH_SIZE     = "50"
-      CLOUDWATCH_LOG_GROUP  = aws_cloudwatch_log_group.relay.name
+      AWS_REGION                = var.region
+      AWS_DEFAULT_REGION        = var.region
+      AWS_ACCESS_KEY_ID         = "test"
+      AWS_SECRET_ACCESS_KEY     = "test"
+      AWS_ENDPOINT_URL          = var.aws_endpoint_url
+      AWS_EC2_METADATA_DISABLED = "true"
+      NO_PROXY                  = "localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal"
+      no_proxy                  = "localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal"
+      DATABASE_URL              = local.database_url
+      SQS_QUEUE_URL             = aws_sqs_queue.events.url
+      OUTBOX_BATCH_SIZE         = "50"
+      CLOUDWATCH_LOG_GROUP      = aws_cloudwatch_log_group.relay.name
     }
   }
 
@@ -100,16 +106,19 @@ resource "aws_lambda_function" "audit_archiver" {
 
   environment {
     variables = {
-      AWS_REGION            = var.region
-      AWS_DEFAULT_REGION    = var.region
-      AWS_ACCESS_KEY_ID     = "test"
-      AWS_SECRET_ACCESS_KEY = "test"
-      AWS_ENDPOINT_URL      = var.aws_endpoint_url
-      DATABASE_URL          = local.database_url
-      AUDIT_BUCKET          = aws_s3_bucket.audit.bucket
-      AUDIT_PREFIX          = "ledger-audit/"
-      AUDIT_BATCH_SIZE      = "100"
-      CLOUDWATCH_LOG_GROUP  = aws_cloudwatch_log_group.archiver.name
+      AWS_REGION                = var.region
+      AWS_DEFAULT_REGION        = var.region
+      AWS_ACCESS_KEY_ID         = "test"
+      AWS_SECRET_ACCESS_KEY     = "test"
+      AWS_ENDPOINT_URL          = var.aws_endpoint_url
+      AWS_EC2_METADATA_DISABLED = "true"
+      NO_PROXY                  = "localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal"
+      no_proxy                  = "localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal"
+      DATABASE_URL              = local.database_url
+      AUDIT_BUCKET              = aws_s3_bucket.audit.bucket
+      AUDIT_PREFIX              = "ledger-audit/"
+      AUDIT_BATCH_SIZE          = "100"
+      CLOUDWATCH_LOG_GROUP      = aws_cloudwatch_log_group.archiver.name
     }
   }
 

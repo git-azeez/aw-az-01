@@ -33,6 +33,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     AWS_ACCESS_KEY_ID=test \
     AWS_SECRET_ACCESS_KEY=test \
     AWS_ENDPOINT_URL=http://aws:4566 \
+    AWS_EC2_METADATA_DISABLED=true \
+    NO_PROXY=localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal \
+    no_proxy=localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal \
     TF_IN_AUTOMATION=1 \
     TF_CLI_CONFIG_FILE=/etc/terraform.tfrc
 
@@ -61,7 +64,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       wget \
       xz-utils \
     && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/fdfind /usr/local/bin/fd
+    && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
+    && ln -sf /usr/bin/curl /usr/bin/curl.real
 
 RUN curl -fsSL https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip \
       -o /tmp/terraform.zip && \
@@ -123,16 +127,6 @@ RUN mv /usr/local/bin/tofu /usr/local/bin/tofu.real && \
 unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 exec /usr/local/bin/tofu.real "$@"
-EOF
-
-RUN mv /usr/bin/curl /usr/bin/curl.real && \
-    cat <<'EOF' >/usr/bin/curl && chmod +x /usr/bin/curl
-#!/usr/bin/env bash
-export NO_PROXY="${NO_PROXY:+${NO_PROXY},}localhost,127.0.0.1,::1,aws,runtime,.amazonaws.com,.elb.amazonaws.com,.local"
-export no_proxy="${no_proxy:+${no_proxy},}localhost,127.0.0.1,::1,aws,runtime,.amazonaws.com,.elb.amazonaws.com,.local"
-nc -z -w 1 172.20.0.1 18080 >/dev/null 2>&1 || unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
-[[ -n "${CURL_CA_BUNDLE:-}" && -f "${CURL_CA_BUNDLE:-}" && -s "${CURL_CA_BUNDLE:-}" ]] || export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-exec /usr/bin/curl.real "$@"
 EOF
 
 RUN userdel -r node 2>/dev/null || true && \

@@ -13,10 +13,11 @@ use axum::{
 use chrono::Utc;
 use clearledger::{
     build_aws_config, connect_postgres, fetch_ledger_from_dynamodb,
-    fetch_projection_from_dynamodb, normalize_valkey_url, sha256_hex, valkey_settlement_key,
-    verify_postgres_schema, AppendEntryRequest, CloudWatchEmit, CreateSettlementRequest,
-    DomainEventData, DomainEventEnvelope, JwksValidator, RebuildResponse, SettlementStatus,
-    TokenClaims, WriteAcceptedResponse,
+    fetch_projection_from_dynamodb, init_runtime_env, normalize_http_endpoint_url,
+    normalize_valkey_url, sha256_hex, valkey_settlement_key, verify_postgres_schema,
+    AppendEntryRequest, CloudWatchEmit, CreateSettlementRequest, DomainEventData,
+    DomainEventEnvelope, JwksValidator, RebuildResponse, SettlementStatus, TokenClaims,
+    WriteAcceptedResponse,
 };
 use redis::AsyncCommands;
 use serde_json::{json, Value};
@@ -68,6 +69,7 @@ impl IntoResponse for ApiError {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    init_runtime_env();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -81,9 +83,10 @@ async fn main() -> Result<()> {
         .parse()
         .context("invalid PORT")?;
     let database_url = env::var("DATABASE_URL").context("DATABASE_URL is required")?;
-    let queue_url = env::var("SQS_QUEUE_URL")
+    let raw_queue_url = env::var("SQS_QUEUE_URL")
         .or_else(|_| env::var("QUEUE_URL"))
         .context("SQS_QUEUE_URL is required")?;
+    let queue_url = normalize_http_endpoint_url(&raw_queue_url);
     let projection_table = env::var("PROJECTION_TABLE").context("PROJECTION_TABLE is required")?;
     let valkey_url = env::var("VALKEY_URL")
         .or_else(|_| env::var("VALKEY_ENDPOINT"))
@@ -107,6 +110,13 @@ async fn main() -> Result<()> {
     let cw = CloudWatchEmit::new(&sdk_config, "api");
     let jwks = JwksValidator::from_env()?;
     let normalized_valkey = normalize_valkey_url(&valkey_url);
+    info!(
+        queue_url = %queue_url,
+        projection_table = %projection_table,
+        valkey_url = %normalized_valkey,
+        instance = %instance_id,
+        "initialized ClearLedger API clients"
+    );
     let redis_client =
         redis::Client::open(normalized_valkey.as_str()).context("failed creating Valkey client")?;
 
@@ -273,45 +283,27 @@ async fn health_live(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 async fn health_ready(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut checks = BTreeMap::new();
-    let pg_ok = verify_postgres_schema(&state.pool).await;
-    checks.insert(
-        "postgres".to_string(),
-        if pg_ok { "UP" } else { "DOWN" }.to_string(),
+    let pg_fut = tokio::time::timeout(
+        Duration::from_secs(2),
+        verify_postgres_schema(&state.pool),
     );
-
-    let ddb_ok = tokio::time::timeout(
+    let ddb_fut = tokio::time::timeout(
         Duration::from_secs(2),
         state
             .ddb
             .describe_table()
             .table_name(&state.projection_table)
             .send(),
-    )
-    .await
-    .map(|res| res.is_ok())
-    .unwrap_or(false);
-    checks.insert(
-        "dynamodb".to_string(),
-        if ddb_ok { "UP" } else { "DOWN" }.to_string(),
     );
-
-    let sqs_ok = tokio::time::timeout(
+    let sqs_fut = tokio::time::timeout(
         Duration::from_secs(2),
         state
             .sqs
             .get_queue_attributes()
             .queue_url(&state.queue_url)
             .send(),
-    )
-    .await
-    .map(|res| res.is_ok())
-    .unwrap_or(false);
-    checks.insert(
-        "sqs".to_string(),
-        if sqs_ok { "UP" } else { "DEGRADED" }.to_string(),
     );
-
-    let valkey_ok = tokio::time::timeout(Duration::from_secs(2), async {
+    let valkey_fut = tokio::time::timeout(Duration::from_secs(2), async {
         match state.redis_client.get_multiplexed_async_connection().await {
             Ok(mut conn) => redis::cmd("PING")
                 .query_async::<String>(&mut conn)
@@ -319,9 +311,42 @@ async fn health_ready(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                 .is_ok(),
             Err(_) => false,
         }
-    })
-    .await
-    .unwrap_or(false);
+    });
+
+    let (pg_res, ddb_res, sqs_res, valkey_res) = tokio::join!(pg_fut, ddb_fut, sqs_fut, valkey_fut);
+
+    let pg_ok = pg_res.unwrap_or(false);
+    if !pg_ok {
+        warn!("health_ready postgres schema check returned false");
+    }
+    checks.insert(
+        "postgres".to_string(),
+        if pg_ok { "UP" } else { "DOWN" }.to_string(),
+    );
+
+    let ddb_ok = match ddb_res {
+        Ok(Ok(_)) => true,
+        Ok(Err(err)) => {
+            warn!(error = ?err, table = %state.projection_table, "health_ready dynamodb describe_table failed");
+            false
+        }
+        Err(_) => {
+            warn!(table = %state.projection_table, "health_ready dynamodb describe_table timed out");
+            false
+        }
+    };
+    checks.insert(
+        "dynamodb".to_string(),
+        if ddb_ok { "UP" } else { "DOWN" }.to_string(),
+    );
+
+    let sqs_ok = sqs_res.map(|res| res.is_ok()).unwrap_or(false);
+    checks.insert(
+        "sqs".to_string(),
+        if sqs_ok { "UP" } else { "DEGRADED" }.to_string(),
+    );
+
+    let valkey_ok = valkey_res.unwrap_or(false);
     checks.insert(
         "valkey".to_string(),
         if valkey_ok { "UP" } else { "DEGRADED" }.to_string(),
