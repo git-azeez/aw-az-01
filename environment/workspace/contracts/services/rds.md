@@ -77,7 +77,7 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
   - Composite `UNIQUE (settlement_id, aggregate_version)` and `FOREIGN KEY (settlement_id, aggregate_version) REFERENCES clearledger.events(settlement_id, aggregate_version) ON DELETE CASCADE`.
   - `payload` must conform to `ClearLedgerDomainEventEnvelope` (`schemas/events.schema.json`) and on `INSERT` must exactly mirror the corresponding row in `clearledger.events` in contiguous per-settlement `aggregate_version` order starting at `1`.
   - Delivery/archival lifecycle: `attempts >= 0`; when `published_at IS NOT NULL`, `attempts >= 1` and `last_error IS NULL`; `archived_at` requires `published_at IS NOT NULL` and `archived_at >= published_at`.
-  - `DELETE` is forbidden; on `UPDATE`, envelope columns are immutable, `attempts` cannot decrease, publishing an unpublished row requires incrementing `attempts` with `archived_at IS NULL`, and once `published_at IS NOT NULL`, `published_at`, `attempts`, and `last_error` cannot be mutated.
+  - `DELETE` is forbidden; on `UPDATE`, envelope columns are immutable, `attempts` cannot decrease, publishing an unpublished row requires incrementing `attempts` with `archived_at IS NULL`, and while `published_at` remains `NOT NULL` (e.g., during archival), `published_at`, `attempts`, and `last_error` cannot be mutated.
 
 ### 4. Table `clearledger.idempotency_keys`
 

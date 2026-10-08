@@ -589,7 +589,7 @@ BEGIN
         END IF;
     END IF;
 
-    IF OLD.published_at IS NOT NULL THEN
+    IF OLD.published_at IS NOT NULL AND NEW.published_at IS NOT NULL THEN
         IF NEW.published_at IS DISTINCT FROM OLD.published_at
            OR NEW.attempts <> OLD.attempts
            OR NEW.last_error IS DISTINCT FROM OLD.last_error THEN
