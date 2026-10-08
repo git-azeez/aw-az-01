@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="19" time="844.432" timestamp="2026-10-08T06:55:44.696071+00:00" hostname="51f6c7fa807e"><testcase classname="test_declared" name="test_iac_discipline" time="218.315" /><testcase classname="test_declared" name="test_declared_compute_and_ingress" time="0.005" /><testcase classname="test_declared" name="test_declared_data_and_async" time="34.510" /><testcase classname="test_declared" name="test_declared_security" time="0.014" /><testcase classname="test_live" name="test_live_compute_and_ingress" time="0.206" /><testcase classname="test_live" name="test_live_data_and_event_graph" time="0.687" /><testcase classname="test_live" name="test_live_security" time="0.152" /><testcase classname="test_behavior" name="test_settlement_lifecycle_workflow" time="12.053" /><testcase classname="test_behavior" name="test_projection_and_valkey_cache" time="0.012"><failure message="FileNotFoundError: [Errno 2] No such file or directory: '/workspace/contracts/schemas/settlement.schema.json'">ctx = VerifierContext(config={'resource_prefix': 'cl-8f2d03', 'region': 'us-east-1', 'aws_endpoint_url': 'http://aws:4566', ...je9qAz_dwL3K6lBscZTz409eHi3RoNOyFSSYPkbYSU5xQ-Q6QM1a-E9ahymbH-ZGXyPCyr0-ZpmBh9IAJn-tKG7EDvL4qymPOqHBk3CLFr2Q45Uryd_w'})
+
+    def test_projection_and_valkey_cache(ctx: VerifierContext) -&gt; None:
+        """Scored block: Projection and cache (7 points) — functional.cache."""
+        def _check() -&gt; str:
+            tokens = _ensure_tokens(ctx)
+            service_url = resolve_service_url(ctx.manifest["service_url"], ctx.config)
+            settlement_id, meta = next(iter(ctx.committed_settlements.items()))
+            rclient = valkey_connect(ctx.manifest, ctx.config)
+            cache_key = f"clearledger:settlement:{settlement_id}"
+            settlement_schema = json.loads((CONTRACTS_DIR / "schemas" / "settlement.schema.json").read_text())
+            rclient.delete(cache_key)
+    
+            with httpx.Client(base_url=service_url, timeout=10.0) as client:
+                r1 = client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {tokens['read']}"})
+                assert r1.status_code == 200 and r1.headers.get("X-ClearLedger-Source") == "projection"
+                cached_raw = rclient.get(cache_key)
+                assert cached_raw is not None
+                ttl_val = int(rclient.ttl(cache_key))
+                assert 0 &lt; ttl_val &lt;= 90, f"Expected Valkey cache TTL in (0, 90], got {ttl_val}"
+                jsonschema.validate(instance=json.loads(cached_raw), schema=settlement_schema)
+    
+                r2 = client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {tokens['read']}"})
+                assert r2.status_code == 200 and r2.headers.get("X-ClearLedger-Source") == "cache"
+    
+                next_expected = meta["expected_version"]
+                new_entry_id = str(uuid.uuid4())
+                e_resp = client.post(
+                    f"/v1/settlements/{settlement_id}/entries",
+                    headers={
+                        "Authorization": f"Bearer {tokens['write']}",
+                        "Idempotency-Key": f"idem-cache-inv-{new_entry_id}",
+                    },
+                    json={
+                        "entryId": new_entry_id,
+                        "status": "RECONCILED",
+                        "clearingStage": "CACHE_REFRESH_STAGE",
+                        "memo": "Cache invalidation verification",
+                        "occurredAt": datetime.now(timezone.utc).isoformat(),
+                        "expectedVersion": next_expected,
+                    },
+                )
+                assert e_resp.status_code == 202
+                target_version = next_expected + 1
+    
+                def _fresh() -&gt; bool:
+                    rclient.delete(cache_key)
+                    resp = client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {tokens['read']}"})
+                    return resp.status_code == 200 and resp.json().get("version") == target_version
+    
+                wait_until(_fresh, timeout_sec=30.0, interval_sec=0.8, description="updated projection after cache invalidation")
+                meta["spec"]["entries"].append(
+                    {
+                        "entryId": new_entry_id,
+                        "status": "RECONCILED",
+                        "clearingStage": "CACHE_REFRESH_STAGE",
+                        "memo": "Cache invalidation verification",
+                        "expectedVersion": next_expected,
+                    }
+                )
+                meta["expected_version"] = target_version
+                meta["last_status"] = "RECONCILED"
+                meta["last_stage"] = "CACHE_REFRESH_STAGE"
+    
+            return "Verified projection miss -&gt; Valkey cache populate (TTL &amp; schema) -&gt; cache hit -&gt; write invalidation"
+    
+&gt;       _run_block(ctx, "functional.cache", _check)
+
+/tests/suite/test_behavior.py:304: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/tests/suite/test_behavior.py:32: in _run_block
+    detail = fn()
+/tests/suite/test_behavior.py:248: in _check
+    settlement_schema = json.loads((CONTRACTS_DIR / "schemas" / "settlement.schema.json").read_text())
+/usr/lib/python3.11/pathlib.py:1059: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/workspace/contracts/schemas/settlement.schema.json')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+&gt;       return io.open(self, mode, buffering, encoding, errors, newline)
+E       FileNotFoundError: [Errno 2] No such file or directory: '/workspace/contracts/schemas/settlement.schema.json'
+
+/usr/lib/python3.11/pathlib.py:1045: FileNotFoundError</failure></testcase><testcase classname="test_behavior" name="test_idempotency_and_optimistic_concurrency" time="1.872" /><testcase classname="test_behavior" name="test_backlog_accumulation_and_drain" time="7.047" /><testcase classname="test_behavior" name="test_duplicate_delivery_and_dlq_isolation" time="16.633" /><testcase classname="test_behavior" name="test_outbox_recovery_after_sqs_queue_deletion" time="131.636" /><testcase classname="test_behavior" name="test_projection_rebuild_from_event_log" time="1.265" /><testcase classname="test_behavior" name="test_ecs_task_failure_replacement" time="5.392" /><testcase classname="test_behavior" name="test_rds_reboot_recovery" time="3.003" /><testcase classname="test_behavior" name="test_authorization_audit_and_observability" time="0.985" /><testcase classname="test_lifecycle" name="test_reapply_idempotence" time="98.456" /><testcase classname="test_lifecycle" name="test_destroy_clean" time="310.848" /></testsuite></testsuites>
