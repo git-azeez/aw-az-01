@@ -132,34 +132,19 @@ EOF
 RUN mv /usr/bin/curl /usr/bin/curl.real && \
     cat <<'EOF' >/usr/bin/curl && chmod +x /usr/bin/curl
 #!/usr/bin/env bash
-if [[ "$*" == *"nvm-sh/nvm"* ]]; then
-  echo "true"
-  exit 0
-fi
+[[ "$*" == *"nvm-sh/nvm"* ]] && { echo "true"; exit 0; }
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}localhost,127.0.0.1,::1,aws,runtime,.amazonaws.com,.elb.amazonaws.com,.local"
 export no_proxy="${no_proxy:+${no_proxy},}localhost,127.0.0.1,::1,aws,runtime,.amazonaws.com,.elb.amazonaws.com,.local"
-if ! nc -z -w 1 172.20.0.1 18080 >/dev/null 2>&1; then
-  unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
-fi
-if [[ ! -f "${CURL_CA_BUNDLE:-/etc/daytona-netleash-ca.crt}" ]] || [[ ! -s "${CURL_CA_BUNDLE:-/etc/daytona-netleash-ca.crt}" ]]; then
-  export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-  export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-fi
+nc -z -w 1 172.20.0.1 18080 >/dev/null 2>&1 || unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+[[ -n "${CURL_CA_BUNDLE:-}" && -f "${CURL_CA_BUNDLE:-}" && -s "${CURL_CA_BUNDLE:-}" ]] || export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 exec /usr/bin/curl.real "$@"
 EOF
 
 RUN mv /opt/venv/bin/mini-swe-agent /opt/venv/bin/mini-swe-agent.real && \
     cat <<'EOF' >/opt/venv/bin/mini-swe-agent && chmod +x /opt/venv/bin/mini-swe-agent
 #!/usr/bin/env bash
-if ! nc -z -w 1 172.20.0.1 18080 >/dev/null 2>&1; then
-  unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
-fi
-if [[ ! -f "${SSL_CERT_FILE:-/etc/daytona-netleash-ca.crt}" ]] || [[ ! -s "${SSL_CERT_FILE:-/etc/daytona-netleash-ca.crt}" ]]; then
-  export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-  export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-  export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-  unset NODE_EXTRA_CA_CERTS
-fi
+nc -z -w 1 172.20.0.1 18080 >/dev/null 2>&1 || unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+[[ -n "${SSL_CERT_FILE:-}" && -f "${SSL_CERT_FILE:-}" && -s "${SSL_CERT_FILE:-}" ]] || { export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; unset NODE_EXTRA_CA_CERTS; }
 cleanup_children() {
   pkill -9 -f "mini-swe-agent.real|terraform-provider|terraform.real|tofu.real" >/dev/null 2>&1 || true
   exec >/dev/null 2>&1
@@ -178,34 +163,21 @@ EOF
 
 RUN cat <<'EOF' >/opt/venv/bin/npm && chmod +x /opt/venv/bin/npm
 #!/usr/bin/env bash
-if [[ "$*" == *" -g "* ]] && [[ -x /usr/local/bin/opencode ]]; then
-  exit 0
-fi
-if ! nc -z -w 1 172.20.0.1 18080 >/dev/null 2>&1; then
-  unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
-fi
+[[ "$*" == *" -g "* && -x /usr/local/bin/opencode ]] && exit 0
+nc -z -w 1 172.20.0.1 18080 >/dev/null 2>&1 || unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
 exec /usr/local/bin/npm "$@"
 EOF
 
 RUN cat <<'EOF' >/opt/venv/bin/apt-get && chmod +x /opt/venv/bin/apt-get
 #!/usr/bin/env bash
-if [[ "$(id -u)" != "0" ]] || [[ "$*" == *"curl"* ]]; then
-  exit 0
-fi
+[[ "$(id -u)" != "0" || "$*" == *"curl"* ]] && exit 0
 exec /usr/bin/apt-get "$@"
 EOF
 
 RUN cat <<'EOF' >/opt/venv/bin/opencode && chmod +x /opt/venv/bin/opencode
 #!/usr/bin/env bash
-if ! nc -z -w 1 172.20.0.1 18080 >/dev/null 2>&1; then
-  unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
-fi
-if [[ ! -f "${SSL_CERT_FILE:-/etc/daytona-netleash-ca.crt}" ]] || [[ ! -s "${SSL_CERT_FILE:-/etc/daytona-netleash-ca.crt}" ]]; then
-  export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-  export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-  export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-  unset NODE_EXTRA_CA_CERTS
-fi
+nc -z -w 1 172.20.0.1 18080 >/dev/null 2>&1 || unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+[[ -n "${SSL_CERT_FILE:-}" && -f "${SSL_CERT_FILE:-}" && -s "${SSL_CERT_FILE:-}" ]] || { export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; unset NODE_EXTRA_CA_CERTS; }
 if [[ "${1:-}" == "--version" || "${1:-}" == "-v" || "${1:-}" == "version" ]]; then
   exec /usr/local/bin/opencode "$@"
 fi

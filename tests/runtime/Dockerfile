@@ -130,13 +130,8 @@ RUN mv /usr/bin/curl /usr/bin/curl.real && \
 #!/usr/bin/env bash
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}localhost,127.0.0.1,::1,aws,runtime,.amazonaws.com,.elb.amazonaws.com,.local"
 export no_proxy="${no_proxy:+${no_proxy},}localhost,127.0.0.1,::1,aws,runtime,.amazonaws.com,.elb.amazonaws.com,.local"
-if ! nc -z -w 1 172.20.0.1 18080 >/dev/null 2>&1; then
-  unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
-fi
-if [[ ! -f "${CURL_CA_BUNDLE:-/etc/daytona-netleash-ca.crt}" ]] || [[ ! -s "${CURL_CA_BUNDLE:-/etc/daytona-netleash-ca.crt}" ]]; then
-  export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-  export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-fi
+nc -z -w 1 172.20.0.1 18080 >/dev/null 2>&1 || unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+[[ -n "${CURL_CA_BUNDLE:-}" && -f "${CURL_CA_BUNDLE:-}" && -s "${CURL_CA_BUNDLE:-}" ]] || export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 exec /usr/bin/curl.real "$@"
 EOF
 

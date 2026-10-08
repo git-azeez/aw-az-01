@@ -567,7 +567,7 @@ READY_URL="${SERVICE_URL%/}/health/ready"
 
 READY_OK=0
 for attempt in $(seq 1 90); do
-  if curl -fsS --max-time 5 "${READY_URL}" >/dev/null 2>&1; then
+  if curl -fsS --max-time 5 "${READY_URL}" >/dev/null 2>&1 || /opt/venv/bin/python3 -c "import sys, urllib.request; r = urllib.request.urlopen('${READY_URL}', timeout=5); sys.exit(0 if r.status == 200 else 1)" >/dev/null 2>&1; then
     READY_OK=1
     break
   fi
@@ -591,7 +591,7 @@ ecs = boto3.client("ecs", **kw)
 elbv2 = boto3.client("elbv2", **kw)
 cluster = m["compute"]["cluster_arn"]
 service = m["compute"]["service_name"]
-tg_arn = m["load_balancer"]["target_group_arn"]
+tg_arn = m["ingress"]["target_group_arn"]
 
 task_arns = ecs.list_tasks(cluster=cluster, serviceName=service).get("taskArns", [])
 running_ips = []
