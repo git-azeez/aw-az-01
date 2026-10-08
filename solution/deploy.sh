@@ -90,11 +90,11 @@ CREATE TABLE IF NOT EXISTS clearledger.settlements (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_settlements_nonempty_fields CHECK (
-        btrim(account_id) <> ''
+        char_length(btrim(account_id)) >= 3
         AND btrim(reference) <> ''
         AND btrim(debit_party) <> ''
         AND btrim(credit_party) <> ''
-        AND btrim(current_stage) <> ''
+        AND char_length(btrim(current_stage)) >= 2
     ),
     CONSTRAINT chk_settlements_distinct_parties CHECK (debit_party <> credit_party),
     CONSTRAINT chk_settlements_version_positive CHECK (version >= 1),
@@ -130,7 +130,8 @@ CREATE TABLE IF NOT EXISTS clearledger.events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (settlement_id, aggregate_version),
     CONSTRAINT chk_events_nonempty_fields CHECK (
-        btrim(correlation_id) <> '' AND btrim(idempotency_key) <> ''
+        char_length(btrim(correlation_id)) >= 4
+        AND char_length(btrim(idempotency_key)) BETWEEN 8 AND 128
     ),
     CONSTRAINT chk_events_version_positive CHECK (aggregate_version >= 1),
     CONSTRAINT chk_events_type_version CHECK (
@@ -142,12 +143,37 @@ CREATE TABLE IF NOT EXISTS clearledger.events (
         (
             jsonb_typeof(payload) = 'object'
             AND payload->>'schemaVersion' = '1.0'
+            AND payload->>'aggregateType' = 'settlement'
             AND payload->>'eventId' = event_id::text
             AND payload->>'aggregateId' = settlement_id::text
             AND (payload->>'aggregateVersion') ~ '^[0-9]+$'
             AND (payload->>'aggregateVersion')::integer = aggregate_version
             AND payload->>'eventType' = event_type
             AND payload->>'correlationId' = correlation_id
+            AND payload->>'idempotencyKey' = idempotency_key
+            AND btrim(COALESCE(payload->>'occurredAt', '')) <> ''
+            AND jsonb_typeof(payload->'data') = 'object'
+            AND char_length(btrim(COALESCE(payload #>> '{data,accountId}', ''))) >= 3
+            AND char_length(btrim(COALESCE(payload #>> '{data,clearingStage}', ''))) >= 2
+            AND (
+                (
+                    event_type = 'SettlementInitiated'
+                    AND payload #>> '{data,kind}' = 'settlementInitiated'
+                    AND payload #>> '{data,status}' = 'INITIATED'
+                    AND (payload->'data'->'entryId' IS NULL OR jsonb_typeof(payload->'data'->'entryId') = 'null')
+                    AND btrim(COALESCE(payload #>> '{data,reference}', '')) <> ''
+                    AND btrim(COALESCE(payload #>> '{data,debitParty}', '')) <> ''
+                    AND btrim(COALESCE(payload #>> '{data,creditParty}', '')) <> ''
+                    AND (payload #>> '{data,debitParty}') <> (payload #>> '{data,creditParty}')
+                )
+                OR
+                (
+                    event_type = 'LedgerEntryRecorded'
+                    AND payload #>> '{data,kind}' = 'ledgerEntryRecorded'
+                    AND (payload #>> '{data,status}') IN ('VALIDATED', 'RESERVED', 'CLEARED', 'SETTLED', 'RECONCILED', 'DISPUTED')
+                    AND btrim(COALESCE(payload #>> '{data,entryId}', '')) <> ''
+                )
+            )
         ) IS TRUE
     )
 );
@@ -167,7 +193,7 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
     UNIQUE (settlement_id, aggregate_version),
     FOREIGN KEY (settlement_id, aggregate_version)
         REFERENCES clearledger.events(settlement_id, aggregate_version) ON DELETE CASCADE,
-    CONSTRAINT chk_outbox_nonempty_corr CHECK (btrim(correlation_id) <> ''),
+    CONSTRAINT chk_outbox_nonempty_corr CHECK (char_length(btrim(correlation_id)) >= 4),
     CONSTRAINT chk_outbox_version_positive CHECK (aggregate_version >= 1),
     CONSTRAINT chk_outbox_attempts_nonnegative CHECK (attempts >= 0),
     CONSTRAINT chk_outbox_published_attempts CHECK (
@@ -180,11 +206,34 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
         (
             jsonb_typeof(payload) = 'object'
             AND payload->>'schemaVersion' = '1.0'
+            AND payload->>'aggregateType' = 'settlement'
             AND payload->>'eventId' = event_id::text
             AND payload->>'aggregateId' = settlement_id::text
             AND (payload->>'aggregateVersion') ~ '^[0-9]+$'
             AND (payload->>'aggregateVersion')::integer = aggregate_version
             AND payload->>'correlationId' = correlation_id
+            AND char_length(btrim(COALESCE(payload->>'idempotencyKey', ''))) BETWEEN 8 AND 128
+            AND btrim(COALESCE(payload->>'occurredAt', '')) <> ''
+            AND jsonb_typeof(payload->'data') = 'object'
+            AND char_length(btrim(COALESCE(payload #>> '{data,accountId}', ''))) >= 3
+            AND char_length(btrim(COALESCE(payload #>> '{data,clearingStage}', ''))) >= 2
+            AND (
+                (
+                    aggregate_version = 1
+                    AND payload->>'eventType' = 'SettlementInitiated'
+                    AND payload #>> '{data,kind}' = 'settlementInitiated'
+                    AND payload #>> '{data,status}' = 'INITIATED'
+                    AND (payload->'data'->'entryId' IS NULL OR jsonb_typeof(payload->'data'->'entryId') = 'null')
+                )
+                OR
+                (
+                    aggregate_version >= 2
+                    AND payload->>'eventType' = 'LedgerEntryRecorded'
+                    AND payload #>> '{data,kind}' = 'ledgerEntryRecorded'
+                    AND (payload #>> '{data,status}') IN ('VALIDATED', 'RESERVED', 'CLEARED', 'SETTLED', 'RECONCILED', 'DISPUTED')
+                    AND btrim(COALESCE(payload #>> '{data,entryId}', '')) <> ''
+                )
+            )
         ) IS TRUE
     )
 );
@@ -206,6 +255,22 @@ CREATE TABLE IF NOT EXISTS clearledger.idempotency_keys (
     CONSTRAINT chk_idempotency_status_code CHECK (status_code >= 100 AND status_code <= 599)
 );
 
+CREATE OR REPLACE FUNCTION clearledger.fn_status_rank(p_status text)
+RETURNS integer
+LANGUAGE sql
+IMMUTABLE
+AS $$
+    SELECT CASE p_status
+        WHEN 'INITIATED' THEN 0
+        WHEN 'VALIDATED' THEN 1
+        WHEN 'RESERVED' THEN 2
+        WHEN 'CLEARED' THEN 3
+        WHEN 'SETTLED' THEN 4
+        WHEN 'RECONCILED' THEN 5
+        ELSE -1
+    END;
+$$;
+
 CREATE OR REPLACE FUNCTION clearledger.fn_guard_settlements_update()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -226,16 +291,22 @@ BEGIN
             USING ERRCODE = '23514';
     END IF;
 
-    IF OLD.current_status = 'SETTLED'
-       AND NEW.current_status NOT IN ('SETTLED', 'RECONCILED', 'DISPUTED') THEN
-        RAISE EXCEPTION 'SETTLED settlement cannot regress to %', NEW.current_status
+    IF OLD.current_status = 'RECONCILED' AND NEW.current_status <> 'RECONCILED' THEN
+        RAISE EXCEPTION 'RECONCILED settlement is terminal and cannot transition to %', NEW.current_status
             USING ERRCODE = '23514';
     END IF;
 
-    IF OLD.current_status = 'RECONCILED'
-       AND NEW.current_status NOT IN ('RECONCILED', 'DISPUTED') THEN
-        RAISE EXCEPTION 'RECONCILED settlement cannot regress to %', NEW.current_status
+    IF OLD.current_status = 'DISPUTED'
+       AND NEW.current_status NOT IN ('DISPUTED', 'RECONCILED') THEN
+        RAISE EXCEPTION 'DISPUTED settlement can only remain DISPUTED or resolve to RECONCILED, not %', NEW.current_status
             USING ERRCODE = '23514';
+    END IF;
+
+    IF OLD.current_status <> 'DISPUTED' AND NEW.current_status <> 'DISPUTED' THEN
+        IF clearledger.fn_status_rank(NEW.current_status) < clearledger.fn_status_rank(OLD.current_status) THEN
+            RAISE EXCEPTION 'Settlement cannot regress from % to %', OLD.current_status, NEW.current_status
+                USING ERRCODE = '23514';
+        END IF;
     END IF;
 
     RETURN NEW;
@@ -247,6 +318,63 @@ CREATE TRIGGER trg_clearledger_settlements_before_update
     BEFORE UPDATE ON clearledger.settlements
     FOR EACH ROW
     EXECUTE FUNCTION clearledger.fn_guard_settlements_update();
+
+CREATE OR REPLACE FUNCTION clearledger.fn_guard_events_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_max_ver integer;
+    v_acct text;
+    v_status text;
+    v_stage text;
+    v_last_entry uuid;
+    v_parent_ver integer;
+BEGIN
+    SELECT COALESCE(MAX(aggregate_version), 0)
+      INTO v_max_ver
+      FROM clearledger.events
+     WHERE settlement_id = NEW.settlement_id;
+
+    IF NEW.aggregate_version <> v_max_ver + 1 THEN
+        RAISE EXCEPTION 'Non-contiguous event aggregate_version % (expected %)', NEW.aggregate_version, v_max_ver + 1
+            USING ERRCODE = '23514';
+    END IF;
+
+    SELECT account_id, current_status, current_stage, last_entry_id, version
+      INTO v_acct, v_status, v_stage, v_last_entry, v_parent_ver
+      FROM clearledger.settlements
+     WHERE settlement_id = NEW.settlement_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Parent settlement % does not exist', NEW.settlement_id
+            USING ERRCODE = '23503';
+    END IF;
+
+    IF v_parent_ver <> NEW.aggregate_version
+       OR v_acct <> (NEW.payload #>> '{data,accountId}')
+       OR v_status <> (NEW.payload #>> '{data,status}')
+       OR v_stage <> (NEW.payload #>> '{data,clearingStage}') THEN
+        RAISE EXCEPTION 'Event row does not match parent settlement state at version %', NEW.aggregate_version
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF NEW.aggregate_version >= 2 THEN
+        IF v_last_entry IS NULL OR v_last_entry::text <> (NEW.payload #>> '{data,entryId}') THEN
+            RAISE EXCEPTION 'LedgerEntryRecorded entryId does not match parent settlement last_entry_id'
+                USING ERRCODE = '23514';
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_clearledger_events_before_insert ON clearledger.events;
+CREATE TRIGGER trg_clearledger_events_before_insert
+    BEFORE INSERT ON clearledger.events
+    FOR EACH ROW
+    EXECUTE FUNCTION clearledger.fn_guard_events_insert();
 
 CREATE OR REPLACE FUNCTION clearledger.fn_guard_events_immutable()
 RETURNS trigger
@@ -268,7 +396,34 @@ CREATE OR REPLACE FUNCTION clearledger.fn_guard_outbox_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    v_ev_sid uuid;
+    v_ev_ver integer;
+    v_ev_corr text;
+    v_ev_payload jsonb;
 BEGIN
+    IF TG_OP = 'INSERT' THEN
+        SELECT settlement_id, aggregate_version, correlation_id, payload
+          INTO v_ev_sid, v_ev_ver, v_ev_corr, v_ev_payload
+          FROM clearledger.events
+         WHERE event_id = NEW.event_id;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'Outbox event_id % not found in clearledger.events', NEW.event_id
+                USING ERRCODE = '23503';
+        END IF;
+
+        IF v_ev_sid <> NEW.settlement_id
+           OR v_ev_ver <> NEW.aggregate_version
+           OR v_ev_corr <> NEW.correlation_id
+           OR v_ev_payload <> NEW.payload THEN
+            RAISE EXCEPTION 'Outbox row does not match referenced clearledger.events row'
+                USING ERRCODE = '23514';
+        END IF;
+
+        RETURN NEW;
+    END IF;
+
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'clearledger.outbox rows cannot be deleted'
             USING ERRCODE = '23514';
@@ -292,7 +447,7 @@ $$;
 
 DROP TRIGGER IF EXISTS trg_clearledger_outbox_guard ON clearledger.outbox;
 CREATE TRIGGER trg_clearledger_outbox_guard
-    BEFORE UPDATE OR DELETE ON clearledger.outbox
+    BEFORE INSERT OR UPDATE OR DELETE ON clearledger.outbox
     FOR EACH ROW
     EXECUTE FUNCTION clearledger.fn_guard_outbox_mutation();
 
@@ -484,12 +639,20 @@ with psycopg.connect(pg_conninfo) as conn:
                         break
                     ev_obj = json.loads(ev_payload) if isinstance(ev_payload, str) else ev_payload
                     ev_data = ev_obj.get("data") or {}
+                    ddb_env_raw = (ddb_ev.get("envelope") or {}).get("S")
+                    ddb_env_ok = False
+                    if ddb_env_raw:
+                        try:
+                            ddb_env_ok = json.loads(ddb_env_raw) == ev_obj
+                        except Exception:
+                            ddb_env_ok = False
                     if (
                         int((ddb_ev.get("version") or {}).get("N", -1)) != ev_ver
                         or (ddb_ev.get("event_id") or {}).get("S") != ev_id
                         or (ddb_ev.get("event_type") or {}).get("S") != ev_type
                         or (ddb_ev.get("status") or {}).get("S") != ev_data.get("status")
                         or (ddb_ev.get("clearing_stage") or {}).get("S") != ev_data.get("clearingStage")
+                        or not ddb_env_ok
                     ):
                         events_ok = False
                         break
@@ -520,38 +683,56 @@ with psycopg.connect(pg_conninfo) as conn:
                             int(cached_obj.get("version", -1)) != pg_ver
                             or cached_obj.get("status") != status
                             or cached_obj.get("clearingStage") != stage
+                            or cached_obj.get("accountId") != acct
+                            or cached_obj.get("reference") != ref
                         ):
                             rclient.delete(f"clearledger:settlement:{sid}")
                     except Exception:
                         rclient.delete(f"clearledger:settlement:{sid}")
 
-        # 5. Reconcile S3 audit archive objects against clearledger.outbox
+        # 5. Reconcile S3 audit archive objects 1-to-1 against clearledger.outbox
+        cur.execute("SELECT seq, event_id::text, archived_at, payload FROM clearledger.outbox ORDER BY seq ASC")
+        pg_outbox = {}
+        for seq, ev_id, arch_at, payload in cur.fetchall():
+            pay_obj = json.loads(payload) if isinstance(payload, str) else payload
+            pg_outbox[ev_id] = (seq, arch_at, pay_obj)
+
         all_s3_objs = s3.list_objects_v2(Bucket=audit_bucket).get("Contents", [])
-        s3_event_ids: set[str] = set()
-        for obj in all_s3_objs:
+        seen_s3_event_ids: set[str] = set()
+        for obj in sorted(all_s3_objs, key=lambda o: o["Key"]):
             key = obj["Key"]
             if not key.startswith(audit_prefix):
                 s3.delete_object(Bucket=audit_bucket, Key=key)
                 continue
             try:
                 raw_body = s3.get_object(Bucket=audit_bucket, Key=key)["Body"].read().decode("utf-8")
+                lines = [ln for ln in raw_body.splitlines() if ln.strip()]
+                if not lines:
+                    raise ValueError("Empty S3 audit batch")
                 batch_ids: list[str] = []
-                for line in raw_body.splitlines():
-                    if line.strip():
-                        parsed_line = json.loads(line)
-                        ev_id = parsed_line.get("eventId")
-                        if not ev_id:
-                            raise ValueError("Missing eventId in S3 audit record")
-                        batch_ids.append(str(ev_id))
-                s3_event_ids.update(batch_ids)
+                batch_seen: set[str] = set()
+                for line in lines:
+                    parsed_line = json.loads(line)
+                    ev_id = str(parsed_line.get("eventId") or "")
+                    if not ev_id or ev_id not in pg_outbox:
+                        raise ValueError(f"Orphan eventId {ev_id} in S3 audit batch")
+                    if ev_id in seen_s3_event_ids or ev_id in batch_seen:
+                        raise ValueError(f"Duplicate eventId {ev_id} in S3 audit batch")
+                    _, arch_at, authoritative_payload = pg_outbox[ev_id]
+                    if arch_at is None:
+                        raise ValueError(f"Outbox row {ev_id} is marked unarchived in PostgreSQL")
+                    if parsed_line != authoritative_payload:
+                        raise ValueError(f"Tampered S3 audit record for {ev_id}")
+                    batch_seen.add(ev_id)
+                    batch_ids.append(ev_id)
+                seen_s3_event_ids.update(batch_ids)
             except Exception:
                 s3.delete_object(Bucket=audit_bucket, Key=key)
 
-        cur.execute("SELECT seq, event_id::text, archived_at FROM clearledger.outbox")
         missing_seqs = [
             seq
-            for seq, ev_id, arch_at in cur.fetchall()
-            if arch_at is not None and ev_id not in s3_event_ids
+            for ev_id, (seq, arch_at, _) in pg_outbox.items()
+            if arch_at is not None and ev_id not in seen_s3_event_ids
         ]
         if missing_seqs:
             cur.execute(

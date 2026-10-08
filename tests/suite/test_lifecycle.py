@@ -52,6 +52,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         sample_sid, sample_meta = committed_items[0]
         ledger_sid, ledger_meta = committed_items[1]
         s3_loss_sid, s3_loss_meta = committed_items[2]
+        same_ver_sid, same_ver_meta = committed_items[3]
         orphan_sid = str(uuid.uuid4())
         now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -69,27 +70,63 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 )
             conn.commit()
 
-        # Remove S3 archive batches containing (sample_sid, expected_version) AND (s3_loss_sid, expected_version)
-        # Note: for s3_loss_sid, clearledger.outbox.archived_at remains NOT NULL in PostgreSQL, so deploy.sh must
-        # genuinely inspect S3 ledger-audit/ against clearledger.outbox to detect and heal the missing S3 audit record!
+        # Corrupt S3 audit archive for s3_loss_sid in-place (while archived_at remains NOT NULL in PostgreSQL)
+        # Note: we do NOT delete sample_sid's existing S3 batch here, so if deploy.sh merely runs audit_archiver
+        # without deduplicating S3 batches against unarchived PostgreSQL rows, sample_sid will be duplicated in S3!
         for obj in s3.list_objects_v2(Bucket=before_bucket, Prefix="ledger-audit/").get("Contents", []):
             body = s3.get_object(Bucket=before_bucket, Key=obj["Key"])["Body"].read().decode()
-            for line in body.splitlines():
-                if line.strip():
-                    rec = json.loads(line)
-                    agg_id = rec.get("aggregateId")
-                    agg_ver = int(rec.get("aggregateVersion", 0))
-                    if (agg_id == sample_sid and agg_ver == sample_meta["expected_version"]) or (
-                        agg_id == s3_loss_sid and agg_ver == s3_loss_meta["expected_version"]
-                    ):
-                        s3.delete_object(Bucket=before_bucket, Key=obj["Key"])
-                        break
+            lines = [ln for ln in body.splitlines() if ln.strip()]
+            tampered = False
+            for idx, line in enumerate(lines):
+                rec = json.loads(line)
+                agg_id = rec.get("aggregateId")
+                agg_ver = int(rec.get("aggregateVersion", 0))
+                if agg_id == s3_loss_sid and agg_ver == s3_loss_meta["expected_version"]:
+                    rec.setdefault("data", {})["clearingStage"] = "TAMPERED_S3_REAPPLY_STAGE"
+                    lines[idx] = json.dumps(rec)
+                    tampered = True
+            if tampered:
+                s3.put_object(
+                    Bucket=before_bucket,
+                    Key=obj["Key"],
+                    Body=("\n".join(lines) + "\n").encode("utf-8"),
+                    ContentType="application/x-ndjson",
+                )
+                break
 
-        # Plant a stray S3 object outside ledger-audit/ that deploy.sh must purge
+        # Plant both a stray S3 object outside ledger-audit/ AND an orphan S3 batch inside ledger-audit/
         s3.put_object(
             Bucket=before_bucket,
             Key="drifted-audit/stray-unscoped-batch.ndjson",
             Body=b'{"stray":true}\n',
+            ContentType="application/x-ndjson",
+        )
+        orphan_s3_env = {
+            "schemaVersion": "1.0",
+            "eventId": str(uuid.uuid4()),
+            "eventType": "SettlementInitiated",
+            "aggregateType": "settlement",
+            "aggregateId": orphan_sid,
+            "aggregateVersion": 1,
+            "occurredAt": now_iso,
+            "correlationId": "corr-orphan-reapply",
+            "idempotencyKey": "idem-orphan-reapply",
+            "data": {
+                "kind": "settlementInitiated",
+                "accountId": "ACCT-ORPHAN",
+                "reference": "REF-ORPHAN",
+                "debitParty": "BANK-ORPHAN-A",
+                "creditParty": "BANK-ORPHAN-B",
+                "entryId": None,
+                "status": "INITIATED",
+                "clearingStage": "ORPHAN_S3_REAPPLY",
+                "memo": None,
+            },
+        }
+        s3.put_object(
+            Bucket=before_bucket,
+            Key="ledger-audit/batch-99999902-99999902-orphan.ndjson",
+            Body=(json.dumps(orphan_s3_env) + "\n").encode("utf-8"),
             ContentType="application/x-ndjson",
         )
 
@@ -134,6 +171,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         # 2. Data-plane drift:
         # - Inflated-version STATE corruption on sample_sid + poisoned Valkey cache
         # - Missing EVENT#00000001 + in-place mutated EVENT#00000002 + phantom EVENT#00000099 on ledger_sid
+        # - Same-version / same-SK attribute + AccountIndex GSI + Valkey corruption on same_ver_sid
         # - Orphan settlement partition in DynamoDB and Valkey absent from PostgreSQL
         ddb.put_item(
             TableName=before_manifest["projections"]["table_name"],
@@ -183,6 +221,24 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 "occurred_at": {"S": now_iso},
             },
         )
+        ddb.update_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "STATE"}},
+            UpdateExpression="SET clearing_stage = :cs, #st = :st, GSI1PK = :gpk, GSI1SK = :gsk",
+            ExpressionAttributeNames={"#st": "status"},
+            ExpressionAttributeValues={
+                ":cs": {"S": "DRIFTED_SAME_VER_STATE"},
+                ":st": {"S": "DISPUTED"},
+                ":gpk": {"S": "ACCOUNT#DRIFTED-GSI"},
+                ":gsk": {"S": f"CORRUPTED#{same_ver_sid}"},
+            },
+        )
+        ddb.update_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000001"}},
+            UpdateExpression="SET clearing_stage = :cs",
+            ExpressionAttributeValues={":cs": {"S": "DRIFTED_SAME_VER_EVENT"}},
+        )
         ddb.put_item(
             TableName=before_manifest["projections"]["table_name"],
             Item={
@@ -215,6 +271,23 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                     "clearingStage": "DRIFTED_CACHE_STAGE",
                     "version": 99,
                     "entryCount": 98,
+                    "updatedAt": now_iso,
+                }
+            ),
+        )
+        rclient.set(
+            f"clearledger:settlement:{same_ver_sid}",
+            json.dumps(
+                {
+                    "settlementId": same_ver_sid,
+                    "accountId": same_ver_meta["spec"]["accountId"],
+                    "reference": same_ver_meta["spec"]["reference"],
+                    "debitParty": same_ver_meta["spec"]["debitParty"],
+                    "creditParty": same_ver_meta["spec"]["creditParty"],
+                    "status": same_ver_meta["last_status"],
+                    "clearingStage": "DRIFTED_SAME_VER_CACHE_STAGE",
+                    "version": same_ver_meta["expected_version"],
+                    "entryCount": same_ver_meta["expected_version"] - 1,
                     "updatedAt": now_iso,
                 }
             ),
@@ -286,6 +359,11 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 unpub_count = cur.fetchone()[0]
                 cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE archived_at IS NULL")
                 unarch_count = cur.fetchone()[0]
+                cur.execute("SELECT event_id::text, payload FROM clearledger.outbox")
+                pg_outbox_map = {
+                    ev_id: (json.loads(pay) if isinstance(pay, str) else pay)
+                    for ev_id, pay in cur.fetchall()
+                }
         assert after_count == before_count, f"Settlement count changed after re-apply: {before_count} -> {after_count}"
         assert unpub_count == 0, f"deploy.sh left {unpub_count} unpublished outbox rows after re-apply"
         assert unarch_count == 0, f"deploy.sh left {unarch_count} unarchived outbox rows after re-apply"
@@ -296,26 +374,28 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             f"Expected deploy.sh to purge stray S3 objects outside ledger-audit/, found: {stray_keys}"
         )
 
-        found_rearchived_sample = False
-        found_rearchived_s3_loss = False
+        s3_records_by_eid: dict[str, dict] = {}
+        total_s3_lines = 0
         for obj in s3.list_objects_v2(Bucket=after_manifest["audit"]["bucket_name"], Prefix="ledger-audit/").get("Contents", []):
             body = s3.get_object(Bucket=after_manifest["audit"]["bucket_name"], Key=obj["Key"])["Body"].read().decode()
             for line in body.splitlines():
                 if line.strip():
+                    total_s3_lines += 1
                     rec = json.loads(line)
-                    agg_id = rec.get("aggregateId")
-                    agg_ver = int(rec.get("aggregateVersion", 0))
-                    if agg_id == sample_sid and agg_ver == sample_meta["expected_version"]:
-                        found_rearchived_sample = True
-                    if agg_id == s3_loss_sid and agg_ver == s3_loss_meta["expected_version"]:
-                        found_rearchived_s3_loss = True
-        assert found_rearchived_sample, (
-            f"Expected deploy.sh to re-archive unarchived outbox row ({sample_sid} v{sample_meta['expected_version']}) "
-            f"into S3 under restored prefix ledger-audit/"
-        )
-        assert found_rearchived_s3_loss, (
-            f"Expected deploy.sh to detect and re-archive missing S3 audit record ({s3_loss_sid} v{s3_loss_meta['expected_version']}) "
-            f"whose S3 batch was deleted while archived_at remained NOT NULL in PostgreSQL"
+                    ev_id = str(rec.get("eventId") or "")
+                    assert ev_id in pg_outbox_map, (
+                        f"Expected deploy.sh to purge orphan S3 audit record {ev_id} under ledger-audit/"
+                    )
+                    assert ev_id not in s3_records_by_eid, (
+                        f"Duplicate S3 audit record found for eventId {ev_id} under ledger-audit/"
+                    )
+                    assert rec == pg_outbox_map[ev_id], (
+                        f"Expected deploy.sh to heal tampered S3 audit record for eventId {ev_id}: got {rec.get('data')}, expected {pg_outbox_map[ev_id].get('data')}"
+                    )
+                    s3_records_by_eid[ev_id] = rec
+        assert total_s3_lines == len(pg_outbox_map) and set(s3_records_by_eid.keys()) == set(pg_outbox_map.keys()), (
+            f"Expected S3 audit archive under ledger-audit/ to match clearledger.outbox 1-to-1 "
+            f"(pg={len(pg_outbox_map)}, s3={total_s3_lines})"
         )
 
         read_tok = get_access_token(after_manifest, "read")
@@ -353,6 +433,38 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 f"expected {expected_v2_stage}, got {ledger_events[1]}"
             )
 
+            r_same_ver = client.get(
+                f"/v1/settlements/{same_ver_sid}",
+                headers={"Authorization": f"Bearer {read_tok}"},
+            )
+            assert r_same_ver.status_code == 200
+            sv_body = r_same_ver.json()
+            assert sv_body.get("status") == same_ver_meta["last_status"] and sv_body.get("clearingStage") == same_ver_meta["last_stage"], (
+                f"Expected deploy.sh to heal same-version drifted STATE/cache for {same_ver_sid}, got {sv_body}"
+            )
+            r_sv_ledger = client.get(
+                f"/v1/settlements/{same_ver_sid}/ledger",
+                headers={"Authorization": f"Bearer {read_tok}"},
+            )
+            assert r_sv_ledger.status_code == 200
+            sv_events = r_sv_ledger.json().get("events", [])
+            expected_v1_stage = f"INITIATED@{same_ver_meta['spec']['debitParty']}"
+            assert sv_events and sv_events[0].get("clearingStage") == expected_v1_stage, (
+                f"Expected deploy.sh to heal same-version mutated EVENT#00000001 for {same_ver_sid}, got {sv_events[0] if sv_events else None}"
+            )
+            gsi_q = ddb.query(
+                TableName=after_manifest["projections"]["table_name"],
+                IndexName=after_manifest["projections"]["gsi_name"],
+                KeyConditionExpression="GSI1PK = :gpk AND GSI1SK = :gsk",
+                ExpressionAttributeValues={
+                    ":gpk": {"S": f"ACCOUNT#{same_ver_meta['spec']['accountId']}"},
+                    ":gsk": {"S": f"SETTLEMENT#{same_ver_sid}"},
+                },
+            ).get("Items", [])
+            assert len(gsi_q) == 1, (
+                f"Expected deploy.sh to heal AccountIndex GSI attributes (GSI1PK/GSI1SK) for {same_ver_sid}, found {gsi_q}"
+            )
+
             r_orphan = client.get(
                 f"/v1/settlements/{orphan_sid}",
                 headers={"Authorization": f"Bearer {read_tok}"},
@@ -365,7 +477,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             )
 
         return (
-            f"Re-applied deploy.sh cleanly, reconciled multi-service control-plane & bidirectional data-plane drift, "
+            f"Re-applied deploy.sh cleanly, reconciled multi-service control-plane & bidirectional data-plane/GSI/S3 drift, "
             f"and preserved all {after_count} settlements"
         )
 

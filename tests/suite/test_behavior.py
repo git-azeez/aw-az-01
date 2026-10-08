@@ -55,7 +55,8 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             for idx in range(settlement_count):
-                spec = build_random_settlement_spec(ctx.rng, step_count=4 if idx == 0 else None)
+                step_override = 4 if idx == 0 else (3 if idx == 1 else None)
+                spec = build_random_settlement_spec(ctx.rng, step_count=step_override)
                 sid = spec["settlementId"]
                 corr_id = f"corr-wf-{idx}-{uuid.uuid4().hex[:8]}"
 
@@ -174,7 +175,37 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
                 f"got {regress_resp.status_code}: {regress_resp.text}"
             )
 
-        return f"Verified {settlement_count} randomized settlement lifecycles, party separation, and stage-finality checks end-to-end"
+            cleared_sid, cleared_meta = next(
+                (k, v)
+                for k, v in ctx.committed_settlements.items()
+                if v["last_status"] == "CLEARED"
+            )
+            mid_regress_entry_id = str(uuid.uuid4())
+            mid_regress_resp = client.post(
+                f"/v1/settlements/{cleared_sid}/entries",
+                headers={
+                    "Authorization": f"Bearer {tokens['write']}",
+                    "Idempotency-Key": f"idem-mid-regress-{mid_regress_entry_id}",
+                },
+                json={
+                    "entryId": mid_regress_entry_id,
+                    "status": "RESERVED",
+                    "clearingStage": "ILLEGAL_CLEARED_TO_RESERVED",
+                    "memo": "Attempt illegal backward regression from CLEARED to RESERVED",
+                    "occurredAt": datetime.now(timezone.utc).isoformat(),
+                    "expectedVersion": cleared_meta["expected_version"],
+                },
+            )
+            if mid_regress_resp.status_code in {200, 201, 202}:
+                cleared_meta["expected_version"] += 1
+                cleared_meta["last_status"] = "RESERVED"
+                cleared_meta["last_stage"] = "ILLEGAL_CLEARED_TO_RESERVED"
+            assert mid_regress_resp.status_code == 400, (
+                f"Expected 400 Bad Request when regressing CLEARED settlement back to RESERVED, "
+                f"got {mid_regress_resp.status_code}: {mid_regress_resp.text}"
+            )
+
+        return f"Verified {settlement_count} randomized settlement lifecycles, party separation, and ordered stage progression checks"
 
     _run_block(ctx, "functional.workflow", _check, cap_on_fail=("accepted_write_loss", 49))
 
@@ -631,14 +662,20 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         rclient = valkey_connect(m, ctx.config)
         service_url = resolve_service_url(m["service_url"], ctx.config)
 
-        # Simulate bidirectional projection/cache corruption on already-published settlements:
+        invoke_lambda_sync(m["workers"]["outbox_relay"]["function_name"])
+        invoke_lambda_sync(m["workers"]["audit_archiver"]["function_name"])
+
+        # Simulate bidirectional projection/cache/archive corruption on already-published settlements:
         # 1) Inflated-version STATE corruption on corrupted_sid (version=99 blocks naive projector #version < :new_version)
         # 2) Missing EVENT#00000001 + in-place mutated EVENT#00000002 + phantom EVENT#00000099 on ledger_corrupted_sid
         #    (keeps total EVENT#* count equal to expected_version so count-only checks fail)
-        # 3) Orphan settlement partition in DynamoDB and Valkey that does not exist in PostgreSQL
+        # 3) Same-version / same-SK attribute + AccountIndex GSI + Valkey corruption on same_ver_sid
+        #    (keeps STATE.version == expected_version and EVENT#00000001..N intact so version-only / SK-only checks fail)
+        # 4) Orphan settlement partition in DynamoDB, Valkey, and S3 ledger-audit/ absent from PostgreSQL
         committed_items = list(ctx.committed_settlements.items())
         corrupted_sid, corrupted_meta = committed_items[0]
         ledger_corrupted_sid, ledger_corrupted_meta = committed_items[1]
+        same_ver_sid, same_ver_meta = committed_items[2]
         orphan_sid = str(uuid.uuid4())
         now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -689,6 +726,24 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 "correlation_id": {"S": "corr-phantom-99"},
                 "occurred_at": {"S": now_iso},
             },
+        )
+        ddb.update_item(
+            TableName=m["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "STATE"}},
+            UpdateExpression="SET clearing_stage = :cs, #st = :st, GSI1PK = :gpk, GSI1SK = :gsk",
+            ExpressionAttributeNames={"#st": "status"},
+            ExpressionAttributeValues={
+                ":cs": {"S": "SILENT_SAME_VER_STATE_DRIFT"},
+                ":st": {"S": "DISPUTED"},
+                ":gpk": {"S": "ACCOUNT#SILENT-DRIFT-GSI"},
+                ":gsk": {"S": f"CORRUPTED#{same_ver_sid}"},
+            },
+        )
+        ddb.update_item(
+            TableName=m["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000001"}},
+            UpdateExpression="SET clearing_stage = :cs",
+            ExpressionAttributeValues={":cs": {"S": "SILENT_SAME_VER_EVENT_DRIFT"}},
         )
         ddb.put_item(
             TableName=m["projections"]["table_name"],
@@ -742,6 +797,23 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             ),
         )
         rclient.set(
+            f"clearledger:settlement:{same_ver_sid}",
+            json.dumps(
+                {
+                    "settlementId": same_ver_sid,
+                    "accountId": same_ver_meta["spec"]["accountId"],
+                    "reference": same_ver_meta["spec"]["reference"],
+                    "debitParty": same_ver_meta["spec"]["debitParty"],
+                    "creditParty": same_ver_meta["spec"]["creditParty"],
+                    "status": same_ver_meta["last_status"],
+                    "clearingStage": "SILENT_SAME_VER_CACHE_POISON",
+                    "version": same_ver_meta["expected_version"],
+                    "entryCount": same_ver_meta["expected_version"] - 1,
+                    "updatedAt": now_iso,
+                }
+            ),
+        )
+        rclient.set(
             f"clearledger:settlement:{orphan_sid}",
             json.dumps(
                 {
@@ -757,6 +829,55 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                     "updatedAt": now_iso,
                 }
             ),
+        )
+
+        # Corrupt S3 audit archive inside ledger-audit/ (tampered payload + orphan batch)
+        existing_s3 = s3.list_objects_v2(Bucket=m["audit"]["bucket_name"], Prefix=m["audit"]["prefix"]).get("Contents", [])
+        if existing_s3:
+            target_key = existing_s3[0]["Key"]
+            orig_lines = [
+                ln
+                for ln in s3.get_object(Bucket=m["audit"]["bucket_name"], Key=target_key)["Body"].read().decode().splitlines()
+                if ln.strip()
+            ]
+            if orig_lines:
+                first_rec = json.loads(orig_lines[0])
+                first_rec.setdefault("data", {})["clearingStage"] = "TAMPERED_S3_AUDIT_STAGE"
+                orig_lines[0] = json.dumps(first_rec)
+                s3.put_object(
+                    Bucket=m["audit"]["bucket_name"],
+                    Key=target_key,
+                    Body=("\n".join(orig_lines) + "\n").encode("utf-8"),
+                    ContentType="application/x-ndjson",
+                )
+
+        orphan_s3_env = {
+            "schemaVersion": "1.0",
+            "eventId": str(uuid.uuid4()),
+            "eventType": "SettlementInitiated",
+            "aggregateType": "settlement",
+            "aggregateId": orphan_sid,
+            "aggregateVersion": 1,
+            "occurredAt": now_iso,
+            "correlationId": "corr-orphan-s3",
+            "idempotencyKey": "idem-orphan-s3-batch",
+            "data": {
+                "kind": "settlementInitiated",
+                "accountId": "ACCT-ORPHAN",
+                "reference": "REF-ORPHAN",
+                "debitParty": "BANK-ORPHAN-A",
+                "creditParty": "BANK-ORPHAN-B",
+                "entryId": None,
+                "status": "INITIATED",
+                "clearingStage": "ORPHAN_S3_BATCH",
+                "memo": None,
+            },
+        }
+        s3.put_object(
+            Bucket=m["audit"]["bucket_name"],
+            Key=f"{m['audit']['prefix']}batch-99999901-99999901-orphan.ndjson",
+            Body=(json.dumps(orphan_s3_env) + "\n").encode("utf-8"),
+            ContentType="application/x-ndjson",
         )
 
         try:
@@ -811,29 +932,45 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
 
         with pg_connect(m, ctx.config) as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE settlement_id = %s AND published_at IS NULL", (sid,))
+                cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE published_at IS NULL")
                 unpub = cur.fetchone()[0]
                 assert unpub == 0, (
                     f"deploy.sh exited before draining unpublished outbox rows ({unpub} rows still have published_at IS NULL)"
                 )
-                cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE settlement_id = %s AND archived_at IS NULL", (sid,))
+                cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE archived_at IS NULL")
                 unarch = cur.fetchone()[0]
                 assert unarch == 0, (
                     f"deploy.sh exited before archiving outbox rows ({unarch} rows still have archived_at IS NULL)"
                 )
+                cur.execute("SELECT event_id::text, payload FROM clearledger.outbox")
+                pg_outbox_map = {
+                    ev_id: (json.loads(pay) if isinstance(pay, str) else pay)
+                    for ev_id, pay in cur.fetchall()
+                }
 
-        # Verify S3 audit archive objects genuinely contain all 3 recovered events for sid
-        archived_versions_for_sid: set[int] = set()
+        # Verify 1-to-1 S3 audit archive integrity against clearledger.outbox
+        s3_records_by_eid: dict[str, dict] = {}
+        total_s3_lines = 0
         for obj in s3.list_objects_v2(Bucket=m["audit"]["bucket_name"], Prefix=m["audit"]["prefix"]).get("Contents", []):
             body = s3.get_object(Bucket=m["audit"]["bucket_name"], Key=obj["Key"])["Body"].read().decode()
             for line in body.splitlines():
                 if line.strip():
+                    total_s3_lines += 1
                     rec = json.loads(line)
-                    if rec.get("aggregateId") == sid:
-                        archived_versions_for_sid.add(int(rec.get("aggregateVersion", 0)))
-        assert archived_versions_for_sid == {1, 2, 3}, (
-            f"Expected deploy.sh to archive all 3 recovered outbox events for {sid} to S3 under {m['audit']['prefix']}, "
-            f"found versions {sorted(archived_versions_for_sid)}"
+                    ev_id = str(rec.get("eventId") or "")
+                    assert ev_id in pg_outbox_map, (
+                        f"Expected deploy.sh to purge orphan S3 audit record {ev_id} (aggregateId={rec.get('aggregateId')}) under {m['audit']['prefix']}"
+                    )
+                    assert ev_id not in s3_records_by_eid, (
+                        f"Duplicate S3 audit record found for eventId {ev_id} under {m['audit']['prefix']}"
+                    )
+                    assert rec == pg_outbox_map[ev_id], (
+                        f"Expected deploy.sh to heal tampered S3 audit record for eventId {ev_id}: got {rec.get('data')}, expected {pg_outbox_map[ev_id].get('data')}"
+                    )
+                    s3_records_by_eid[ev_id] = rec
+        assert total_s3_lines == len(pg_outbox_map) and set(s3_records_by_eid.keys()) == set(pg_outbox_map.keys()), (
+            f"Expected S3 audit archive under {m['audit']['prefix']} to match clearledger.outbox 1-to-1 "
+            f"(pg={len(pg_outbox_map)}, s3={total_s3_lines})"
         )
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
@@ -877,6 +1014,33 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 f"expected clearingStage {expected_v2_stage}, got {ledger_events[1]}"
             )
 
+            r_same_ver = client.get(f"/v1/settlements/{same_ver_sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
+            assert r_same_ver.status_code == 200
+            sv_body = r_same_ver.json()
+            assert sv_body.get("status") == same_ver_meta["last_status"] and sv_body.get("clearingStage") == same_ver_meta["last_stage"], (
+                f"deploy.sh did not reconcile same-version corrupted STATE/cache for {same_ver_sid}: got {sv_body}"
+            )
+            r_sv_ledger = client.get(f"/v1/settlements/{same_ver_sid}/ledger", headers={"Authorization": f"Bearer {tokens['read']}"})
+            assert r_sv_ledger.status_code == 200
+            sv_events = r_sv_ledger.json().get("events", [])
+            expected_v1_stage = f"INITIATED@{same_ver_meta['spec']['debitParty']}"
+            assert sv_events and sv_events[0].get("clearingStage") == expected_v1_stage, (
+                f"deploy.sh did not reconcile same-version mutated EVENT#00000001 for {same_ver_sid}: got {sv_events[0] if sv_events else None}"
+            )
+
+            gsi_q = ddb.query(
+                TableName=m["projections"]["table_name"],
+                IndexName=m["projections"]["gsi_name"],
+                KeyConditionExpression="GSI1PK = :gpk AND GSI1SK = :gsk",
+                ExpressionAttributeValues={
+                    ":gpk": {"S": f"ACCOUNT#{same_ver_meta['spec']['accountId']}"},
+                    ":gsk": {"S": f"SETTLEMENT#{same_ver_sid}"},
+                },
+            ).get("Items", [])
+            assert len(gsi_q) == 1, (
+                f"Expected deploy.sh to heal AccountIndex GSI attributes (GSI1PK/GSI1SK) for {same_ver_sid}, found {gsi_q}"
+            )
+
             r_orphan_state = client.get(f"/v1/settlements/{orphan_sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
             assert r_orphan_state.status_code == 404, (
                 f"Expected deploy.sh to purge orphan DynamoDB/Valkey settlement {orphan_sid} absent from PostgreSQL, got {r_orphan_state.status_code}"
@@ -895,7 +1059,7 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             "last_status": spec["entries"][-1]["status"],
             "last_stage": spec["entries"][-1]["clearingStage"],
         }
-        return "Accepted writes during SQS queue outage and verified full deploy.sh outbox/projection/cache/archive reconciliation"
+        return "Accepted writes during SQS queue outage and verified full deploy.sh outbox/projection/GSI/cache/S3 1-to-1 reconciliation"
 
     _run_block(ctx, "recovery.outbox_recovery", _check, cap_on_fail=("accepted_write_loss", 49))
 
