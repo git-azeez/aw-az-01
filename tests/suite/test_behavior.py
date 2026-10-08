@@ -245,7 +245,46 @@ def test_projection_and_valkey_cache(ctx: VerifierContext) -> None:
         settlement_id, meta = next(iter(ctx.committed_settlements.items()))
         rclient = valkey_connect(ctx.manifest, ctx.config)
         cache_key = f"clearledger:settlement:{settlement_id}"
-        settlement_schema = json.loads((CONTRACTS_DIR / "schemas" / "settlement.schema.json").read_text())
+        settlement_schema = {
+            "type": "object",
+            "required": [
+                "settlementId",
+                "accountId",
+                "reference",
+                "debitParty",
+                "creditParty",
+                "status",
+                "clearingStage",
+                "version",
+                "entryCount",
+                "updatedAt",
+            ],
+            "properties": {
+                "settlementId": {"type": "string", "format": "uuid"},
+                "accountId": {"type": "string"},
+                "reference": {"type": "string"},
+                "debitParty": {"type": "string"},
+                "creditParty": {"type": "string"},
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "INITIATED",
+                        "VALIDATED",
+                        "RESERVED",
+                        "CLEARED",
+                        "SETTLED",
+                        "RECONCILED",
+                        "DISPUTED",
+                    ],
+                },
+                "clearingStage": {"type": "string"},
+                "lastEntryId": {"type": ["string", "null"], "format": "uuid"},
+                "lastMemo": {"type": ["string", "null"]},
+                "version": {"type": "integer", "minimum": 1},
+                "entryCount": {"type": "integer", "minimum": 0},
+                "updatedAt": {"type": "string", "format": "date-time"},
+            },
+        }
         rclient.delete(cache_key)
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
@@ -255,7 +294,9 @@ def test_projection_and_valkey_cache(ctx: VerifierContext) -> None:
             assert cached_raw is not None
             ttl_val = int(rclient.ttl(cache_key))
             assert 0 < ttl_val <= 90, f"Expected Valkey cache TTL in (0, 90], got {ttl_val}"
-            jsonschema.validate(instance=json.loads(cached_raw), schema=settlement_schema)
+            cached_obj = json.loads(cached_raw)
+            jsonschema.validate(instance=cached_obj, schema=settlement_schema)
+            assert cached_obj == r1.json(), "Cached Valkey projection payload must match GET /v1/settlements/{id} response"
 
             r2 = client.get(f"/v1/settlements/{settlement_id}", headers={"Authorization": f"Bearer {tokens['read']}"})
             assert r2.status_code == 200 and r2.headers.get("X-ClearLedger-Source") == "cache"
