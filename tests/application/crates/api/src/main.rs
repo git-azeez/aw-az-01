@@ -10,7 +10,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use chrono::Utc;
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use clearledger::{
     build_aws_config, connect_postgres, fetch_ledger_from_dynamodb,
     fetch_projection_from_dynamodb, init_runtime_env, normalize_http_endpoint_url,
@@ -548,7 +548,8 @@ async fn create_settlement(
         ));
     }
 
-    let now = Utc::now();
+    let now_raw = Utc::now();
+    let now = DateTime::from_timestamp_micros(now_raw.timestamp_micros()).unwrap_or(now_raw);
     let event_id = Uuid::new_v4();
     let version = 1;
     let initial_stage = format!("INITIATED@{}", req.debit_party.trim());
@@ -769,7 +770,7 @@ async fn append_entry(
     }
 
     let row = sqlx::query(
-        "SELECT account_id, reference, debit_party, credit_party, version, entry_count FROM clearledger.settlements WHERE settlement_id = $1 FOR UPDATE",
+        "SELECT account_id, reference, debit_party, credit_party, version, entry_count, updated_at FROM clearledger.settlements WHERE settlement_id = $1 FOR UPDATE",
     )
     .bind(settlement_id)
     .fetch_optional(&mut *tx)
@@ -801,6 +802,15 @@ async fn append_entry(
     let debit_party: String = row.get("debit_party");
     let credit_party: String = row.get("credit_party");
     let entry_count: i32 = row.get("entry_count");
+    let current_updated_at: DateTime<Utc> = row.get("updated_at");
+
+    let req_ts = DateTime::from_timestamp_micros(req.occurred_at.timestamp_micros()).unwrap_or(req.occurred_at);
+    let prev_ts = DateTime::from_timestamp_micros(current_updated_at.timestamp_micros()).unwrap_or(current_updated_at);
+    let occurred_at = if req_ts <= prev_ts {
+        prev_ts + ChronoDuration::microseconds(1)
+    } else {
+        req_ts
+    };
 
     let next_version = current_version + 1;
     let next_entry_count = entry_count + 1;
@@ -813,7 +823,7 @@ async fn append_entry(
         aggregate_type: "settlement".to_string(),
         aggregate_id: settlement_id,
         aggregate_version: next_version,
-        occurred_at: req.occurred_at,
+        occurred_at,
         correlation_id: correlation_id.clone(),
         idempotency_key: idempotency_key.clone(),
         data: DomainEventData {
@@ -857,7 +867,7 @@ async fn append_entry(
     .bind(&req.memo)
     .bind(next_version)
     .bind(next_entry_count)
-    .bind(req.occurred_at)
+    .bind(occurred_at)
     .execute(&mut *tx)
     .await
     .map_err(map_write_db_error)?;
@@ -876,7 +886,7 @@ async fn append_entry(
     .bind("LedgerEntryRecorded")
     .bind(&correlation_id)
     .bind(&idempotency_key)
-    .bind(req.occurred_at)
+    .bind(occurred_at)
     .bind(&envelope_json)
     .execute(&mut *tx)
     .await

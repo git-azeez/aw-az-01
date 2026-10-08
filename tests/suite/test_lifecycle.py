@@ -84,7 +84,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 cur.execute("SELECT event_id::text, seq FROM clearledger.outbox")
                 eid_to_seq = {r[0]: int(r[1]) for r in cur.fetchall()}
                 cur.execute(
-                    "SELECT envelope FROM clearledger.events WHERE settlement_id = %s AND version = 1",
+                    "SELECT payload FROM clearledger.events WHERE settlement_id = %s AND aggregate_version = 1",
                     (same_ver_sid,),
                 )
                 sv_v1_row = cur.fetchone()

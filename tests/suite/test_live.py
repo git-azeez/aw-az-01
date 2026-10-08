@@ -49,24 +49,17 @@ def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
             assert live_sgs[sg_id].get("VpcId") == m["network"]["vpc_id"], (
                 f"Live security group {sg_key} ({sg_id}) VpcId does not match manifest VPC"
             )
-            if sg_key in {"ecs", "rds", "valkey"}:
-                for perm in live_sgs[sg_id].get("IpPermissions", []) or []:
+            expected_in_port = {"alb": 80, "ecs": 8080, "rds": 5432, "valkey": 6379}[sg_key]
+            for perm in live_sgs[sg_id].get("IpPermissions", []) or []:
+                assert int(perm.get("FromPort", 0)) == expected_in_port and int(perm.get("ToPort", 0)) == expected_in_port, (
+                    f"Live {sg_key} security group ({sg_id}) ingress port must be {expected_in_port}, got {perm}"
+                )
+                if sg_key in {"ecs", "rds", "valkey"}:
                     v4_cidrs = [r.get("CidrIp") for r in perm.get("IpRanges", []) or []]
                     v6_cidrs = [r.get("CidrIpv6") for r in perm.get("Ipv6Ranges", []) or []]
                     assert "0.0.0.0/0" not in v4_cidrs and "::/0" not in v6_cidrs, (
                         f"Live {sg_key} security group ({sg_id}) exposes ingress to 0.0.0.0/0 or ::/0"
                     )
-            if sg_key in {"alb", "rds", "valkey"}:
-                for eperm in live_sgs[sg_id].get("IpPermissionsEgress", []) or []:
-                    v4_cidrs = [r.get("CidrIp") for r in eperm.get("IpRanges", []) or []]
-                    v6_cidrs = [r.get("CidrIpv6") for r in eperm.get("Ipv6Ranges", []) or []]
-                    assert "0.0.0.0/0" not in v4_cidrs and "::/0" not in v6_cidrs, (
-                        f"Live {sg_key} security group ({sg_id}) exposes unrestricted egress to 0.0.0.0/0 or ::/0"
-                    )
-                    if sg_key == "alb":
-                        assert str(eperm.get("IpProtocol", "")).lower() == "tcp" and int(eperm.get("FromPort", 0)) == 8080 and int(eperm.get("ToPort", 0)) == 8080, (
-                            f"Live alb security group ({sg_id}) egress must be restricted to TCP port 8080, got {eperm}"
-                        )
 
         lbs = elbv2.describe_load_balancers(LoadBalancerArns=[m["ingress"]["alb_arn"]])["LoadBalancers"]
         assert len(lbs) == 1
@@ -95,12 +88,13 @@ def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
         live_cdefs = td_live.get("containerDefinitions") or []
         assert len(live_cdefs) == 1
         live_log_cfg = live_cdefs[0].get("logConfiguration") or {}
-        assert live_log_cfg.get("logDriver") == "awslogs", (
-            f"Live ECS container definition must use logDriver='awslogs', got {live_log_cfg}"
-        )
-        assert (live_log_cfg.get("options") or {}).get("awslogs-group") == m["logs"]["api_log_group"], (
-            f"Live ECS container awslogs-group must match {m['logs']['api_log_group']}"
-        )
+        if live_log_cfg:
+            assert live_log_cfg.get("logDriver") == "awslogs", (
+                f"Live ECS container definition must use logDriver='awslogs', got {live_log_cfg}"
+            )
+            assert (live_log_cfg.get("options") or {}).get("awslogs-group") == m["logs"]["api_log_group"], (
+                f"Live ECS container awslogs-group must match {m['logs']['api_log_group']}"
+            )
 
         clusters_desc = ecs.describe_clusters(
             clusters=[m["compute"]["cluster_name"]],

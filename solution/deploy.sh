@@ -440,7 +440,7 @@ DECLARE
     v_parent_ver integer;
     v_dup_entry integer;
 BEGIN
-    IF (NEW.payload->>'occurredAt')::timestamptz <> NEW.occurred_at THEN
+    IF ABS(EXTRACT(EPOCH FROM ((NEW.payload->>'occurredAt')::timestamptz - NEW.occurred_at))) > 0.001 THEN
         RAISE EXCEPTION 'Event payload occurredAt does not match occurred_at column'
             USING ERRCODE = '23514';
     END IF;
