@@ -79,18 +79,34 @@ RUN curl -fsSL https://github.com/opentofu/opentofu/releases/download/v1.8.4/tof
     chmod +x /usr/local/bin/tofu && \
     rm -f /tmp/tofu.zip
 
-RUN python3 -m venv /opt/venv && \
+RUN python3 -m venv --system-site-packages /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir \
       awscli==1.38.1 \
       boto3==1.37.1 \
       httpx==0.28.1 \
       jsonschema==4.23.0 \
       "psycopg[binary]==3.2.6" \
+      psycopg2-binary==2.9.10 \
       pytest==8.3.5 \
       pyyaml==6.0.2 \
       redis==5.2.1 \
       "litellm<1.92" \
-      mini-swe-agent
+      mini-swe-agent && \
+    ln -sf /opt/venv/bin/aws /usr/local/bin/aws && \
+    sed -i 's|PATH="/usr/local/bin:|PATH="/opt/venv/bin:/usr/local/bin:|g; s|PATH="/usr/local/sbin:|PATH="/opt/venv/bin:/usr/local/sbin:|g' /etc/profile && \
+    printf '%s\n' \
+      'export PATH="/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"' \
+      'export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"' \
+      'export AWS_REGION="${AWS_REGION:-us-east-1}"' \
+      'export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-test}"' \
+      'export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-test}"' \
+      'export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-http://aws:4566}"' \
+      'export AWS_EC2_METADATA_DISABLED="${AWS_EC2_METADATA_DISABLED:-true}"' \
+      'export TF_IN_AUTOMATION="${TF_IN_AUTOMATION:-1}"' \
+      'export TF_CLI_CONFIG_FILE="${TF_CLI_CONFIG_FILE:-/etc/terraform.tfrc}"' \
+      >/etc/profile.d/00-venv.sh && \
+    chmod +x /etc/profile.d/00-venv.sh && \
+    printf '\n. /etc/profile.d/00-venv.sh\n' >>/etc/bash.bashrc
 
 RUN terraform -version && tofu version && aws --version && psql --version
 
@@ -177,6 +193,7 @@ EOF
 
 RUN cat <<'EOF' >/opt/venv/bin/opencode && chmod +x /opt/venv/bin/opencode
 #!/usr/bin/env bash
+. /etc/profile.d/00-venv.sh
 nc -z -w 1 172.20.0.1 18080 >/dev/null 2>&1 || unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
 [[ -n "${SSL_CERT_FILE:-}" && -f "${SSL_CERT_FILE:-}" && -s "${SSL_CERT_FILE:-}" ]] || { export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt; unset NODE_EXTRA_CA_CERTS; }
 if [[ "${1:-}" == "--version" || "${1:-}" == "-v" || "${1:-}" == "version" ]]; then
@@ -252,11 +269,16 @@ EOF
 RUN userdel -r node 2>/dev/null || true && \
     useradd -m -u 1000 -s /bin/bash agent && \
     useradd -m -u 1001 -s /bin/bash verifier && \
+    printf '\n. /etc/profile.d/00-venv.sh\n' >>/home/agent/.bashrc && \
+    printf '\n. /etc/profile.d/00-venv.sh\n' >>/home/agent/.profile && \
+    printf '\n. /etc/profile.d/00-venv.sh\n' >>/home/verifier/.bashrc && \
+    printf '\n. /etc/profile.d/00-venv.sh\n' >>/home/verifier/.profile && \
     mkdir -p /home/agent/.nvm /root/.nvm && \
     printf '%s\n' 'nvm() { return 0; }' 'export -f nvm' >/home/agent/.nvm/nvm.sh && \
     printf '%s\n' 'nvm() { return 0; }' 'export -f nvm' >/root/.nvm/nvm.sh && \
     chmod +x /home/agent/.nvm/nvm.sh /root/.nvm/nvm.sh && \
-    chown -R agent:agent /home/agent
+    chown -R agent:agent /home/agent && \
+    chown -R verifier:verifier /home/verifier
 
 COPY --from=rust-builder /out /opt/clearledger/bin
 COPY workspace/contracts /opt/clearledger/contracts

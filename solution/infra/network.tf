@@ -179,12 +179,7 @@ resource "aws_security_group" "rds" {
     cidr_blocks     = [aws_vpc.main.cidr_block]
   }
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = [aws_vpc.main.cidr_block]
-  }
+  egress = []
 
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-rds-sg"
@@ -209,12 +204,7 @@ resource "aws_security_group" "valkey" {
     cidr_blocks     = [aws_vpc.main.cidr_block]
   }
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = [aws_vpc.main.cidr_block]
-  }
+  egress = []
 
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-valkey-sg"

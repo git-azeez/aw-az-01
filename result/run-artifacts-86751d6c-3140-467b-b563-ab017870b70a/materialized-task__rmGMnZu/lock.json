@@ -1,0 +1,80 @@
+{
+    "schema_version": 2,
+    "task": {
+        "name": "materialized-task",
+        "type": "local",
+        "digest": "sha256:c1d3e217fc32bc96ca0730373deb6c234bcce16a10827688d2c78d71d8b63cae",
+        "path": "/tmp/m1-run-86751d6c-3140-467b-b563-ab017870b70a-xch_ve6y/package/materialized-task"
+    },
+    "install_only": false,
+    "timeout_multiplier": 1.0,
+    "agent": {
+        "name": "opencode",
+        "model_name": "openai/gpt-5.6-m1alias-gpt-6.1-sol",
+        "skills": [],
+        "override_timeout_sec": 21600.0,
+        "override_setup_timeout_sec": 1800.0,
+        "resume_trajectory": false,
+        "extra_allowed_hosts": [
+            "llm-broker-prod-1062225351540.us-central1.run.app"
+        ],
+        "kwargs": {
+            "opencode_config": {
+                "permission": {
+                    "external_directory": "allow",
+                    "websearch": "allow"
+                },
+                "agent": {
+                    "title": {
+                        "disable": true
+                    }
+                },
+                "provider": {
+                    "openai": {
+                        "options": {
+                            "baseURL": "http://127.0.0.1:18183/v1",
+                            "headerTimeout": 600000
+                        },
+                        "models": {
+                            "gpt-5.6-m1alias-gpt-6.1-sol": {
+                                "limit": {
+                                    "context": 1050000,
+                                    "input": 922000,
+                                    "output": 128000
+                                },
+                                "reasoning": true,
+                                "tool_call": true
+                            }
+                        }
+                    }
+                }
+            },
+            "version": "1.18.31"
+        },
+        "env": {
+            "OPENCODE_ENABLE_EXA": "1",
+            "OPENCODE_WEBSEARCH_PROVIDER": "parallel"
+        },
+        "mcp_servers": []
+    },
+    "bridge_inputs": {},
+    "skills": [],
+    "environment": {
+        "type": "daytona",
+        "force_build": false,
+        "delete": true,
+        "stream": false,
+        "cpu_enforcement_policy": "auto",
+        "memory_enforcement_policy": "auto",
+        "extra_docker_compose": [],
+        "kwargs": {
+            "auto_stop_interval_mins": 60
+        },
+        "extra_allowed_hosts": []
+    },
+    "verifier": {
+        "override_timeout_sec": 7200.0,
+        "disable": false,
+        "environment_mode": "separate"
+    }
+}

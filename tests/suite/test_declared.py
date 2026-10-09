@@ -242,7 +242,12 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
         for egress_restricted_key in ("alb", "rds", "valkey"):
             sg_id = sg_ids[egress_restricted_key]
             sg = sgs[sg_id]
-            for erule in sg.get("egress", []) or []:
+            declared_egress = sg.get("egress", []) or []
+            if egress_restricted_key in {"rds", "valkey"}:
+                assert not declared_egress, (
+                    f"{egress_restricted_key} security group must have no outbound egress rules (egress = []), got {declared_egress}"
+                )
+            for erule in declared_egress:
                 cidrs = erule.get("cidr_blocks") or []
                 v6_cidrs = erule.get("ipv6_cidr_blocks") or []
                 assert "0.0.0.0/0" not in cidrs and "::/0" not in v6_cidrs, (
@@ -254,6 +259,9 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
                     )
             for srule in sg_rules:
                 if srule.get("security_group_id") == sg_id and srule.get("type") == "egress":
+                    assert egress_restricted_key not in {"rds", "valkey"}, (
+                        f"{egress_restricted_key} security group must not have outbound egress rules, got {srule}"
+                    )
                     cidrs = srule.get("cidr_blocks") or []
                     v6_cidrs = srule.get("ipv6_cidr_blocks") or []
                     assert "0.0.0.0/0" not in cidrs and "::/0" not in v6_cidrs, (
@@ -265,6 +273,9 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
                         )
             for verule in vpc_egress_rules:
                 if verule.get("security_group_id") == sg_id:
+                    assert egress_restricted_key not in {"rds", "valkey"}, (
+                        f"{egress_restricted_key} VPC security group must not have outbound egress rules, got {verule}"
+                    )
                     assert verule.get("cidr_ipv4") != "0.0.0.0/0" and verule.get("cidr_ipv6") != "::/0", (
                         f"{egress_restricted_key} VPC security group egress rule must not allow 0.0.0.0/0 or ::/0"
                     )
