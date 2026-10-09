@@ -64,6 +64,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM clearledger.settlements")
                 before_count = cur.fetchone()[0]
+                cur.execute("SET LOCAL session_replication_role = 'replica'")
                 cur.execute(
                     """
                     UPDATE clearledger.outbox
@@ -72,6 +73,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                     """,
                     (sample_sid, sample_meta["expected_version"]),
                 )
+                cur.execute("SET LOCAL session_replication_role = 'origin'")
             conn.commit()
 
         # Corrupt S3 audit archive for s3_loss_sid in-place (while archived_at remains NOT NULL in PostgreSQL),

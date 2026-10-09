@@ -57,7 +57,7 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             for idx in range(settlement_count):
-                step_override = 4 if idx == 0 else (3 if idx == 1 else None)
+                step_override = 4 if idx == 0 else (3 if idx == 1 else (5 if idx == 2 else None))
                 spec = build_random_settlement_spec(ctx.rng, step_count=step_override)
                 sid = spec["settlementId"]
                 corr_id = f"corr-wf-{idx}-{uuid.uuid4().hex[:8]}"
@@ -146,6 +146,26 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
                 f"Expected 400 Bad Request when debitParty == creditParty, got {bad_party_resp.status_code}: {bad_party_resp.text}"
             )
 
+            trimmed_party_sid = str(uuid.uuid4())
+            bad_trimmed_party_resp = client.post(
+                "/v1/settlements",
+                headers={
+                    "Authorization": f"Bearer {tokens['write']}",
+                    "Idempotency-Key": f"idem-trimmed-party-{trimmed_party_sid}",
+                },
+                json={
+                    "settlementId": trimmed_party_sid,
+                    "accountId": "ACCT-DOM-CHECK",
+                    "reference": "REF-DOM-CHECK",
+                    "debitParty": "  BANK-IDENTICAL  ",
+                    "creditParty": "BANK-IDENTICAL",
+                    "expectedVersion": 0,
+                },
+            )
+            assert bad_trimmed_party_resp.status_code == 400, (
+                f"Expected 400 Bad Request when trimmed debitParty == creditParty, got {bad_trimmed_party_resp.status_code}: {bad_trimmed_party_resp.text}"
+            )
+
             settled_sid, settled_meta = next(
                 (k, v)
                 for k, v in ctx.committed_settlements.items()
@@ -177,6 +197,36 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
                 f"got {regress_resp.status_code}: {regress_resp.text}"
             )
 
+            reconciled_sid, reconciled_meta = next(
+                (k, v)
+                for k, v in ctx.committed_settlements.items()
+                if v["last_status"] == "RECONCILED"
+            )
+            reconciled_dispute_eid = str(uuid.uuid4())
+            reconciled_dispute_resp = client.post(
+                f"/v1/settlements/{reconciled_sid}/entries",
+                headers={
+                    "Authorization": f"Bearer {tokens['write']}",
+                    "Idempotency-Key": f"idem-rec-dispute-{reconciled_dispute_eid}",
+                },
+                json={
+                    "entryId": reconciled_dispute_eid,
+                    "status": "DISPUTED",
+                    "clearingStage": "ILLEGAL_RECONCILED_TO_DISPUTED",
+                    "memo": "Attempt illegal transition from terminal RECONCILED to DISPUTED",
+                    "occurredAt": datetime.now(timezone.utc).isoformat(),
+                    "expectedVersion": reconciled_meta["expected_version"],
+                },
+            )
+            if reconciled_dispute_resp.status_code in {200, 201, 202}:
+                reconciled_meta["expected_version"] += 1
+                reconciled_meta["last_status"] = "DISPUTED"
+                reconciled_meta["last_stage"] = "ILLEGAL_RECONCILED_TO_DISPUTED"
+            assert reconciled_dispute_resp.status_code == 400, (
+                f"Expected 400 Bad Request when transitioning terminal RECONCILED settlement to DISPUTED, "
+                f"got {reconciled_dispute_resp.status_code}: {reconciled_dispute_resp.text}"
+            )
+
             cleared_sid, cleared_meta = next(
                 (k, v)
                 for k, v in ctx.committed_settlements.items()
@@ -205,6 +255,31 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
             assert mid_regress_resp.status_code == 400, (
                 f"Expected 400 Bad Request when regressing CLEARED settlement back to RESERVED, "
                 f"got {mid_regress_resp.status_code}: {mid_regress_resp.text}"
+            )
+
+            blank_memo_eid = str(uuid.uuid4())
+            blank_memo_resp = client.post(
+                f"/v1/settlements/{cleared_sid}/entries",
+                headers={
+                    "Authorization": f"Bearer {tokens['write']}",
+                    "Idempotency-Key": f"idem-blank-memo-{blank_memo_eid}",
+                },
+                json={
+                    "entryId": blank_memo_eid,
+                    "status": "SETTLED",
+                    "clearingStage": "ILLEGAL_BLANK_MEMO",
+                    "memo": "     ",
+                    "occurredAt": datetime.now(timezone.utc).isoformat(),
+                    "expectedVersion": cleared_meta["expected_version"],
+                },
+            )
+            if blank_memo_resp.status_code in {200, 201, 202}:
+                cleared_meta["expected_version"] += 1
+                cleared_meta["last_status"] = "SETTLED"
+                cleared_meta["last_stage"] = "ILLEGAL_BLANK_MEMO"
+            assert blank_memo_resp.status_code == 400, (
+                f"Expected 400 Bad Request when submitting whitespace-only memo, "
+                f"got {blank_memo_resp.status_code}: {blank_memo_resp.text}"
             )
 
             reused_entry_id = cleared_meta["spec"]["entries"][0]["entryId"]
