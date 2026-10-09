@@ -197,6 +197,46 @@ resource "aws_iam_role_policy" "ecs_execution" {
           aws_cloudwatch_log_group.api.arn,
           "${aws_cloudwatch_log_group.api.arn}:*"
         ]
+      },
+      {
+        Sid    = "DenyDataAndCrossWorkloadAccess"
+        Effect = "Deny"
+        Action = [
+          "sqs:SendMessage",
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = [
+          aws_sqs_queue.events.arn,
+          aws_sqs_queue.dlq.arn,
+          aws_dynamodb_table.projections.arn,
+          "${aws_dynamodb_table.projections.arn}/index/AccountIndex",
+          aws_s3_bucket.audit.arn,
+          "${aws_s3_bucket.audit.arn}/*",
+          aws_kms_key.database.arn,
+          aws_kms_key.messaging.arn,
+          aws_kms_key.projection.arn,
+          aws_kms_key.audit.arn,
+          aws_cloudwatch_log_group.projector.arn,
+          "${aws_cloudwatch_log_group.projector.arn}:*",
+          aws_cloudwatch_log_group.relay.arn,
+          "${aws_cloudwatch_log_group.relay.arn}:*",
+          aws_cloudwatch_log_group.archiver.arn,
+          "${aws_cloudwatch_log_group.archiver.arn}:*"
+        ]
       }
     ]
   })
@@ -261,6 +301,56 @@ resource "aws_iam_role_policy" "ecs_task" {
         Resource = [
           aws_cloudwatch_log_group.api.arn,
           "${aws_cloudwatch_log_group.api.arn}:*"
+        ]
+      },
+      {
+        Sid    = "DenyQueueConsumeAndDlq"
+        Effect = "Deny"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage"
+        ]
+        Resource = [
+          aws_sqs_queue.events.arn,
+          aws_sqs_queue.dlq.arn
+        ]
+      },
+      {
+        Sid      = "DenyDlqPublish"
+        Effect   = "Deny"
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.dlq.arn
+      },
+      {
+        Sid    = "DenyProjectionMutationsAndS3AndOtherKmsLogs"
+        Effect = "Deny"
+        Action = [
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:DeleteTable",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = [
+          aws_dynamodb_table.projections.arn,
+          "${aws_dynamodb_table.projections.arn}/index/AccountIndex",
+          aws_s3_bucket.audit.arn,
+          "${aws_s3_bucket.audit.arn}/*",
+          aws_kms_key.database.arn,
+          aws_kms_key.audit.arn,
+          aws_cloudwatch_log_group.projector.arn,
+          "${aws_cloudwatch_log_group.projector.arn}:*",
+          aws_cloudwatch_log_group.relay.arn,
+          "${aws_cloudwatch_log_group.relay.arn}:*",
+          aws_cloudwatch_log_group.archiver.arn,
+          "${aws_cloudwatch_log_group.archiver.arn}:*"
         ]
       }
     ]
@@ -335,6 +425,51 @@ resource "aws_iam_role_policy" "projector" {
           aws_cloudwatch_log_group.projector.arn,
           "${aws_cloudwatch_log_group.projector.arn}:*"
         ]
+      },
+      {
+        Sid      = "DenyMainQueuePublish"
+        Effect   = "Deny"
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.events.arn
+      },
+      {
+        Sid    = "DenyDlqConsume"
+        Effect = "Deny"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage"
+        ]
+        Resource = aws_sqs_queue.dlq.arn
+      },
+      {
+        Sid    = "DenyProjectorDeletesS3AndOtherKmsLogs"
+        Effect = "Deny"
+        Action = [
+          "dynamodb:DeleteItem",
+          "dynamodb:DeleteTable",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = [
+          aws_dynamodb_table.projections.arn,
+          "${aws_dynamodb_table.projections.arn}/index/AccountIndex",
+          aws_s3_bucket.audit.arn,
+          "${aws_s3_bucket.audit.arn}/*",
+          aws_kms_key.database.arn,
+          aws_kms_key.audit.arn,
+          aws_cloudwatch_log_group.api.arn,
+          "${aws_cloudwatch_log_group.api.arn}:*",
+          aws_cloudwatch_log_group.relay.arn,
+          "${aws_cloudwatch_log_group.relay.arn}:*",
+          aws_cloudwatch_log_group.archiver.arn,
+          "${aws_cloudwatch_log_group.archiver.arn}:*"
+        ]
       }
     ]
   })
@@ -386,6 +521,57 @@ resource "aws_iam_role_policy" "relay" {
         Resource = [
           aws_cloudwatch_log_group.relay.arn,
           "${aws_cloudwatch_log_group.relay.arn}:*"
+        ]
+      },
+      {
+        Sid    = "DenyRelayQueueConsume"
+        Effect = "Deny"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage"
+        ]
+        Resource = [
+          aws_sqs_queue.events.arn,
+          aws_sqs_queue.dlq.arn
+        ]
+      },
+      {
+        Sid      = "DenyRelayDlqPublish"
+        Effect   = "Deny"
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.dlq.arn
+      },
+      {
+        Sid    = "DenyRelayDynamoS3AndOtherKmsLogs"
+        Effect = "Deny"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = [
+          aws_dynamodb_table.projections.arn,
+          "${aws_dynamodb_table.projections.arn}/index/AccountIndex",
+          aws_s3_bucket.audit.arn,
+          "${aws_s3_bucket.audit.arn}/*",
+          aws_kms_key.projection.arn,
+          aws_kms_key.audit.arn,
+          aws_cloudwatch_log_group.api.arn,
+          "${aws_cloudwatch_log_group.api.arn}:*",
+          aws_cloudwatch_log_group.projector.arn,
+          "${aws_cloudwatch_log_group.projector.arn}:*",
+          aws_cloudwatch_log_group.archiver.arn,
+          "${aws_cloudwatch_log_group.archiver.arn}:*"
         ]
       }
     ]
@@ -448,6 +634,42 @@ resource "aws_iam_role_policy" "archiver" {
           aws_cloudwatch_log_group.archiver.arn,
           "${aws_cloudwatch_log_group.archiver.arn}:*"
         ]
+      },
+      {
+        Sid    = "DenyArchiverObjectDeletesSqsDynamoAndOtherKmsLogs"
+        Effect = "Deny"
+        Action = [
+          "s3:DeleteObject",
+          "s3:DeleteObjectVersion",
+          "sqs:SendMessage",
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = [
+          aws_s3_bucket.audit.arn,
+          "${aws_s3_bucket.audit.arn}/*",
+          aws_sqs_queue.events.arn,
+          aws_sqs_queue.dlq.arn,
+          aws_dynamodb_table.projections.arn,
+          "${aws_dynamodb_table.projections.arn}/index/AccountIndex",
+          aws_kms_key.messaging.arn,
+          aws_kms_key.projection.arn,
+          aws_cloudwatch_log_group.api.arn,
+          "${aws_cloudwatch_log_group.api.arn}:*",
+          aws_cloudwatch_log_group.projector.arn,
+          "${aws_cloudwatch_log_group.projector.arn}:*",
+          aws_cloudwatch_log_group.relay.arn,
+          "${aws_cloudwatch_log_group.relay.arn}:*"
+        ]
       }
     ]
   })
@@ -472,6 +694,50 @@ resource "aws_iam_role_policy" "scheduler" {
         Resource = [
           aws_lambda_function.outbox_relay.arn,
           aws_lambda_function.audit_archiver.arn
+        ]
+      },
+      {
+        Sid    = "DenySchedulerProjectorInvokeAndDataServices"
+        Effect = "Deny"
+        Action = [
+          "lambda:InvokeFunction",
+          "sqs:SendMessage",
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = [
+          aws_lambda_function.projector.arn,
+          aws_sqs_queue.events.arn,
+          aws_sqs_queue.dlq.arn,
+          aws_dynamodb_table.projections.arn,
+          "${aws_dynamodb_table.projections.arn}/index/AccountIndex",
+          aws_s3_bucket.audit.arn,
+          "${aws_s3_bucket.audit.arn}/*",
+          aws_kms_key.database.arn,
+          aws_kms_key.messaging.arn,
+          aws_kms_key.projection.arn,
+          aws_kms_key.audit.arn,
+          aws_cloudwatch_log_group.api.arn,
+          "${aws_cloudwatch_log_group.api.arn}:*",
+          aws_cloudwatch_log_group.projector.arn,
+          "${aws_cloudwatch_log_group.projector.arn}:*",
+          aws_cloudwatch_log_group.relay.arn,
+          "${aws_cloudwatch_log_group.relay.arn}:*",
+          aws_cloudwatch_log_group.archiver.arn,
+          "${aws_cloudwatch_log_group.archiver.arn}:*"
         ]
       }
     ]

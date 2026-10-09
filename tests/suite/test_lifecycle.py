@@ -49,6 +49,8 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         logs = boto_client("logs", ctx.config)
         ddb = boto_client("dynamodb", ctx.config)
         s3 = boto_client("s3", ctx.config)
+        iam = boto_client("iam", ctx.config)
+        ec2 = boto_client("ec2", ctx.config)
         rclient = valkey_connect(before_manifest, ctx.config)
 
         committed_items = list(ctx.committed_settlements.items())
@@ -191,7 +193,8 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             ContentType="application/x-ndjson",
         )
 
-        # 1. Control-plane drift across SQS, DLQ, EventBridge Scheduler, CloudWatch Logs, and Lambda worker environments
+        # 1. Control-plane drift across SQS, DLQ, EventBridge Scheduler, CloudWatch Logs, Lambda worker environments,
+        #    out-of-band IAM role policies, and security group egress rules
         sqs.set_queue_attributes(
             QueueUrl=before_manifest["messaging"]["queue_url"],
             Attributes={"VisibilityTimeout": "19"},
@@ -243,6 +246,58 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             FunctionName=archiver_fn,
             Environment={"Variables": archiver_env},
         )
+
+        prefix = before_manifest["resource_prefix"]
+        task_role_name = before_manifest["iam"]["ecs_task_role_arn"].rsplit("/", 1)[-1]
+        iam.put_role_policy(
+            RoleName=task_role_name,
+            PolicyName="drifted-ops-s3-bypass",
+            PolicyDocument=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": ["s3:*"],
+                            "Resource": "*",
+                        }
+                    ],
+                }
+            ),
+        )
+        proj_role_name = before_manifest["iam"]["projector_role_arn"].rsplit("/", 1)[-1]
+        drifted_managed_pol = iam.create_policy(
+            PolicyName=f"{prefix}-drifted-projector-policy",
+            PolicyDocument=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": ["dynamodb:*"],
+                            "Resource": "*",
+                        }
+                    ],
+                }
+            ),
+        )["Policy"]
+        iam.attach_role_policy(RoleName=proj_role_name, PolicyArn=drifted_managed_pol["Arn"])
+
+        rds_sg_id = before_manifest["network"]["security_group_ids"]["rds"]
+        try:
+            ec2.authorize_security_group_egress(
+                GroupId=rds_sg_id,
+                IpPermissions=[
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 443,
+                        "ToPort": 443,
+                        "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+                    }
+                ],
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
         # 2. Data-plane drift:
         # - Inflated-version STATE corruption on sample_sid + poisoned Valkey cache
@@ -474,6 +529,21 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             "Expected deploy.sh to restore drifted audit_archiver AUDIT_PREFIX=ledger-audit/"
         )
 
+        task_inline_after = iam.list_role_policies(RoleName=task_role_name).get("PolicyNames", [])
+        assert "drifted-ops-s3-bypass" not in task_inline_after, (
+            f"Expected deploy.sh to remove out-of-band inline IAM policy drifted-ops-s3-bypass from {task_role_name}, found {task_inline_after}"
+        )
+        proj_attached_after = [
+            p.get("PolicyName") for p in iam.list_attached_role_policies(RoleName=proj_role_name).get("AttachedPolicies", [])
+        ]
+        assert f"{prefix}-drifted-projector-policy" not in proj_attached_after, (
+            f"Expected deploy.sh to detach out-of-band customer-managed IAM policy {prefix}-drifted-projector-policy from {proj_role_name}, found {proj_attached_after}"
+        )
+        rds_sg_after = ec2.describe_security_groups(GroupIds=[rds_sg_id])["SecurityGroups"][0]
+        assert not (rds_sg_after.get("IpPermissionsEgress") or []), (
+            f"Expected deploy.sh to revoke out-of-band egress rules on rds security group {rds_sg_id}, found {rds_sg_after.get('IpPermissionsEgress')}"
+        )
+
         with pg_connect(after_manifest, ctx.config) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM clearledger.settlements")
@@ -540,6 +610,17 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         assert total_s3_lines == len(pg_outbox_map) and set(s3_records_by_eid.keys()) == set(pg_outbox_map.keys()), (
             f"Expected S3 audit archive under ledger-audit/ to match clearledger.outbox 1-to-1 "
             f"(pg={len(pg_outbox_map)}, s3={total_s3_lines})"
+        )
+        ver_resp = s3.list_object_versions(Bucket=after_manifest["audit"]["bucket_name"])
+        del_markers = ver_resp.get("DeleteMarkers", [])
+        assert not del_markers, (
+            f"Expected deploy.sh to purge all S3 DeleteMarkers from versioned audit bucket, found {len(del_markers)}: "
+            f"{[(dm.get('Key'), dm.get('VersionId')) for dm in del_markers[:5]]}"
+        )
+        noncurrent_vers = [v for v in ver_resp.get("Versions", []) if not v.get("IsLatest")]
+        assert not noncurrent_vers, (
+            f"Expected deploy.sh to purge all noncurrent S3 object versions (IsLatest=false) from audit bucket, "
+            f"found {len(noncurrent_vers)}: {[(v.get('Key'), v.get('VersionId')) for v in noncurrent_vers[:5]]}"
         )
 
         read_tok = get_access_token(after_manifest, "read")

@@ -1267,6 +1267,17 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             f"Expected S3 audit archive under {m['audit']['prefix']} to match clearledger.outbox 1-to-1 "
             f"(pg={len(pg_outbox_map)}, s3={total_s3_lines})"
         )
+        ver_resp = s3.list_object_versions(Bucket=m["audit"]["bucket_name"])
+        del_markers = ver_resp.get("DeleteMarkers", [])
+        assert not del_markers, (
+            f"Expected deploy.sh to purge all S3 DeleteMarkers from versioned audit bucket, found {len(del_markers)}: "
+            f"{[(dm.get('Key'), dm.get('VersionId')) for dm in del_markers[:5]]}"
+        )
+        noncurrent_vers = [v for v in ver_resp.get("Versions", []) if not v.get("IsLatest")]
+        assert not noncurrent_vers, (
+            f"Expected deploy.sh to purge all noncurrent S3 object versions (IsLatest=false) from audit bucket, "
+            f"found {len(noncurrent_vers)}: {[(v.get('Key'), v.get('VersionId')) for v in noncurrent_vers[:5]]}"
+        )
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             def _recovered() -> bool:

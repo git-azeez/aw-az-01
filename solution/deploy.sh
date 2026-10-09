@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS clearledger.settlements (
             AND entry_count = 0
             AND current_status = 'INITIATED'
             AND last_entry_id IS NULL
+            AND updated_at = created_at
             AND (last_memo IS NULL OR char_length(btrim(last_memo)) BETWEEN 1 AND 256)
         )
         OR
@@ -214,7 +215,7 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
     CONSTRAINT chk_outbox_version_positive CHECK (aggregate_version >= 1),
     CONSTRAINT chk_outbox_attempts_nonnegative CHECK (attempts >= 0),
     CONSTRAINT chk_outbox_published_attempts CHECK (
-        published_at IS NULL OR (attempts >= 1 AND last_error IS NULL)
+        published_at IS NULL OR (attempts >= 1 AND last_error IS NULL AND published_at >= created_at)
     ),
     CONSTRAINT chk_outbox_archived_requires_published CHECK (
         archived_at IS NULL OR (published_at IS NOT NULL AND archived_at >= published_at)
@@ -395,8 +396,8 @@ BEGIN
             USING ERRCODE = '23514';
     END IF;
 
-    IF OLD.current_status = 'RECONCILED' AND NEW.current_status <> 'RECONCILED' THEN
-        RAISE EXCEPTION 'RECONCILED settlement is terminal and cannot transition to %', NEW.current_status
+    IF OLD.current_status = 'RECONCILED' THEN
+        RAISE EXCEPTION 'RECONCILED settlement is strictly terminal and cannot be updated'
             USING ERRCODE = '23514';
     END IF;
 
@@ -438,6 +439,10 @@ DECLARE
     v_last_entry uuid;
     v_last_memo text;
     v_parent_ver integer;
+    v_parent_created timestamptz;
+    v_parent_updated timestamptz;
+    v_prev_occurred timestamptz;
+    v_prev_status text;
     v_dup_entry integer;
 BEGIN
     IF ABS(EXTRACT(EPOCH FROM ((NEW.payload->>'occurredAt')::timestamptz - NEW.occurred_at))) > 0.001 THEN
@@ -455,8 +460,10 @@ BEGIN
             USING ERRCODE = '23514';
     END IF;
 
-    SELECT account_id, reference, debit_party, credit_party, current_status, current_stage, last_entry_id, last_memo, version
-      INTO v_acct, v_ref, v_debit, v_credit, v_status, v_stage, v_last_entry, v_last_memo, v_parent_ver
+    SELECT account_id, reference, debit_party, credit_party, current_status, current_stage,
+           last_entry_id, last_memo, version, created_at, updated_at
+      INTO v_acct, v_ref, v_debit, v_credit, v_status, v_stage,
+           v_last_entry, v_last_memo, v_parent_ver, v_parent_created, v_parent_updated
       FROM clearledger.settlements
      WHERE settlement_id = NEW.settlement_id;
 
@@ -472,7 +479,9 @@ BEGIN
        OR v_credit <> (NEW.payload #>> '{data,creditParty}')
        OR v_status <> (NEW.payload #>> '{data,status}')
        OR v_stage <> (NEW.payload #>> '{data,clearingStage}')
-       OR COALESCE(v_last_memo, '') <> COALESCE(NEW.payload #>> '{data,memo}', '') THEN
+       OR COALESCE(v_last_memo, '') <> COALESCE(NEW.payload #>> '{data,memo}', '')
+       OR ABS(EXTRACT(EPOCH FROM (NEW.occurred_at - v_parent_updated))) > 0.001
+       OR (NEW.aggregate_version = 1 AND ABS(EXTRACT(EPOCH FROM (NEW.occurred_at - v_parent_created))) > 0.001) THEN
         RAISE EXCEPTION 'Event row does not match parent settlement state at version %', NEW.aggregate_version
             USING ERRCODE = '23514';
     END IF;
@@ -480,6 +489,29 @@ BEGIN
     IF NEW.aggregate_version >= 2 THEN
         IF v_last_entry IS NULL OR v_last_entry::text <> (NEW.payload #>> '{data,entryId}') THEN
             RAISE EXCEPTION 'LedgerEntryRecorded entryId does not match parent settlement last_entry_id'
+                USING ERRCODE = '23514';
+        END IF;
+
+        SELECT occurred_at, payload #>> '{data,status}'
+          INTO v_prev_occurred, v_prev_status
+          FROM clearledger.events
+         WHERE settlement_id = NEW.settlement_id
+           AND aggregate_version = NEW.aggregate_version - 1;
+
+        IF NEW.occurred_at < v_prev_occurred THEN
+            RAISE EXCEPTION 'Event occurred_at (%) cannot regress before previous event occurred_at (%)', NEW.occurred_at, v_prev_occurred
+                USING ERRCODE = '23514';
+        END IF;
+
+        IF v_prev_status = 'RECONCILED' THEN
+            RAISE EXCEPTION 'Cannot record event after terminal RECONCILED event'
+                USING ERRCODE = '23514';
+        ELSIF v_prev_status = 'DISPUTED' AND (NEW.payload #>> '{data,status}') NOT IN ('DISPUTED', 'RECONCILED') THEN
+            RAISE EXCEPTION 'Cannot transition from DISPUTED event to %', NEW.payload #>> '{data,status}'
+                USING ERRCODE = '23514';
+        ELSIF v_prev_status <> 'DISPUTED' AND (NEW.payload #>> '{data,status}') <> 'DISPUTED'
+              AND clearledger.fn_status_rank(NEW.payload #>> '{data,status}') < clearledger.fn_status_rank(v_prev_status) THEN
+            RAISE EXCEPTION 'Event status cannot regress from % to %', v_prev_status, NEW.payload #>> '{data,status}'
                 USING ERRCODE = '23514';
         END IF;
 
@@ -596,6 +628,11 @@ BEGIN
             RAISE EXCEPTION 'Once published_at is set on clearledger.outbox, published_at, attempts, and last_error are immutable'
                 USING ERRCODE = '23514';
         END IF;
+    END IF;
+
+    IF OLD.archived_at IS NOT NULL AND NEW.archived_at IS NOT NULL AND NEW.archived_at IS DISTINCT FROM OLD.archived_at THEN
+        RAISE EXCEPTION 'Once archived_at is set on clearledger.outbox, it cannot be mutated without resetting archived_at to NULL first'
+            USING ERRCODE = '23514';
     END IF;
 
     RETURN NEW;
@@ -780,6 +817,101 @@ boto_kwargs = {
 lam = boto3.client("lambda", **boto_kwargs)
 ddb = boto3.client("dynamodb", **boto_kwargs)
 s3 = boto3.client("s3", **boto_kwargs)
+iam = boto3.client("iam", **boto_kwargs)
+ec2 = boto3.client("ec2", **boto_kwargs)
+
+# 0. Reconcile out-of-band IAM role policies and security group egress rules
+try:
+    with open("/workspace/submission/infra/terraform.tfstate", encoding="utf-8") as sf:
+        tfstate = json.load(sf)
+except Exception:
+    tfstate = {}
+
+managed_inline_by_role: dict[str, set[str]] = {}
+managed_attached_by_role: dict[str, set[str]] = {}
+managed_policy_arns: set[str] = set()
+for res in tfstate.get("resources", []):
+    if res.get("mode") != "managed":
+        continue
+    rtype = res.get("type", "")
+    for inst in res.get("instances", []):
+        attrs = inst.get("attributes") or {}
+        if rtype == "aws_iam_role_policy":
+            rname = str(attrs.get("role") or "")
+            pname = str(attrs.get("name") or "")
+            if rname and pname:
+                managed_inline_by_role.setdefault(rname, set()).add(pname)
+        elif rtype == "aws_iam_role_policy_attachment":
+            rname = str(attrs.get("role") or "")
+            parn = str(attrs.get("policy_arn") or "")
+            if rname and parn:
+                managed_attached_by_role.setdefault(rname, set()).add(parn)
+        elif rtype == "aws_iam_policy":
+            parn = str(attrs.get("arn") or "")
+            if parn:
+                managed_policy_arns.add(parn)
+
+prefix = cfg["resource_prefix"]
+for role_arn in (m.get("iam") or {}).values():
+    role_name = str(role_arn).rsplit("/", 1)[-1]
+    allowed_inline = managed_inline_by_role.get(role_name, set())
+    for pname in iam.list_role_policies(RoleName=role_name).get("PolicyNames", []):
+        if pname not in allowed_inline:
+            try:
+                iam.delete_role_policy(RoleName=role_name, PolicyName=pname)
+            except Exception:
+                pass
+    allowed_attached = managed_attached_by_role.get(role_name, set())
+    for att in iam.list_attached_role_policies(RoleName=role_name).get("AttachedPolicies", []):
+        parn = att.get("PolicyArn", "")
+        pname = att.get("PolicyName", "")
+        if parn and parn not in allowed_attached:
+            try:
+                iam.detach_role_policy(RoleName=role_name, PolicyArn=parn)
+            except Exception:
+                pass
+            if pname.startswith(prefix) and parn not in managed_policy_arns:
+                try:
+                    for pv in iam.list_policy_versions(PolicyArn=parn).get("Versions", []):
+                        if not pv.get("IsDefaultVersion"):
+                            iam.delete_policy_version(PolicyArn=parn, VersionId=pv["VersionId"])
+                    iam.delete_policy(PolicyArn=parn)
+                except Exception:
+                    pass
+
+sg_ids = (m.get("network") or {}).get("security_group_ids") or {}
+for sg_key in ("alb", "rds", "valkey"):
+    sg_id = sg_ids.get(sg_key)
+    if not sg_id:
+        continue
+    try:
+        rules = ec2.describe_security_group_rules(
+            Filters=[{"Name": "group-id", "Values": [sg_id]}]
+        ).get("SecurityGroupRules", [])
+        revoke_rule_ids = []
+        for r in rules:
+            if not r.get("IsEgress"):
+                continue
+            if sg_key in ("rds", "valkey") or r.get("CidrIpv4") == "0.0.0.0/0" or r.get("CidrIpv6") == "::/0":
+                if r.get("SecurityGroupRuleId"):
+                    revoke_rule_ids.append(r["SecurityGroupRuleId"])
+        if revoke_rule_ids:
+            ec2.revoke_security_group_egress(GroupId=sg_id, SecurityGroupRuleIds=revoke_rule_ids)
+    except Exception:
+        pass
+    try:
+        sg_desc = ec2.describe_security_groups(GroupIds=[sg_id]).get("SecurityGroups", [])
+        for sg_obj in sg_desc:
+            for perm in sg_obj.get("IpPermissionsEgress") or []:
+                v4 = [rng.get("CidrIp") for rng in perm.get("IpRanges") or []]
+                v6 = [rng.get("CidrIpv6") for rng in perm.get("Ipv6Ranges") or []]
+                if sg_key in ("rds", "valkey") or "0.0.0.0/0" in v4 or "::/0" in v6:
+                    try:
+                        ec2.revoke_security_group_egress(GroupId=sg_id, IpPermissions=[perm])
+                    except Exception:
+                        pass
+    except Exception:
+        pass
 
 db = m["database"]
 pg_conninfo = (
@@ -800,6 +932,42 @@ archiver_fn = m["workers"]["audit_archiver"]["function_name"]
 table_name = m["projections"]["table_name"]
 audit_bucket = m["audit"]["bucket_name"]
 audit_prefix = str(m["audit"]["prefix"])
+
+
+def purge_s3_key_all_versions(bucket: str, target_key: str) -> None:
+    try:
+        ver_resp = s3.list_object_versions(Bucket=bucket, Prefix=target_key)
+        for v in ver_resp.get("Versions", []):
+            if v.get("Key") == target_key and v.get("VersionId"):
+                s3.delete_object(Bucket=bucket, Key=target_key, VersionId=v["VersionId"])
+        for dm in ver_resp.get("DeleteMarkers", []):
+            if dm.get("Key") == target_key and dm.get("VersionId"):
+                s3.delete_object(Bucket=bucket, Key=target_key, VersionId=dm["VersionId"])
+    except Exception:
+        pass
+    try:
+        s3.delete_object(Bucket=bucket, Key=target_key)
+    except Exception:
+        pass
+
+
+def purge_noncurrent_and_deleted_s3_versions(bucket: str, keep_live_keys: set[str] | None = None) -> None:
+    try:
+        ver_resp = s3.list_object_versions(Bucket=bucket)
+        for dm in ver_resp.get("DeleteMarkers", []):
+            k = dm.get("Key", "")
+            vid = dm.get("VersionId")
+            if k and vid:
+                s3.delete_object(Bucket=bucket, Key=k, VersionId=vid)
+        for v in ver_resp.get("Versions", []):
+            k = v.get("Key", "")
+            vid = v.get("VersionId")
+            is_latest = bool(v.get("IsLatest"))
+            if k and vid and (not is_latest or (keep_live_keys is not None and k not in keep_live_keys)):
+                s3.delete_object(Bucket=bucket, Key=k, VersionId=vid)
+    except Exception:
+        pass
+
 
 with psycopg.connect(pg_conninfo) as conn:
     with conn.cursor() as cur:
@@ -982,7 +1150,7 @@ with psycopg.connect(pg_conninfo) as conn:
                     except Exception:
                         rclient.delete(rkey)
 
-        # 5. Reconcile S3 audit archive objects 1-to-1 against clearledger.outbox
+        # 5. Reconcile S3 audit archive objects and versions 1-to-1 against clearledger.outbox
         cur.execute("SELECT seq, event_id::text, archived_at, payload FROM clearledger.outbox ORDER BY seq ASC")
         pg_outbox = {}
         for seq, ev_id, arch_at, payload in cur.fetchall():
@@ -991,10 +1159,11 @@ with psycopg.connect(pg_conninfo) as conn:
 
         all_s3_objs = s3.list_objects_v2(Bucket=audit_bucket).get("Contents", [])
         seen_s3_event_ids: set[str] = set()
+        valid_live_keys: set[str] = set()
         for obj in sorted(all_s3_objs, key=lambda o: o["Key"]):
             key = obj["Key"]
             if not key.startswith(audit_prefix):
-                s3.delete_object(Bucket=audit_bucket, Key=key)
+                purge_s3_key_all_versions(audit_bucket, key)
                 continue
             try:
                 raw_bytes = s3.get_object(Bucket=audit_bucket, Key=key)["Body"].read()
@@ -1029,8 +1198,11 @@ with psycopg.connect(pg_conninfo) as conn:
                 if key != expected_key:
                     raise ValueError(f"S3 audit batch key {key} does not match canonical {expected_key}")
                 seen_s3_event_ids.update(batch_ids)
+                valid_live_keys.add(key)
             except Exception:
-                s3.delete_object(Bucket=audit_bucket, Key=key)
+                purge_s3_key_all_versions(audit_bucket, key)
+
+        purge_noncurrent_and_deleted_s3_versions(audit_bucket, valid_live_keys)
 
         missing_seqs = [
             seq
@@ -1053,6 +1225,8 @@ with psycopg.connect(pg_conninfo) as conn:
                 break
             lam.invoke(FunctionName=archiver_fn, InvocationType="RequestResponse", Payload=b"{}")
             time.sleep(0.3)
+
+        purge_noncurrent_and_deleted_s3_versions(audit_bucket)
 PY
 
 echo "ClearLedger deployment ready at ${SERVICE_URL}"
