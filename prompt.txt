@@ -1,0 +1,264 @@
+================================================================================
+DEVCLOUD BENCHMARK (REALM) — MASTER TASK CREATION & EVALUATION PROMPT GUIDE
+================================================================================
+
+HOW TO USE THIS FILE
+--------------------
+1. Copy everything between:
+      `=== START COPY-PASTE PROMPT ===`
+   and
+      `=== END COPY-PASTE PROMPT ===`
+2. Before sending the prompt to your AI coding tool, scroll to the bottom section
+   titled `[NEW TASK CONFIGURATION — EDIT THESE FIELDS]` and fill in:
+   - `CLOUD_PROVIDER`: Choose `AWS`, `GCP`, or `Azure` (or `Multi-Cloud`).
+   - `DOMAIN_VERTICAL`: Choose a domain (see the pre-built list of domains below,
+     or write your own, or leave as `AUTO_PROPOSE_3_OPTIONS` to have the AI pitch
+     3 non-overlapping ideas first).
+   - `TASK_CATEGORY`: e.g., `reliability_and_recovery`, `security_and_compliance`,
+     `multi_service_architecture`, `data_reconciliation`, `zero_trust_networking`.
+   - `TASK_NAME` & `TASK_ID`: e.g., `devcloud/medvault-clinical-ledger`, `task_id = "3"`.
+   - `AUTHOR_NAME` & `AUTHOR_EMAIL`: Your name and email for `task.toml`.
+   - `TARGET_MODELS`: The frontier models being evaluated on Realm
+     (default: `claude-sonnet-5-5`, `claude-opus-5-5`, `gpt-6.1-sol`, `gpt-astra`).
+3. Send the prompt to the AI tool. It will design and build the entire repository
+   (`task.toml`, `instruction.md`, `reasoning.md`, `environment/`, `solution/`, `tests/`).
+4. After you upload the task to Realm and download a model evaluation artifact folder
+   (e.g., `result/run-artifacts-<uuid>`), use the **Follow-Up Run Audit Prompt** at
+   the very bottom of this file to have the AI verify whether the run is a
+   `True Fail`, `False Fail`, `True Pass`, or `False Pass`.
+
+
+QUICK-PICK OPTIONS FOR `CLOUD_PROVIDER` & `DOMAIN_VERTICAL`
+-----------------------------------------------------------
+* Cloud Providers:
+  - `AWS`: Uses Floci (`mirror.gcr.io/floci/floci:2.1.0`) local AWS control plane
+    with Terraform/OpenTofu `hashicorp/aws` provider, real container-backed ECS,
+    RDS Postgres, ElastiCache Valkey, container Lambda, DynamoDB, SQS FIFO, S3,
+    KMS, Secrets Manager, SSM, Cognito, CloudWatch, EventBridge Scheduler.
+  - `GCP`: Uses local GCP emulator sidecars (Cloud Run / GKE workload containers,
+    Cloud SQL Postgres, Memorystore Redis/Valkey, Pub/Sub + Dead-Letter Topics,
+    Firestore/Bigtable, GCS, Cloud KMS, Secret Manager, IAM Service Accounts)
+    with pre-cached Terraform/OpenTofu `hashicorp/google` provider.
+  - `Azure`: Uses local Azure emulator sidecars (Container Apps / ACI workload
+    containers, Azure Database for PostgreSQL, Azure Cache for Redis, Service Bus
+    Queues/Topics + DLQ, Cosmos DB, Blob Storage, Key Vault, Managed Identities)
+    with pre-cached Terraform/OpenTofu `hashicorp/azurerm` provider.
+
+* Example High-Difficulty Domains (`DOMAIN_VERTICAL`):
+  1. `FinTech / Real-Time Clearing & Settlement Ledger` (Double-entry journal,
+     transactional outbox, FIFO projection, KMS audit archive).
+  2. `Healthcare / Clinical Trial Adverse-Event & Consent Ledger` (HIPAA-grade
+     blind/unblind state machine, immutable consent chain, de-identified read
+     projections, strict KMS & cross-role deny boundaries).
+  3. `Supply Chain / Cold-Chain Pharmaceutical Custody & Quarantine Platform`
+     (IoT telemetry ingestion, temperature-excursion state transitions, lot
+     quarantine locks, customs manifest archive, drift-resilient infrastructure).
+  4. `Energy Grid / Carbon Credit Issuance, Retirement & Double-Counting Guard`
+     (Serial-block reservation, atomic retirement triggers, registry sync outbox,
+     tamper-evident S3/GCS registry snapshots).
+  5. `Telecom / Real-Time Roaming CDR Mediation & Fraud Circuit-Breaker`
+     (High-throughput rating state machine, credit-limit reservation, DLQ poison
+     CDR isolation, cross-store cache/projection reconciliation).
+  6. `SecOps / Automated Threat Quarantine, Evidence Custody & SOAR Pipeline`
+     (Chain-of-custody append-only ledger, monotonic incident severity state
+     machine, zero-egress forensic vaults, least-privilege responder roles).
+
+
+================================================================================
+=== START COPY-PASTE PROMPT ===
+================================================================================
+
+You are an expert Staff Cloud Infrastructure & Benchmark Architect building and calibrating evaluation tasks for the **DevCloud Benchmark** (Harbor / Realm evaluation platform).
+
+Your primary mission is to build a complete, production-grade cloud infrastructure and distributed systems benchmark task that satisfies **three non-negotiable calibration targets**:
+1. **Oracle Reference Solution = 100% True Pass (`reward = 1.0`, `100/100` rubric points)** when executed in a clean, separate verifier container.
+2. **All Target Frontier Model Evaluations (`claude-sonnet-5-5`, `claude-opus-5-5`, `gpt-6.1-sol`, `gpt-astra`) = True Fail (`reward < 1.0`, score `< 100/100`)**.
+3. **Zero False Fails and Zero False Passes**:
+   - Every model failure MUST be a **True Fail** caused by the model missing an explicit, documented architectural, security, state-machine, drift-remediation, or cross-store recovery requirement.
+   - A model must **NEVER** fail due to undocumented test assertions, contradictions between `instruction.md`/`contracts/` and `tests/suite/*.py`, or shell `PATH`/virtualenv discrepancies between the agent container and verifier container (**Zero False Fails**).
+   - A model must **NEVER** pass if it takes shortcuts such as wildcard `"*"` IAM permissions, unrestricted `0.0.0.0/0` security group egress, missing DB triggers, or incomplete drift/cache cleanup (**Zero False Passes**).
+
+---
+
+## 1. Verdict Taxonomy & Mandatory "Frontier-Breaker" Design Patterns
+
+### A. Verdict Definitions
+- **True Pass (Required for Oracle ONLY)**: Solution satisfies every documented contract requirement and scores `100/100` (`reward = 1.0`).
+- **True Fail (REQUIRED for all evaluated frontier models)**:
+  - The environment and `deploy_succeeded` gate work cleanly without harness/container bugs, and the model scores `< 100/100` (ideally `40–88/100`) because its submission violates one or more documented engineering invariants (or its `deploy.sh` fails due to a genuine bug in the model's own HCL/code).
+- **False Fail (FORBIDDEN)**:
+  - Failure caused by an undocumented test check, spec contradiction, missing Python/CLI package in `/opt/venv`, or login-shell `PATH` stripping in `opencode`.
+- **False Pass (FORBIDDEN)**:
+  - Model scores `100/100` despite violating a documented security, networking, data-integrity, or lifecycle requirement because the verifier didn't test the live state.
+
+### B. 5 Mandatory "Frontier-Breaker" Invariants (Must Be Included in Every Task)
+Frontier models easily solve standard CRUD + IaC provisioning. To guarantee that `claude-sonnet-5-5`, `claude-opus-5-5`, `gpt-6.1-sol`, and `gpt-astra` produce a **True Fail** while the Oracle gets **100/100**, you MUST design and document all 5 of these multi-layered invariants in `/workspace/contracts/` and `instruction.md`, and enforce them in `tests/suite/*.py`:
+
+1. **Zero-Trust Network Egress (`egress = []` on Data Stores + Port-Scoped Ingress Egress)**:
+   - Document in `contracts/infrastructure.md` and `instruction.md` that data-store security groups / firewall rules (e.g., `rds`, `valkey`) must have **no outbound egress rules (`egress = []`)**, and load-balancer security groups (e.g., `alb`) must restrict outbound egress strictly to the application target port (e.g., TCP `8080`) within the VPC CIDR.
+   - Verify **both** declared Terraform state (`terraform show -json` in `test_declared.py`) **and** live cloud security group rules (`IpPermissionsEgress` in `test_live.py` and `test_lifecycle.py`). Note that cloud control planes (including AWS/Floci) attach a default `0.0.0.0/0` egress rule unless explicitly revoked or declared with `egress = []` and reconciled.
+2. **Compound Least-Privilege IAM + Explicit `Deny` Guardrails + Cross-Role Boundaries**:
+   - Require multiple distinct IAM roles / service accounts (e.g., 6 roles: `ecs_exec`, `ecs_task`, and per-worker roles) where:
+     - `Allow` statements are scoped to exact resource ARNs (including `${table_arn}/index/<GSI>` for NoSQL index queries, `${bucket_arn}/*` for object actions, and exact log group ARNs).
+     - Every workload role includes an explicit `Effect = "Deny"` guardrail statement blocking destructive control/data-plane operations (`rds:DeleteDBInstance`, `dynamodb:DeleteTable`, `s3:DeleteBucket`, `kms:ScheduleKeyDeletion`, `sqs:DeleteQueue`, `secretsmanager:DeleteSecret` or cloud equivalents) on `"*"`.
+     - Worker roles include cross-boundary explicit `Deny` rules (e.g., a read-model projector role explicitly denied object storage access `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`).
+3. **Database Trigger-Enforced Immutability & Monotonic State Rank Progression**:
+   - Require PL/pgSQL triggers on PostgreSQL tables that:
+     - Enforce **append-only immutability** on ledger/journal/audit tables (rejecting `UPDATE` and `DELETE`).
+     - Enforce a **monotonic non-decreasing state rank progression** on primary state tables (e.g., rank `0 -> 1 -> 2` or `3`), allowing idempotent same-status updates or valid forward transitions while rejecting backward rank regressions (e.g., `SETTLED -> PENDING`) or invalid cross-terminal transitions (`SETTLED <-> FAILED`).
+   - Test these triggers directly via live database connections in `test_live.py`, and ensure the contract wording in `contracts/services/*.md` matches the exact rank semantics tested.
+4. **Cross-Store Self-Healing & Namespace-Wide Cache Eviction on `deploy.sh`**:
+   - Document in `contracts/` that `deploy.sh` must reconcile all secondary read stores (e.g., DynamoDB/Firestore projections, Valkey/Redis cache entries, S3/GCS audit archives) against PostgreSQL's authoritative state AND purge **all stray or orphaned keys** across the entire application namespace (`<prefix>:*`, not only `<prefix>:<entity>:*`) in Valkey/Redis.
+   - In `test_behavior.py` and `test_lifecycle.py`, inject unrelayed outbox rows, corrupt read projections, delete audit objects, and plant stray non-entity cache keys (e.g., `<prefix>:lock:stray-marker`) before running `deploy.sh`, then assert complete self-healing and stray key eviction.
+5. **Out-of-Band Control-Plane Drift Remediation Without Resource Replacement**:
+   - Document in `contracts/` and `instruction.md` that re-running `deploy.sh` must remediate out-of-band cloud control-plane drift—including revoking injected `0.0.0.0/0` ingress/egress rules on security groups, detaching and deleting out-of-band customer-managed IAM policies attached to workload roles (`<prefix>-drifted-...`), and restoring drifted configuration parameters—**without** destroying or replacing stateful resources (VPC, RDS instance, NoSQL table, object bucket).
+   - Test this end-to-end in `test_lifecycle.py` (`lifecycle.reapply_idempotence`).
+
+---
+
+## 2. Repository Structure & Required Files
+
+Build the task repository with the exact layout below:
+
+```text
+<repo-root>/
+├── task.toml                       # Harbor v1.1 task & resource configuration
+├── instruction.md                  # Human-written task prompt given to the agent
+├── reasoning.md                    # Human-written architectural design, rubric & solution walkthrough
+├── environment/
+│   ├── Dockerfile                  # Multi-stage build: compiles hidden workload binaries + main agent/verifier image
+│   ├── docker-compose.yaml         # Multi-container topology: `main`, cloud emulator (`aws`/`gcp`/`azure`), and `runtime` bootstrapper
+│   ├── runtime.sh                  # Root-only bootstrap script (builds & pushes container/worker images, seeds config, deletes raw binaries)
+│   ├── application/                # Source code for pre-built service/worker workloads (compiled at image build time, NEVER exposed to agent)
+│   └── workspace/
+│       └── contracts/              # Detailed service & infrastructure contracts copied into `/workspace/contracts/`
+│           ├── README.md
+│           ├── infrastructure.md
+│           ├── deployment-manifest.schema.json
+│           ├── iam-permissions.json
+│           └── services/*.md
+├── solution/
+│   ├── solve.sh                    # Copies Oracle files into `/workspace/submission/` and executes `/workspace/submission/deploy.sh`
+│   ├── deploy.sh                   # Oracle idempotent provisioning, schema migration, drift remediation & readiness script
+│   ├── destroy.sh                  # Oracle clean teardown script
+│   └── infra/*.tf                  # Modular Terraform/OpenTofu HCL (`versions.tf`, `variables.tf`, `network.tf`, `security.tf`, `storage.tf`, `messaging.tf`, `compute.tf`, `outputs.tf`)
+└── tests/
+    ├── test.sh                     # Verifier entrypoint: runs pre-checks, executes submission `deploy.sh`, runs pytest suite, writes `/logs/verifier/reward.txt` and `/logs/verifier/results.json`
+    └── suite/
+        ├── conftest.py             # Rubric weight accounting, fixtures, cloud/DB/cache helpers, result JSON writer
+        ├── _helpers.py             # Shared helpers for Terraform state inspection, live cloud queries, HTTP retries
+        ├── test_declared.py        # Static & declared state verification (`terraform show -json`, manifest schema, IAM policy AST)
+        ├── test_live.py            # Live cloud control-plane verification + end-to-end functional workflows
+        ├── test_behavior.py        # Fault injection, poison-message DLQ isolation, crash/outage recovery, scheduled reconciliation
+        └── test_lifecycle.py       # Out-of-band drift/state mutation + reapply idempotence (`deploy.sh`) + full teardown (`destroy.sh`)
+```
+
+---
+
+## 3. Platform, Container & Harness Rules (Preventing False Fails)
+
+### A. Multi-Container Architecture (`environment/docker-compose.yaml`)
+1. **`main` service**:
+   - Runs as `user: "1000:1000"` (`agent`), `working_dir: /workspace`, `command: ["sleep", "infinity"]`.
+   - Must **NOT** mount `/var/run/docker.sock` (prevents the agent from inspecting sibling containers or extracting hidden workload binaries).
+   - Must configure Daytona Netleash proxy and CA environment variables (`HTTP_PROXY`/`HTTPS_PROXY=http://172.20.0.1:18080`, `NO_PROXY=localhost,127.0.0.1,::1,aws,floci,gcp,azure,runtime,.amazonaws.com,.elb.amazonaws.com,.googleapis.com,.azure.com,.local,.internal`, `CURL_CA_BUNDLE`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`).
+2. **Cloud Control-Plane Emulator Service (`aws` / `gcp` / `azure`)**:
+   - **If `CLOUD_PROVIDER = AWS`**: Use Floci (`mirror.gcr.io/floci/floci:2.1.0@sha256:f5aa8c18302cedb4f2385f5c4e455b3efc77fee6bf7b6e5d1712b2817ba102db`) with `FLOCI_SERVICES_ECS_MOCK: "false"`, `FLOCI_SERVICES_RDS_MOCK: "false"`, real Postgres 16.6-alpine, real Valkey 8, container-backed Lambda, and EventBridge Scheduler enabled.
+   - **If `CLOUD_PROVIDER = GCP` or `Azure`**: Configure the corresponding local control-plane and data-plane emulator containers on the compose network with deterministic endpoints exported in `/workspace/config/environment.env`.
+3. **`runtime` service (One-Shot Root Bootstrapper)**:
+   - Runs as `user: "0:0"` (`root`) with `/var/run/docker.sock` mounted and `depends_on` the cloud emulator being healthy.
+   - `main` depends on `runtime: condition: service_completed_successfully`.
+   - Executes `/opt/<project>/runtime.sh`, which generates `/workspace/config/environment.env` and `/workspace/config/seed.json`, packages compiled workload binaries from `/opt/<project>/bin/` into container/worker images, pushes them to the local registry, and deletes `/opt/<project>/bin/*` so the agent cannot reverse-engineer the binaries.
+
+### B. Dockerfile & Shell `PATH` Parity (`environment/Dockerfile`)
+1. **Offline Terraform/OpenTofu Mirror**:
+   - Pre-install Terraform (`1.9.8`) and OpenTofu (`1.8.4`), pre-cache the required provider plugin (`hashicorp/aws` `6.51.0`, `hashicorp/google`, or `hashicorp/azurerm`) in `/opt/Terraform/cache`, symlink `registry.opentofu.org` to `registry.terraform.io`, and configure `/etc/terraform.tfrc` with `filesystem_mirror`.
+   - Wrap `/usr/local/bin/terraform` and `/usr/local/bin/tofu` so they unset `HTTP_PROXY`/`HTTPS_PROXY` and set `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`.
+2. **Python Virtualenv & Login-Shell `PATH` Parity (CRITICAL)**:
+   - Create `/opt/venv` with `python3 -m venv --system-site-packages /opt/venv` (so `pip install --user` never errors if an agent runs it inside `deploy.sh`).
+   - Pre-install both `"psycopg[binary]==3.2.6"` **and** `psycopg2-binary==2.9.10`, along with `awscli`, `boto3`, `httpx`, `jsonschema`, `pytest`, `pyyaml`, `redis`, `"litellm<1.92"`, and `mini-swe-agent`.
+   - Preserve `/opt/venv/bin` across **all** login, non-login, and `opencode` shells (Debian's `/etc/profile` resets `PATH` on login shells):
+     - Patch `/etc/profile` with `sed` so `PATH` starts with `/opt/venv/bin`.
+     - Create `/etc/profile.d/00-venv.sh` exporting `PATH="/opt/venv/bin:..."` and cloud/Terraform env vars, and source it in `/etc/bash.bashrc`, `/opt/venv/bin/opencode`, `/home/agent/.bashrc`, `/home/agent/.profile`, `/home/verifier/.bashrc`, and `/home/verifier/.profile`.
+     - Symlink `/opt/venv/bin/aws` to `/usr/local/bin/aws`.
+3. **Agent Harness Wrappers**:
+   - Pre-install `opencode-ai@1.17.8` with the idle-watchdog wrapper at `/opt/venv/bin/opencode` and proxy-safe shims for `curl`, `npm`, `uv`, `apt-get`, and `mini-swe-agent`.
+
+### C. `task.toml` Configuration
+- Use `schema_version = "1.1"`.
+- Set `[verifier]` `environment_mode = "separate"` and `user = "verifier"`.
+- Exclude `.terraform`, `*.tfstate*`, `config.auto.tfvars.json`, and `.terraform.tfstate.lock.info` from `/workspace/submission` artifacts so the verifier always tests a clean `deploy.sh` run.
+
+---
+
+## 4. Rubric Structure (`100` Points Total)
+
+Gate all tests on `deploy_succeeded` in `tests/suite/conftest.py` and distribute the `100` points across 4 test modules:
+- **`declared.*` (20 points)** in `test_declared.py`:
+  - `declared.hcl_layout` (2), `declared.manifest_outputs` (3), `declared.network` (2), `declared.security` (3), `declared.storage` (3), `declared.messaging_monitoring` (2), `declared.compute_ingress` (2), `declared.evidence_report` (3).
+- **`live.*` (45 points)** in `test_live.py`:
+  - `live.network` (4), `live.security` (5), `live.storage` (6), `live.messaging_monitoring` (4), `live.compute_ingress` (5), `live.api_health_auth` (5), `live.primary_workflow` (8), `live.idempotency` (4), `live.domain_invariant_rejection` (4).
+- **`recovery.*` (20 points)** in `test_behavior.py`:
+  - `recovery.dlq_isolation` (6), `recovery.outbox_recovery` (6), `recovery.archiver_reconciliation` (4), `recovery.compute_task_recovery` (4).
+- **`lifecycle.*` (15 points)** in `test_lifecycle.py`:
+  - `lifecycle.reapply_idempotence` (7), `lifecycle.destroy_cleanup` (8).
+
+---
+
+## 5. Human-Authored Writing Style for `instruction.md` and `reasoning.md`
+
+Both `instruction.md` and `reasoning.md` **must read like authentic engineering documents written by a pragmatic Staff Engineer**:
+- Avoid AI-tell phrases ("Furthermore", "Crucially", "Delve into", "It is imperative").
+- In `instruction.md`, present a realistic operational handoff brief, summarize the architecture, security, and recovery expectations, and point to `/workspace/contracts/` for exact schemas, SQL definitions, and IAM matrices. Every requirement tested in `tests/suite/*.py` must be clearly stated.
+- In `reasoning.md`, document the architectural rationale, the 100-point rubric mapping, and a complete technical walkthrough of the reference solution (`solution/`).
+
+---
+
+## 6. Execution Workflow
+
+Execute these steps in order:
+1. **Design Architecture, Contracts & Frontier-Breaker Invariants**: Present the domain architecture, state machine, database schema/triggers, cloud resource inventory, and 100-point rubric.
+2. **Implement Application Workloads (`environment/application/`)**: Write the pre-built service and worker binaries (e.g., Rust or Go).
+3. **Implement Environment & Contracts (`environment/Dockerfile`, `docker-compose.yaml`, `runtime.sh`, `workspace/contracts/*`)**: Build the container topology, bootstrapper, and complete contract documentation.
+4. **Implement Oracle Reference Solution (`solution/`)**: Write modular Terraform/OpenTofu files, `deploy.sh` (including schema setup, trigger creation, drift remediation, and cross-store reconciliation), `destroy.sh`, and `solve.sh`.
+5. **Implement Verification Suite (`tests/`)**: Write `test.sh` and `tests/suite/*.py` (`conftest.py`, `_helpers.py`, `test_declared.py`, `test_live.py`, `test_behavior.py`, `test_lifecycle.py`).
+6. **Write `instruction.md`, `reasoning.md`, and `task.toml`**: Finalize documentation and verify syntax across all scripts and Python test files.
+
+---
+
+## [NEW TASK CONFIGURATION — EDIT THESE FIELDS]
+
+- **CLOUD_PROVIDER**: `AWS`  # Options: AWS | GCP | Azure
+- **DOMAIN_VERTICAL**: `AUTO_PROPOSE_3_OPTIONS`  # Or specify e.g. "Healthcare / Clinical Trial Adverse-Event & Consent Ledger"
+- **TASK_CATEGORY**: `reliability_and_recovery`  # e.g., reliability_and_recovery | security_and_compliance | multi_service_architecture
+- **TASK_NAME**: `devcloud/<task-slug>`
+- **TASK_ID**: `3`
+- **INSTANCE_ID**: `reliability_and_recovery_<task_slug>`
+- **DIFFICULTY**: `hard`
+- **AUTHOR_NAME**: `Azeez`
+- **AUTHOR_EMAIL**: `azeez@micro1.ai`
+- **TARGET_MODELS (Must all evaluate to True Fail < 100/100)**: `claude-sonnet-5-5`, `claude-opus-5-5`, `gpt-6.1-sol`, `gpt-astra`
+- **ORACLE_TARGET**: `100% True Pass (100/100, reward = 1.0)`
+- **ADDITIONAL_NOTES**: `Start by proposing 3 distinct, high-difficulty domain architectures for the selected CLOUD_PROVIDER and TASK_CATEGORY, or if a specific DOMAIN_VERTICAL is set above, begin implementing Step 1 immediately.`
+
+================================================================================
+=== END COPY-PASTE PROMPT ===
+================================================================================
+
+
+================================================================================
+FOLLOW-UP PROMPT: AUDITING A REALM EVALUATION RUN (`result/run-artifacts-*`)
+================================================================================
+(Copy and paste this after running a model evaluation on Realm to check the verdict)
+
+```text
+I uploaded the task to Realm and ran a model evaluation. Here is the run artifact directory:
+@directory:<path-to-run-artifacts-folder>
+
+Inspect `result.json`, `verifier/results.json`, `verifier/test-stdout.txt`, `agent/trajectory.json`, and `artifacts/submission/*` and tell me:
+1. What is the exact verdict: **True Fail**, **False Fail**, **True Pass**, or **False Pass**?
+2. Did the `deploy_succeeded` gate pass or fail, and why?
+3. For every failed test in `verifier/results.json`, was it a genuine model mistake against a documented requirement in `instruction.md` / `/workspace/contracts/` (**True Fail**), or was it caused by an environment issue / undocumented check (**False Fail**)?
+4. If the recorded fail was a **False Fail** at the gate, audit `artifacts/submission/*` against `tests/suite/*.py` to determine what the model would have scored without the gate issue, and fix the False Fail immediately.
+5. If a frontier model achieved a **True Pass (100/100)**, propose and implement targeted difficulty upgrades across `/workspace/contracts/`, `instruction.md`, `solution/`, and `tests/suite/` so frontier models produce a **True Fail** while the Oracle stays at **100% True Pass**.
+```
