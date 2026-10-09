@@ -2,45 +2,45 @@
 
 ## Introduction
 
-ClearLedger is an event-sourced interbank clearing and settlement ledger running on an AWS-compatible control plane (`http://aws:4566`). The HTTP surface is intentionally focused: clients initiate a settlement instruction between two counterparties, append clearing and settlement ledger entries (such as `VALIDATED`, `RESERVED`, `CLEARED`, `SETTLED`, `RECONCILED`, or `DISPUTED`), and query either the latest settlement state or the full ordered ledger trail. I kept the application code compact because the benchmark is not testing whether an agent can write Rust HTTP handlers—it is testing whether an agent can provision and operate a resilient multi-service AWS architecture where accepted writes survive messaging outages, corrupted read projections can be rebuilt from the immutable event log, and every component runs with least-privilege IAM roles and customer-managed KMS keys.
+ClearLedger is an event-sourced interbank clearing and settlement ledger running on the local Floci AWS control plane (`http://aws:4566`). The HTTP API covers the core settlement lifecycle: clients initiate a settlement instruction between two counterparties (`POST /v1/settlements`), append clearing and settlement ledger entries as the instruction moves through `VALIDATED`, `RESERVED`, `CLEARED`, `SETTLED`, `RECONCILED`, or `DISPUTED` (`POST /v1/settlements/{id}/entries`), read the current projected state (`GET /v1/settlements/{id}`), read the full ordered ledger history (`GET /v1/settlements/{id}/ledger`), or trigger an administrative projection rebuild (`POST /v1/admin/projections/{id}/rebuild`). I kept the Rust application binaries small and focused so the task measures cloud infrastructure engineering rather than application coding.
 
-Even though a basic ledger prototype could run on a single PostgreSQL instance, I split the write and read paths across RDS PostgreSQL, SQS, Lambda, DynamoDB, ElastiCache for Valkey, and S3. That separation forces the model to handle real cloud reliability and recovery mechanics: transactional outbox recovery when an SQS queue is deleted and recreated, DynamoDB Global Secondary Index (`AccountIndex`) and point-in-time recovery configuration, partial batch failure reporting (`ReportBatchItemFailures`) with a dead-letter queue (`maxReceiveCount = 4`), non-default worker tuning parameters (`CACHE_TTL_SECONDS = 90`, `OUTBOX_BATCH_SIZE = 50`, `AUDIT_PREFIX = ledger-audit/`), and clean idempotent Terraform convergence.
+While a toy ledger could read and write from a single database table, splitting the write path, asynchronous event bus, read projection store, cache, and audit archive across RDS PostgreSQL, SQS, Lambda, DynamoDB, ElastiCache for Valkey, and S3 forces the agent to solve real distributed-systems and cloud operations problems. Accepted writes must survive an SQS queue outage through a transactional outbox table in PostgreSQL, out-of-order or duplicate SQS deliveries must not regress DynamoDB projections, poison messages must isolate to a dead-letter queue via `ReportBatchItemFailures` after 4 attempts, database constraints and PL/pgSQL triggers must reject illegal state regressions and tampered envelopes at the relational layer, and `deploy.sh` must reconcile both control-plane drift and multi-store data-plane drift without losing durable data.
 
-I package the application into four pre-built container images so each runtime role stays isolated with its own IAM role:
+The application is pre-built into four container images so each workload runs under its own least-privilege IAM role:
 
-1. **API image (`clearledger/api:1.0.0`):** serves only the HTTP endpoints. The model runs this on ECS Fargate with two tasks across two availability zones behind an Application Load Balancer.
-2. **Projector image (`clearledger/projector:1.0.0`):** consumes domain events from the main SQS queue, updates the settlement projection and event history in DynamoDB, and invalidates stale keys in Valkey. The model runs this as a container-based Lambda function wired to SQS via an event source mapping.
-3. **Outbox relay image (`clearledger/relay:1.0.0`):** scans PostgreSQL for committed outbox rows that have not been published to SQS yet and delivers them in batches. This runs as a container-based Lambda function invoked every minute by EventBridge Scheduler.
-4. **Audit archiver image (`clearledger/archiver:1.0.0`):** reads published events from PostgreSQL and writes deterministic NDJSON batches under `ledger-audit/batch-*.ndjson` in a private, KMS-encrypted S3 bucket. This runs as a third container-based Lambda function invoked every five minutes by EventBridge Scheduler.
+1. **API image (`clearledger/api:1.0.0`)**: Runs on ECS Fargate (`desired_count = 2` across two availability zones) behind an internet-facing Application Load Balancer. It validates Cognito JWTs, commits settlements, events, outbox rows, and idempotency keys to RDS PostgreSQL, serves read projections from Valkey and DynamoDB, and exposes `/health/live` and `/health/ready`.
+2. **Projector image (`clearledger/projector:1.0.0`)**: Runs as a container-based AWS Lambda function triggered by an SQS event source mapping (`batch_size = 5`, `ReportBatchItemFailures`). It writes ordered `EVENT#*` items and monotonically updates `STATE` items in DynamoDB, then invalidates stale Valkey cache keys.
+3. **Outbox relay image (`clearledger/relay:1.0.0`)**: Runs as a container-based AWS Lambda function triggered every minute (`rate(1 minute)`) by EventBridge Scheduler. It scans `clearledger.outbox` for rows with `published_at IS NULL`, publishes them to the main SQS queue in batches of 50 (`OUTBOX_BATCH_SIZE = 50`), and sets `published_at`.
+4. **Audit archiver image (`clearledger/archiver:1.0.0`)**: Runs as a container-based AWS Lambda function triggered every five minutes (`rate(5 minutes)`) by EventBridge Scheduler. It reads published outbox rows with `archived_at IS NULL`, writes deterministic NDJSON batches (`ledger-audit/batch-<first_seq>-<last_seq>-<sha256_prefix>.ndjson`) to S3, and marks `archived_at`.
 
-Only the ECS Fargate API service keeps two warm tasks running continuously to serve low-latency HTTP traffic; the three background workers run as serverless Lambda functions on queue arrival or scheduled ticks.
+## Infrastructure Used
 
-## Infrastructure used
-
-| Cloud service | How it is used in this task |
+| Cloud service | Role in the system and connected components |
 |---|---|
-| **VPC** | Two-AZ virtual network (`us-east-1a` and `us-east-1b`) with public subnets for the load balancer, private subnets for ECS, RDS, and Valkey, and four security groups enforcing least-privilege network paths. |
-| **Application Load Balancer** | Public HTTP entry point (`port 80`) that routes traffic across both availability zones to healthy ECS API tasks on `port 8080` using `/health/ready`. |
-| **ECS Fargate** | Runs two warm API container tasks (`desired_count = 2`) and automatically replaces tasks if an instance is stopped. |
-| **RDS PostgreSQL** | Durable system of record (`postgres 16`, `db.t4g.micro`) storing settlement aggregates, the immutable event log, transactional outbox rows, and idempotency keys under the `clearledger` schema initialized by `deploy.sh`. |
-| **SQS (main queue and DLQ)** | Buffers domain events between the API/relay and the projector Lambda (`visibility_timeout_seconds = 3`, `receive_wait_time_seconds = 2`) and routes poison messages to a dead-letter queue after 4 failed receives (`maxReceiveCount = 4`). |
-| **AWS Lambda** | Runs the projector, outbox relay, and audit archiver container images on demand without idle compute overhead. |
-| **DynamoDB** | Stores the queryable settlement projection (`PK = SETTLEMENT#<id>`, `SK = STATE`) and ordered ledger items (`SK = EVENT#<version>`) with a `GSI1PK`/`GSI1SK` `AccountIndex` secondary index, KMS encryption, and point-in-time recovery enabled. |
-| **ElastiCache for Valkey** | Caches hot settlement projections (`clearledger:settlement:<id>`) on Valkey 8 (`cache.t4g.micro`) with a 90-second TTL (`CACHE_TTL_SECONDS = 90`) in front of DynamoDB. |
-| **Cognito** | Hosts the OAuth2 user pool, resource server (`clearledger`), and three separate app clients issuing access tokens for `clearledger/read`, `clearledger/write`, and `clearledger/admin`. |
-| **EventBridge Scheduler** | Invokes the outbox relay Lambda on `rate(1 minute)` and the audit archiver Lambda on `rate(5 minutes)`. |
-| **S3** | Stores versioned, KMS-encrypted NDJSON audit files (`ledger-audit/batch-*.ndjson`) with all public access blocked. |
-| **IAM** | Provides six dedicated execution and runtime roles (`ecs_execution`, `ecs_task`, `projector`, `relay`, `archiver`, `scheduler`) scoped to exact resource ARNs. |
-| **KMS** | Supplies four customer-managed keys and aliases (`database`, `messaging`, `projection`, `audit`) with automatic key rotation enabled and a 10-day deletion window. |
-| **CloudWatch Logs** | Captures structured JSON logs from the API and all three Lambda functions in four dedicated log groups with at least 14 days of retention. |
+| **VPC** | Provides the two-AZ network (`us-east-1a` and `us-east-1b`) with two public subnets (attached to an Internet Gateway for the ALB), two private subnets (hosting ECS tasks, RDS, and Valkey with no IGW route), and four dedicated security groups (`alb`, `ecs`, `rds`, `valkey`). |
+| **Application Load Balancer** | Accepts public HTTP traffic on port `80` in the public subnets and forwards requests to healthy ECS Fargate API tasks on port `8080` using `/health/ready` health checks. |
+| **ECS Fargate** | Runs two warm API tasks (`desired_count = 2`) across the private subnets with Container Insights enabled on the cluster and automatic task replacement if a task stops. |
+| **RDS PostgreSQL** | Runs a PostgreSQL 16 (`db.t4g.micro`) instance in the private subnets as the system of record. Stores `clearledger.settlements`, `clearledger.events`, `clearledger.outbox`, and `clearledger.idempotency_keys`, along with the relational `CHECK` / `FOREIGN KEY` constraints, PL/pgSQL triggers, and partial indexes initialized by `deploy.sh`. Connected to by the ECS API, Outbox Relay Lambda, and Audit Archiver Lambda. |
+| **SQS (Main Queue and DLQ)** | Buffers domain events between the ECS API / Outbox Relay Lambda and the Projector Lambda (`visibility_timeout_seconds = 3`, `receive_wait_time_seconds = 2`, `message_retention_seconds = 172800`). Failed messages redrive to the DLQ (`message_retention_seconds = 1209600`) after `maxReceiveCount = 4` receives. |
+| **AWS Lambda** | Executes the three background container workers (`projector`, `outbox_relay`, `audit_archiver`) on SQS arrival or scheduled ticks, plus synchronous repair invocations during `deploy.sh` convergence. |
+| **DynamoDB** | Stores the read projection (`PK = SETTLEMENT#<id>`, `SK = STATE`) and ordered event history (`SK = EVENT#<version:08d>`) with `PAY_PER_REQUEST` billing, the `AccountIndex` GSI (`GSI1PK = ACCOUNT#<account_id>`, `GSI1SK = SETTLEMENT#<id>`), point-in-time recovery, and KMS server-side encryption. Written by the Projector Lambda and queried by the ECS API. |
+| **ElastiCache for Valkey** | Runs Valkey 8 (`cache.t4g.micro`) on port `6379` in the private subnets to cache `SettlementProjection` payloads (`clearledger:settlement:<id>`) with a 90-second TTL (`CACHE_TTL_SECONDS = 90`). Read and populated by the ECS API; invalidated on writes by the ECS API and Projector Lambda. |
+| **Cognito** | Hosts the User Pool, the `clearledger` resource server, and three `client_credentials` app clients issuing JWTs scoped to `clearledger/read`, `clearledger/write`, and `clearledger/admin`. Verified by the ECS API via the pool's JWKS endpoint. |
+| **EventBridge Scheduler** | Triggers the Outbox Relay Lambda on `rate(1 minute)` and the Audit Archiver Lambda on `rate(5 minutes)` using the dedicated `scheduler` IAM role. |
+| **S3** | Stores immutable, versioned, KMS-encrypted NDJSON audit batches under `ledger-audit/batch-*.ndjson` with all four public access block flags enabled. Written by the Audit Archiver Lambda. |
+| **IAM** | Defines six separate roles (`ecs_execution`, `ecs_task`, `projector`, `relay`, `archiver`, `scheduler`) with service-specific trust policies and resource-scoped inline or attached policies (including prefix-scoped S3 object writes without `s3:DeleteObject` and per-workload KMS and CloudWatch Log Group isolation). |
+| **KMS** | Provides four customer-managed keys and aliases (`database`, `messaging`, `projection`, `audit`) with `enable_key_rotation = true` and a 10-day deletion window (`10..30` days). |
+| **CloudWatch Logs** | Collects structured JSON logs containing `correlationId` across four dedicated log groups (`/clearledger/<prefix>/api`, `/projector`, `/outbox-relay`, `/audit-archiver`) with at least 14 days of retention. |
 
-## Operational flows
+**Floci runtime vs. control-plane enforcement:** Floci runs real container workloads for ECS Fargate, RDS PostgreSQL, ElastiCache for Valkey, and AWS Lambda, and executes live SQS redrive, DynamoDB conditional writes/GSI queries, S3 object versioning, and Cognito OAuth2 token issuance. However, Floci records VPC security group ingress/egress rules, KMS key rotation/encryption settings, and IAM role policies in its control plane (and evaluates IAM policies via `SimulatePrincipalPolicy`) rather than enforcing kernel-level packet filtering or runtime IAM/KMS access denials on container network sockets. Accordingly, the verifier tests security groups, KMS bindings, and IAM least-privilege policies through Terraform state inspection, live AWS control-plane queries, and `simulate_principal_policy`, while testing Cognito JWT validation and non-hierarchical scope enforcement directly against the live HTTP API.
 
-Each diagram below traces one operational path through the platform and includes only the services participating in that flow.
+## Operational Flows
+
+Each diagram below traces one end-to-end operational flow through the services involved in that path.
 
 ### 1. Authenticate and reach the API
 
-Every business endpoint requires a Cognito JWT carrying the matching scope (`clearledger/read`, `clearledger/write`, or `clearledger/admin`). The client requests an access token from Cognito using the `client_credentials` grant, then sends the HTTP request to the Application Load Balancer. The ALB forwards the request to one of the two ECS Fargate API tasks. If the API task does not have the Cognito signing keys cached yet, it fetches the JWKS document once, verifies the JWT signature, issuer, audience (`AUTH_AUDIENCES`), token use, expiration, and scope locally, and then executes the handler.
+Every protected endpoint requires a Cognito Bearer JWT carrying the exact scope for that route (`clearledger/read`, `clearledger/write`, or `clearledger/admin`). The client requests an access token from Cognito using the `client_credentials` grant and sends the HTTP request to the Application Load Balancer. The ALB forwards the request to one of the two ECS Fargate API tasks, which validates the JWT signature against Cognito's JWKS keys, checks the issuer, audience (`AUTH_AUDIENCES`), expiration, and scope, and dispatches the request.
 
 ```mermaid
 sequenceDiagram
@@ -49,27 +49,26 @@ sequenceDiagram
     participant ALB
     participant API as ECS API
 
-    Client->>Cognito: Request token with client credentials
+    Client->>Cognito: POST /oauth2/token (client_credentials)
     Cognito-->>Client: Return signed JWT access token
     Client->>ALB: Send HTTP request with Bearer token
-    ALB->>API: Forward request to healthy task
-    opt Public keys are not cached in memory yet
-        API->>Cognito: Fetch public JWKS verification keys
-        Cognito-->>API: Return public JWKS keys
+    ALB->>API: Forward request to healthy task on port 8080
+    opt JWKS keys not cached in memory yet
+        API->>Cognito: GET /.well-known/jwks.json
+        Cognito-->>API: Return public signing keys
     end
-    API->>API: Validate signature locally with cached key
-    API->>API: Check expiration, issuer, audience and required scope
+    API->>API: Verify JWT signature, issuer, audience, and scope
 ```
 
 ### 2. Initiate a new settlement
 
-When a client calls `POST /v1/settlements`, the API opens a single SQL transaction in RDS PostgreSQL and writes three records atomically:
+When a client calls `POST /v1/settlements`, the API opens a SQL transaction on RDS PostgreSQL and inserts three records atomically:
 
-1. The **settlement aggregate row** in `clearledger.settlements` recording the settlement ID, account ID, reference, debit and credit counterparties, and initial version (`1`).
-2. The **immutable event row** in `clearledger.events` recording `SettlementInitiated`.
-3. The **transactional outbox row** in `clearledger.outbox` holding the serialized event envelope with `published_at = NULL`.
+1. The settlement row in `clearledger.settlements` at `version = 1` (`current_status = 'INITIATED'`, `entry_count = 0`).
+2. The `SettlementInitiated` event row in `clearledger.events`.
+3. The transactional outbox row in `clearledger.outbox` with `published_at = NULL`, plus the idempotency record in `clearledger.idempotency_keys`.
 
-Because all three inserts share one database transaction, PostgreSQL guarantees that we never commit a settlement without queuing its event in the outbox. Immediately after commit, the API performs a best-effort publish to the main SQS queue, marks `published_at` if SQS accepts the message, and returns `201 Created`. The Projector Lambda then consumes the SQS message, writes the `EVENT#00000001` item and conditional `STATE` item into DynamoDB, and clears any stale Valkey entry.
+PostgreSQL `CHECK` constraints and triggers validate party separation (`btrim(debit_party) <> btrim(credit_party)`), string length bounds, and JSONB envelope coherence before the transaction commits. After commit, the API performs a best-effort publish to the main SQS queue, updates `published_at` if SQS accepts the message, and returns `201 Created`. The Projector Lambda receives the message from SQS, writes `EVENT#00000001` and `STATE` to DynamoDB, and invalidates Valkey.
 
 ```mermaid
 sequenceDiagram
@@ -82,27 +81,27 @@ sequenceDiagram
     participant DDB as DynamoDB
     participant Valkey
 
-    Client->>ALB: POST /v1/settlements with write token
+    Client->>ALB: POST /v1/settlements (clearledger/write token)
     ALB->>API: Route request
-    API->>RDS: Begin SQL transaction
-    API->>RDS: Insert settlement row
-    API->>RDS: Insert SettlementInitiated event row
-    API->>RDS: Insert unpublished outbox row
+    API->>RDS: Begin transaction
+    API->>RDS: Insert settlement, event, outbox, and idempotency rows
     API->>RDS: Commit transaction
     RDS-->>API: Commit confirmed
-    API->>SQS: Send SettlementInitiated event
+    API->>SQS: Best-effort SendMessage (SettlementInitiated)
     API-->>ALB: 201 Created
     ALB-->>Client: 201 Created
     SQS->>Projector: Deliver event batch
-    Projector->>DDB: Conditionally put STATE and EVENT#00000001
-    Projector->>Valkey: Delete stale settlement cache key
+    Projector->>DDB: Conditionally write EVENT#00000001 and STATE
+    Projector->>Valkey: DEL clearledger:settlement:{id}
 ```
 
 ### 3. Append a clearing or settlement ledger entry
 
-Calling `POST /v1/settlements/{id}/entries` appends the next lifecycle transition (for example, `VALIDATED`, `RESERVED`, `CLEARED`, or `SETTLED`) without overwriting prior ledger entries. The caller passes an `Idempotency-Key` header and `expectedVersion`. Inside RDS PostgreSQL, the API locks the aggregate row, checks `clearledger.idempotency_keys` for an existing key, and verifies `expectedVersion`.
+Calling `POST /v1/settlements/{id}/entries` appends the next lifecycle transition (`VALIDATED`, `RESERVED`, `CLEARED`, `SETTLED`, `RECONCILED`, or `DISPUTED`) using an `Idempotency-Key` header and `expectedVersion`. Inside PostgreSQL, the API locks the settlement row, checks `clearledger.idempotency_keys`, and validates `expectedVersion`.
 
-That produces one of three deterministic outcomes: an idempotent replay (`200 OK` with `idempotentReplay: true`) if the exact request was already committed, a version increment (`202 Accepted`) that writes `LedgerEntryRecorded` and invalidates Valkey, or a `409 Conflict` if either the idempotency payload differs or `expectedVersion` is stale. When the Projector Lambda applies the event in DynamoDB, it writes `EVENT#<version>` with `attribute_not_exists(PK) AND attribute_not_exists(SK)` and updates `STATE` inside an optimistic concurrency loop guarded by `#version = :expected_version`. If standard SQS delivers messages out of order or concurrent Lambda invocations race on the same settlement, older versions never overwrite a newer projected state.
+- If the same `Idempotency-Key` and identical payload were already committed, the API returns `200 OK` with `idempotentReplay: true` without creating a duplicate event.
+- If `expectedVersion` matches the current aggregate version and the transition satisfies the PostgreSQL lifecycle triggers, the API increments `version` and `entry_count`, inserts `LedgerEntryRecorded` into `clearledger.events` and `clearledger.outbox`, invalidates Valkey, publishes to SQS, and returns `202 Accepted`.
+- If the idempotency key is reused with a different payload or `expectedVersion` is stale, the API returns `409 Conflict`. If the transition violates a domain invariant (such as regressing from `CLEARED` to `RESERVED` or transitioning out of terminal `RECONCILED`), PostgreSQL raises a constraint/trigger error that the API maps to `400 Bad Request`.
 
 ```mermaid
 sequenceDiagram
@@ -116,25 +115,25 @@ sequenceDiagram
     participant Valkey
 
     Client->>ALB: POST /v1/settlements/{id}/entries
-    ALB->>API: Forward token, idempotency key and expectedVersion
-    API->>RDS: Check idempotency key and current aggregate version
+    ALB->>API: Forward token, Idempotency-Key, and expectedVersion
+    API->>RDS: Lock settlement row and check idempotency_keys
 
-    alt FLOW 1 · IDEMPOTENT REPLAY · Return stored response
-        RDS-->>API: Return previously saved response body
+    alt Idempotent replay (matching key and payload hash)
+        RDS-->>API: Return stored response_body
         API-->>ALB: 200 OK (idempotentReplay: true)
-        ALB-->>Client: 200 OK without duplicate event
-    else FLOW 2 · ENTRY ACCEPTED · Commit next version
-        API->>RDS: Commit LedgerEntryRecorded event and outbox row
-        RDS-->>API: Transaction committed
-        API->>Valkey: Invalidate clearledger:settlement:{id}
+        ALB-->>Client: 200 OK
+    else Valid next version transition
+        API->>RDS: Update settlement, insert event, outbox, and idempotency rows
+        RDS-->>API: Commit confirmed
+        API->>Valkey: DEL clearledger:settlement:{id}
         API->>SQS: Send LedgerEntryRecorded message
         API-->>ALB: 202 Accepted
         ALB-->>Client: 202 Accepted
         SQS->>Projector: Deliver event
-        Projector->>DDB: Conditionally advance STATE and write EVENT#<version>
-        Projector->>Valkey: Delete cached settlement key
-    else FLOW 3 · VERSION OR PAYLOAD CONFLICT · Reject write
-        RDS-->>API: Mismatch detected
+        Projector->>DDB: Write EVENT#<version> and conditionally advance STATE
+        Projector->>Valkey: DEL clearledger:settlement:{id}
+    else Stale expectedVersion or payload mismatch
+        RDS-->>API: Conflict detected
         API-->>ALB: 409 Conflict
         ALB-->>Client: 409 Conflict
     end
@@ -142,7 +141,7 @@ sequenceDiagram
 
 ### 4. Read current settlement state
 
-When a client calls `GET /v1/settlements/{id}`, the API checks Valkey (`clearledger:settlement:{id}`) first. On a cache hit, it returns the projection immediately with `X-ClearLedger-Source: cache`. On a cache miss, it reads the `STATE` item from DynamoDB (`PK = SETTLEMENT#<id>`, `SK = STATE`), writes the serialized JSON into Valkey with a 90-second TTL (`CACHE_TTL_SECONDS = 90`), and returns the response with `X-ClearLedger-Source: projection`. PostgreSQL is never queried on the read path—if the projection has not arrived in DynamoDB yet or was deleted, `GET /v1/settlements/{id}` returns `404` until projection delivery completes or an administrator triggers a rebuild.
+When a client calls `GET /v1/settlements/{id}`, the API checks Valkey (`clearledger:settlement:{id}`) first. On a cache hit, it returns the cached JSON immediately with `X-ClearLedger-Source: cache`. On a cache miss, it reads the `STATE` item from DynamoDB (`PK = SETTLEMENT#<id>`, `SK = STATE`), caches the serialized projection in Valkey for 90 seconds (`CACHE_TTL_SECONDS = 90`), and returns `200 OK` with `X-ClearLedger-Source: projection`. PostgreSQL is never queried on the read path; if the projection is not in DynamoDB yet, the endpoint returns `404 Not Found`.
 
 ```mermaid
 sequenceDiagram
@@ -152,26 +151,26 @@ sequenceDiagram
     participant Valkey
     participant DDB as DynamoDB
 
-    Client->>ALB: GET /v1/settlements/{id} with read token
+    Client->>ALB: GET /v1/settlements/{id} (clearledger/read token)
     ALB->>API: Forward request
     API->>Valkey: GET clearledger:settlement:{id}
 
-    alt FLOW 1 · CACHE HIT · Serve from Valkey
+    alt Cache hit in Valkey
         Valkey-->>API: Return cached projection JSON
         API-->>ALB: 200 OK (X-ClearLedger-Source: cache)
-    else FLOW 2 · CACHE MISS · Read DynamoDB and warm Valkey
+    else Cache miss in Valkey
         API->>DDB: GetItem PK=SETTLEMENT#{id}, SK=STATE
-        DDB-->>API: Return projection attributes
-        API->>Valkey: SETEX clearledger:settlement:{id} 90s
+        DDB-->>API: Return projection item
+        API->>Valkey: SETEX clearledger:settlement:{id} 90
         API-->>ALB: 200 OK (X-ClearLedger-Source: projection)
     end
 
-    ALB-->>Client: Return settlement projection
+    ALB-->>Client: Return SettlementProjection
 ```
 
-### 5. Read the full settlement ledger history
+### 5. Read the ordered settlement ledger history
 
-Calling `GET /v1/settlements/{id}/ledger` returns every committed lifecycle event in ascending version order. Because Valkey only caches the latest summary state, ledger queries go directly to DynamoDB and query all items under `PK = SETTLEMENT#<id>` where `SK` begins with `EVENT#`.
+Calling `GET /v1/settlements/{id}/ledger` queries DynamoDB for all items under `PK = SETTLEMENT#<id>` where `SK` begins with `EVENT#`, returning the ordered lifecycle events in ascending version order (`EVENT#00000001` .. `EVENT#<version:08d>`) with `X-ClearLedger-Source: projection`.
 
 ```mermaid
 sequenceDiagram
@@ -181,16 +180,16 @@ sequenceDiagram
     participant DDB as DynamoDB
 
     Client->>ALB: GET /v1/settlements/{id}/ledger
-    ALB->>API: Forward request with read token
-    API->>DDB: Query PK=SETTLEMENT#{id} and SK begins_with EVENT#
-    DDB-->>API: Return ordered event items
+    ALB->>API: Forward request with clearledger/read token
+    API->>DDB: Query PK=SETTLEMENT#{id} AND begins_with(SK, 'EVENT#')
+    DDB-->>API: Return ordered EVENT# items
     API-->>ALB: 200 OK (X-ClearLedger-Source: projection)
-    ALB-->>Client: Return ordered settlement ledger
+    ALB-->>Client: Return SettlementLedgerResponse
 ```
 
 ### 6. Rebuild a corrupted or deleted DynamoDB projection
 
-If the DynamoDB items for a settlement are deleted or corrupted (causing `GET /v1/settlements/{id}` to return `404`), an operator holding a `clearledger/admin` token can call `POST /v1/admin/projections/{id}/rebuild`. The API queries RDS PostgreSQL for all events belonging to that settlement ordered by `aggregate_version ASC`, re-enqueues each event envelope onto the main SQS queue, and evicts the Valkey cache key so the Projector Lambda reconstructs the DynamoDB items cleanly.
+If a settlement's DynamoDB items are deleted or corrupted, an operator with a `clearledger/admin` token can call `POST /v1/admin/projections/{id}/rebuild`. The API reads all committed events for that settlement from `clearledger.events` in ascending `aggregate_version` order, re-publishes each event envelope to the main SQS queue, and deletes the Valkey cache key so the Projector Lambda reconstructs the DynamoDB state and event items.
 
 ```mermaid
 sequenceDiagram
@@ -205,23 +204,25 @@ sequenceDiagram
 
     Admin->>ALB: POST /v1/admin/projections/{id}/rebuild
     ALB->>API: Forward request with clearledger/admin token
-    API->>RDS: Select all events for settlement ordered by version
+    API->>RDS: SELECT payload FROM clearledger.events ORDER BY aggregate_version ASC
     RDS-->>API: Return ordered event envelopes
     API->>SQS: Re-enqueue all settlement events
-    API->>Valkey: Delete clearledger:settlement:{id}
+    API->>Valkey: DEL clearledger:settlement:{id}
     API-->>ALB: 202 Accepted (requeued count)
-    ALB-->>Admin: Return rebuild confirmation
+    ALB-->>Admin: Return RebuildResponse
     SQS->>Projector: Deliver replayed events
-    Projector->>DDB: Reconstruct STATE and EVENT# items
+    Projector->>DDB: Reconstruct EVENT# and STATE items
 ```
 
-### 7. Recover writes and reconcile projections during an SQS outage
+### 7. Recover writes and reconcile derived stores after an SQS outage
 
-If the main SQS queue and its Lambda event source mapping are deleted while a client submits a settlement or ledger entry, the API still accepts the write (`201` or `202`) because the aggregate row, event row, and outbox row (`published_at = NULL`) commit inside RDS PostgreSQL before the API attempts the direct SQS publish. While the queue is missing, `GET /v1/settlements/{id}` returns `404` because the event cannot reach DynamoDB. Furthermore, if existing settlements have their DynamoDB projections, Valkey cache entries, or S3 audit batches corrupted during the incident, `deploy.sh` must self-heal the data plane before returning `0`:
+If the main SQS queue and its Lambda event source mapping are deleted while clients submit new settlements and ledger entries, the API continues accepting writes (`201` and `202`) because the PostgreSQL transaction commits before the best-effort SQS send. Those events remain in `clearledger.outbox` with `published_at = NULL`, and `GET /v1/settlements/{id}` returns `404` until the messaging path is restored.
 
-1. **Induce the fault:** the verifier corrupts existing DynamoDB `STATE`, `EVENT#*`, and `AccountIndex` GSI items (along with planting stray items and orphan partitions), poisons Valkey cache entries, tampers with S3 audit batch objects, drifts Lambda/Scheduler configuration, deletes the projector Lambda event source mapping and the main/DLQ SQS queues, and then submits a new settlement and ledger entries. PostgreSQL commits the new writes durably with `published_at = NULL`, while `GET` returns `404`.
-2. **Repair the control plane:** the verifier re-runs `deploy.sh`, which refreshes Terraform/OpenTofu state, recreates the missing SQS queues, schedules, and Lambda event source mapping, reconciles drifted worker configuration, and updates `/workspace/submission/manifest.json`.
-3. **Reconcile the data plane inside `deploy.sh`:** before exiting `0`, `deploy.sh` invokes the Outbox Relay Lambda until all unpublished outbox rows (`published_at IS NULL`) are drained, reconciles DynamoDB (`STATE`, `EVENT#*`, and `AccountIndex` GSI) and Valkey (`clearledger:settlement:<id>`) 1-to-1 against `clearledger.settlements` and `clearledger.events` (purging any orphan or stray items and keys), and reconciles S3 `ledger-audit/` objects against `clearledger.outbox` before invoking the Audit Archiver Lambda so every committed event is archived once with its valid canonical key and SHA-256 digest.
+When the operator or verifier re-runs `deploy.sh`:
+1. Terraform/OpenTofu recreates the deleted SQS queues, EventBridge schedules, and Lambda event source mapping, reconciles any drifted queue, log group, schedule, or Lambda environment settings, and refreshes `manifest.json`.
+2. `deploy.sh` invokes the Outbox Relay Lambda until all rows with `published_at IS NULL` are published and marked delivered.
+3. `deploy.sh` reconciles DynamoDB (`STATE`, `EVENT#*`, and `AccountIndex` GSI attributes) and Valkey 1-to-1 against `clearledger.settlements` and `clearledger.events`, deleting any orphan partitions or stray items/keys and rebuilding any settlement whose projection or event items drifted.
+4. `deploy.sh` reconciles S3 objects under `ledger-audit/` against `clearledger.outbox`, removing stray, tampered, duplicate, or out-of-order batch files, resetting `archived_at = NULL` for any committed outbox rows missing from S3, and invoking the Audit Archiver Lambda until every outbox event is archived once.
 
 ```mermaid
 sequenceDiagram
@@ -237,29 +238,28 @@ sequenceDiagram
     participant DDB as DynamoDB
     participant Archiver as Audit Archiver Lambda
 
-    Verifier->>SQS: PHASE 1 · Delete ESM, main SQS queue, and corrupt existing DDB/Valkey state
-    Client->>API: Submit settlement write
-    API->>RDS: Commit event row and unpublished outbox row
+    Verifier->>SQS: Delete ESM and SQS queues; inject DDB/Valkey/S3 drift
+    Client->>API: POST /v1/settlements and /entries
+    API->>RDS: Commit settlement, event, and unpublished outbox rows
     RDS-->>API: Transaction committed
-    API-xSQS: Best-effort send fails (queue missing)
-    API-->>Client: Return 201/202 from durable SQL commit
-    Verifier->>Deploy: PHASE 2 · Re-run deploy.sh
-    Deploy->>SQS: Recreate SQS queue and Lambda event source mapping
-    Deploy->>Relay: PHASE 3 · Drain unpublished outbox rows (batch size 50)
-    Relay->>RDS: Select unpublished outbox rows
+    API-xSQS: Best-effort SendMessage fails (queue missing)
+    API-->>Client: Return 201 / 202 from durable PostgreSQL commit
+    Verifier->>Deploy: Re-run deploy.sh
+    Deploy->>SQS: Recreate SQS queues, schedules, and ESM via Terraform/OpenTofu
+    Deploy->>Relay: Invoke Outbox Relay until published_at IS NULL count is 0
+    Relay->>RDS: Fetch unpublished outbox rows
     RDS-->>Relay: Return pending event envelopes
-    Relay->>SQS: Send pending events to restored queue
-    SQS-->>Relay: Confirm delivery
-    Relay->>RDS: Set published_at timestamp
+    Relay->>SQS: Publish pending events to restored queue
+    Relay->>RDS: Stamp published_at
     SQS->>Projector: Deliver recovered events
-    Projector->>DDB: Write recovered settlement projection
-    Deploy->>Projector: Rebuild any missing/lagging DDB STATE projections & evict stale Valkey keys
-    Deploy->>Archiver: Drain unarchived outbox rows to S3 audit bucket
+    Projector->>DDB: Write recovered projections
+    Deploy->>Projector: Purge orphan/stray DDB & Valkey items and rebuild drifted partitions
+    Deploy->>Archiver: Reconcile S3 ledger-audit/ batches and archive unarchived outbox rows
 ```
 
 ### 8. Archive published events to Amazon S3
 
-Every five minutes (`rate(5 minutes)`), EventBridge Scheduler triggers the Audit Archiver Lambda. The archiver queries RDS PostgreSQL for published outbox rows whose `archived_at` column is still `NULL`, validates each event envelope, writes a deterministic NDJSON object (`ledger-audit/batch-<first_seq>-<last_seq>-<sha256_prefix>.ndjson`) to the KMS-encrypted S3 audit bucket, and stamps `archived_at` in PostgreSQL.
+Every five minutes (`rate(5 minutes)`), EventBridge Scheduler invokes the Audit Archiver Lambda. The archiver selects published outbox rows where `archived_at IS NULL` ordered by `seq ASC`, validates each envelope, writes a newline-delimited JSON batch to `s3://<audit_bucket>/ledger-audit/batch-<first_seq:08d>-<last_seq:08d>-<16_char_sha256_hex>.ndjson`, and updates `archived_at` in PostgreSQL.
 
 ```mermaid
 sequenceDiagram
@@ -268,17 +268,17 @@ sequenceDiagram
     participant RDS as RDS PostgreSQL
     participant S3 as Private S3 Bucket
 
-    Scheduler->>Archiver: Trigger scheduled archive run
-    Archiver->>RDS: Fetch published unarchived events
-    RDS-->>Archiver: Return ordered event batch
-    Archiver->>S3: PutObject ledger-audit/batch-*.ndjson
-    S3-->>Archiver: Confirm object stored
-    Archiver->>RDS: Mark events archived_at
+    Scheduler->>Archiver: Trigger scheduled invocation (rate(5 minutes))
+    Archiver->>RDS: SELECT published outbox rows WHERE archived_at IS NULL ORDER BY seq ASC
+    RDS-->>Archiver: Return ordered event envelopes
+    Archiver->>S3: PutObject ledger-audit/batch-<first_seq>-<last_seq>-<sha256>.ndjson
+    S3-->>Archiver: Confirm KMS-encrypted object stored
+    Archiver->>RDS: UPDATE clearledger.outbox SET archived_at = NOW()
 ```
 
 ## Score
 
-The verifier evaluates the submission across **19 test blocks** grouped into **six categories** totaling **100 points**. A submission only passes when it satisfies all four prerequisite gates, achieves **100 / 100** across the scored blocks, and triggers no score caps.
+The verifier grades the submission across **19 scored test blocks** grouped into **6 categories** totaling **100 points**. Only a score of **100 / 100** with all prerequisite gates passing and no score caps triggered counts as a pass.
 
 | Category | Points |
 |---|---:|
@@ -290,43 +290,42 @@ The verifier evaluates the submission across **19 test blocks** grouped into **s
 | Security and observability | 11 |
 | **Total** | **100** |
 
-Here is what each scored test block checks and how points are distributed:
+The 19 test blocks are grouped below from highest-weighted category to lowest, and ordered within each category from highest point value to lowest:
 
-| Category | Scored test block | What its experiments prove | Points |
+| Category | Scored test block | What the test proves | Points |
 |---|---|---|---:|
-| Core product behavior | Settlement workflow | 8–10 randomized settlement lifecycles with 3–5 clearing/settlement entries each commit cleanly, project into DynamoDB, return accurate state and ordered ledger histories through the ALB, and reject invalid domain transitions (trimmed self-dealing `debitParty == creditParty`, stage regressions, transitions out of terminal `RECONCILED`, whitespace-only memos, and duplicate per-settlement `entryId` values) with `400 Bad Request` via PostgreSQL constraints and triggers. | 9 |
-| Core product behavior | Projection and cache | Deleting the Valkey key causes the next `GET /v1/settlements/{id}` to return `X-ClearLedger-Source: projection` and repopulate Valkey so the following read returns `X-ClearLedger-Source: cache`; writes invalidate the cached key. | 7 |
-| Core product behavior | Idempotency and concurrency | Sequential and 6-way concurrent replays of the same `Idempotency-Key` commit only once (`idempotentReplay: true` on replays), reusing an `Idempotency-Key` with a mutated payload returns `409`, a stale `expectedVersion` returns `409`, and a 5-way concurrent race on the same `expectedVersion` produces exactly one `202` winner and four `409` conflicts. | 8 |
-| Recovery | Outbox recovery | Deleting the projector Event Source Mapping, schedules, and SQS queues while corrupting existing DynamoDB `STATE`/`EVENT#*`/`AccountIndex` items, Valkey cache keys, and S3 audit batches does not block write acceptance in PostgreSQL, and re-running `deploy.sh` restores the queues/ESM, drains pending outbox rows, heals DynamoDB/Valkey/S3 1-to-1 against PostgreSQL, and purges orphan or stray items before exiting `0`. | 6 |
-| Recovery | Projection rebuild | Deleting the DynamoDB `STATE` and `EVENT#` items and Valkey key causes `GET` to return `404` until `POST /v1/admin/projections/{id}/rebuild` replays the PostgreSQL event log through SQS. | 5 |
-| Recovery | ECS task replacement | Stopping one running ECS task leaves `/health/ready` and existing settlement reads available via the remaining task while ECS schedules a replacement to return to 2 running tasks. | 5 |
-| Recovery | RDS reboot recovery | Rebooting the RDS PostgreSQL instance preserves all previously committed settlement records and allows new writes to succeed once the instance returns healthy. | 4 |
-| Architecture and deployment | Infrastructure managed with Terraform or OpenTofu | Validation (`terraform validate` or `tofu validate`) succeeds and `infra/terraform.tfstate` manages all required AWS resource types and tagged resources (combining `tags` and `tags_all`) for the deployment prefix without imperative CLI creation in `deploy.sh`. | 3 |
-| Architecture and deployment | Declared compute and ingress | State declares the 2-AZ VPC, public/private subnets, 4 security groups (`alb`, `ecs`, `rds`, `valkey`, supporting both inline and standalone security group rule resources), internet-facing ALB + HTTP listener + `/health/ready` target group, and ECS Fargate service/task definition (`desired_count >= 2`, `CACHE_TTL_SECONDS = 90`, `AUTH_ISSUER`, `AUTH_JWKS_URL`, `AUTH_AUDIENCES` containing all 3 Cognito client IDs, and exact `ecs_execution` / `ecs_task` role bindings). | 2 |
-| Architecture and deployment | Declared data and messaging | Resolved state and parsed IaC configuration declare RDS PostgreSQL 16 (`db.t4g.micro`, encrypted with `database` KMS key), SQS main queue (`visibility_timeout = 3`, `wait_time = 2`, `retention = 172800`) + DLQ (`retention = 1209600`, `maxReceiveCount = 4`, supporting both inline `redrive_policy` and standalone `aws_sqs_queue_redrive_policy`, both encrypted with `messaging` KMS key), 3 container Lambdas bound to their respective IAM roles (`OUTBOX_BATCH_SIZE = 50`, `AUDIT_PREFIX = ledger-audit/`), SQS ESM (`batch_size = 5`, `ReportBatchItemFailures`), 2 EventBridge schedules bound to the `scheduler` role, DynamoDB (`PK`/`SK`, `AccountIndex` GSI, `point_in_time_recovery = true`, SSE with `projection` KMS key), ElastiCache Valkey 8 (`cache.t4g.micro`), and S3 (`Enabled` versioning, `aws:kms` SSE with `audit` KMS key, public access block). | 2 |
-| Architecture and deployment | Live ingress and compute | Live AWS inspection confirms the ALB, listener, target group, ECS cluster/service convergence (`>= 2` running tasks across `2` AZs), live task definition role attachments (`executionRoleArn` and `taskRoleArn`), and `/health/ready` responses (`postgres`, `dynamodb`, `sqs`, and `valkey` all `UP`) match `manifest.json`. | 5 |
-| Architecture and deployment | Live data and event graph | Live AWS and PostgreSQL inspection confirms RDS and the initialized `clearledger` schema (`settlements`, `events`, `outbox`, `idempotency_keys`, 3 indexes, and savepoint-isolated relational `CHECK`, `FOREIGN KEY`, and trigger invariants), SQS queue and DLQ KMS encryption (`messaging` key) and redrive policy, Lambda container configurations and attached IAM roles, EventBridge schedules and target roles, DynamoDB `AccountIndex` GSI + `ENABLED` continuous backups (PITR), Valkey node, and S3 versioning, `aws:kms` bucket encryption (`audit` key), and public-access blocks. | 5 |
-| Lifecycle | Stable deployment | Introducing multi-service control-plane drift (SQS `VisibilityTimeout`, DLQ `MessageRetentionPeriod`, disabled EventBridge schedules, lowered log retention, mutated Lambda `OUTBOX_BATCH_SIZE` and `AUDIT_PREFIX`) alongside data-plane drift (unpublished/unarchived outbox row, corrupted DynamoDB `STATE`/`EVENT#*`/`AccountIndex` items, poisoned Valkey cache, and tampered/orphan S3 audit batches) and re-running `deploy.sh` reconciles both control plane and data plane cleanly without replacing RDS, DynamoDB, or S3. | 7 |
-| Lifecycle | Clean destroy | Planting out-of-band prefix-scoped operational artifacts (inline and multi-version managed IAM policies, breakglass IAM role, versioned S3 bucket, DynamoDB table, `<resource_prefix>-ops-dlq` SQS queue, EventBridge schedule, KMS key+alias, and `/clearledger/<resource_prefix>/ops-audit` log group) and running `destroy.sh` exits `0`, leaves `terraform.tfstate` with zero managed resources, removes every deployment and prefix-scoped resource, and leaves all pre-existing baseline (`cl-base-*`) resources untouched. | 8 |
-| Asynchronous processing | Backlog recovery | Disabling the SQS event source mapping causes 25 rapid ledger entries across 5 settlements to queue in SQS (`GET` returns `404` while disabled) and drain cleanly in version order once re-enabled. | 7 |
-| Asynchronous processing | Duplicate and invalid messages | Duplicate and stale (`v1`) SQS deliveries, deterministic out-of-order delivery (`v3` followed by `v1` and `v2`), and 6-way concurrent projector invocations racing scrambled event batches never regress the projected version or state in DynamoDB, while poison messages are isolated to the DLQ after 4 receives. | 6 |
-| Security and observability | Declared security | State declares 6 distinct IAM roles with service-specific trust policies and least-privilege resource-scoped permissions (including scoping `archiver` object writes to `<audit_bucket_arn>/ledger-audit/*` without `s3:DeleteObject`), 4 customer-managed KMS keys (`enable_key_rotation = true`, `deletion_window_in_days` between `10` and `30`) with 4 KMS aliases, Cognito user pool/resource server/3 scoped clients, and 4 CloudWatch Log Groups (`retention_in_days >= 14`). | 3 |
-| Security and observability | Live security graph | Live AWS inspection verifies the 6 IAM roles, trust policies, effective positive/negative permissions (including prefix-scoped S3 object writes and WORM delete prohibition) and `simulate_principal_policy` decisions, 4 enabled KMS keys with active key rotation and aliases, Cognito scopes (`clearledger/read`, `clearledger/write`, `clearledger/admin`), and 4 CloudWatch Log Groups (`retentionInDays >= 14`). | 5 |
-| Security and observability | Authorization, audit and logs | Every endpoint enforces strict non-hierarchical OAuth2 scope checks (`401` missing/forged token, `403` wrong scope), the archiver writes valid `ledger-audit/batch-*.ndjson` envelopes to S3, and CloudWatch Logs record correlation IDs without leaking database passwords or client secrets. | 3 |
-| **Total** |  |  | **100** |
+| Core product behavior | Settlement workflow | Executes 8 to 10 randomized settlement lifecycles with 3 to 5 ledger entries each through the ALB, verifies DynamoDB projections and ordered ledger histories, and confirms that invalid domain writes (identical or whitespace-padded `debitParty` and `creditParty`, backward status regressions, transitions out of terminal `RECONCILED`, whitespace-only memos, and duplicate per-settlement `entryId` values) are rejected with `400 Bad Request` via PostgreSQL constraints and triggers. | 9 |
+| Core product behavior | Idempotency and concurrency | Verifies that sequential and 6-way concurrent replays of the same `Idempotency-Key` commit once and return `idempotentReplay: true`, reusing an `Idempotency-Key` with a modified payload returns `409 Conflict`, stale `expectedVersion` writes return `409 Conflict`, and a 5-way concurrent race on the same `expectedVersion` yields exactly one `202 Accepted` winner and four `409 Conflict` responses. | 8 |
+| Core product behavior | Projection and cache | Verifies that evicting the Valkey key causes the next `GET /v1/settlements/{id}` to read from DynamoDB (`X-ClearLedger-Source: projection`) and populate Valkey with a TTL in `(0, 90]`, the subsequent read hits Valkey (`X-ClearLedger-Source: cache`), and appending a new ledger entry invalidates the cached projection. | 7 |
+| Recovery | Outbox recovery | Deletes the projector event source mapping, EventBridge schedule, and SQS queues while injecting DynamoDB (`STATE`, `EVENT#*`, `AccountIndex` GSI), Valkey, and S3 audit corruption, confirms that new settlement writes still commit in PostgreSQL while `GET` returns `404`, and verifies that re-running `deploy.sh` restores the queues and ESM, drains unpublished outbox rows, and reconciles DynamoDB, Valkey, and S3 1-to-1 against PostgreSQL. | 6 |
+| Recovery | Projection rebuild | Deletes a settlement's `STATE` and `EVENT#*` items from DynamoDB and evicts its Valkey key so `GET /v1/settlements/{id}` returns `404`, then calls `POST /v1/admin/projections/{id}/rebuild` with an admin token and verifies that all events are replayed from PostgreSQL through SQS to reconstruct the projection and ledger trail. | 5 |
+| Recovery | ECS task replacement | Stops one running ECS Fargate API task and verifies that `/health/ready` and settlement reads stay available through the remaining task while the ECS service launches a replacement task to return to 2 running tasks. | 5 |
+| Recovery | RDS reboot recovery | Reboots the RDS PostgreSQL instance, waits for `/health/ready` to report `postgres = "UP"`, and verifies that all previously committed settlements remain intact and new settlement writes succeed. | 4 |
+| Architecture and deployment | Live ingress and compute | Queries live EC2, ELBv2, and ECS APIs to verify the two-AZ VPC, subnets, security groups (`alb`, `ecs`, `rds`, `valkey`), internet-facing ALB, listener, `/health/ready` target group, ECS cluster (`containerInsights = "enabled"`), task definition role bindings, at least 2 running Fargate tasks in private subnets, and live `/health/ready` status across `postgres`, `dynamodb`, `sqs`, and `valkey`. | 5 |
+| Architecture and deployment | Live data and event graph | Queries live RDS, PostgreSQL, SQS, Lambda, EventBridge Scheduler, DynamoDB, ElastiCache, and S3 APIs to verify the `clearledger` tables, indexes, and savepoint-tested `CHECK` / `FOREIGN KEY` / trigger invariants, SQS and DLQ KMS encryption and redrive policy, container Lambda roles and environment variables, enabled schedules, DynamoDB `AccountIndex` GSI and PITR, Valkey node, and S3 versioning, KMS encryption, and public access blocks. | 5 |
+| Architecture and deployment | Infrastructure managed with Terraform or OpenTofu | Runs `terraform validate` / `tofu validate`, checks that all required AWS resource types and at least 25 `ClearLedgerDeployment`-tagged resources are managed in `infra/terraform.tfstate`, and verifies that `deploy.sh` does not create scored resources with imperative `aws` CLI commands. | 3 |
+| Architecture and deployment | Declared compute and ingress | Inspects `terraform.tfstate` to verify the declared VPC, public and private route table associations, security group ingress and egress rules, ALB, target group, listener, and ECS Fargate cluster, service, and task definition environment variables (`CACHE_TTL_SECONDS = "90"`, `AUTH_ISSUER`, `AUTH_JWKS_URL`, `AUTH_AUDIENCES`). | 2 |
+| Architecture and deployment | Declared data and messaging | Inspects `terraform.tfstate` and parsed IaC configuration to verify RDS PostgreSQL 16 with `database` KMS encryption, main SQS queue and DLQ with `messaging` KMS encryption and `maxReceiveCount = 4`, three container Lambdas (`OUTBOX_BATCH_SIZE = "50"`, `AUDIT_PREFIX = "ledger-audit/"`), SQS ESM (`batch_size = 5`, `ReportBatchItemFailures`), two EventBridge schedules, DynamoDB (`PK`/`SK`, `AccountIndex`, PITR, `projection` KMS SSE), ElastiCache Valkey 8, and S3 (`Enabled` versioning, `audit` KMS SSE, public access block). | 2 |
+| Lifecycle | Clean destroy | Plants out-of-band prefix-scoped operational artifacts (inline and multi-version managed IAM policies, breakglass IAM role, versioned S3 bucket, DynamoDB table, SQS queue, EventBridge schedule, KMS key and alias, and CloudWatch Log Group), runs `destroy.sh`, and verifies that `terraform.tfstate` has zero managed resources, all deployment and prefix-scoped resources are removed, and all pre-existing baseline (`cl-base-*`) resources remain untouched. | 8 |
+| Lifecycle | Stable deployment | Injects control-plane drift (SQS `VisibilityTimeout`, DLQ `MessageRetentionPeriod`, disabled EventBridge schedules, reduced log retention, mutated Lambda `OUTBOX_BATCH_SIZE` and `AUDIT_PREFIX`) and data-plane drift (unpublished/unarchived outbox row, corrupted DynamoDB `STATE` / `EVENT#*` / `AccountIndex` items, poisoned Valkey keys, and tampered/orphan S3 audit batches), re-runs `deploy.sh`, and verifies full control-plane and 1-to-1 data-plane convergence without replacing RDS, DynamoDB, or S3. | 7 |
+| Asynchronous processing | Backlog recovery | Disables the projector SQS event source mapping, submits 25 events across 5 settlements (confirming `GET` returns `404` while buffered in SQS), re-enables the mapping, and verifies that all 5 settlements drain and project to their final versions. | 7 |
+| Asynchronous processing | Duplicate and invalid messages | Re-delivers duplicate and stale (`v1`) events over SQS, invokes the projector with deterministic out-of-order (`v3` -> `v1` -> `v2`) and 6-way concurrent scrambled batches to prove projections never regress, and sends a malformed poison message to verify that it routes to the DLQ after 4 failed receives without blocking valid messages. | 6 |
+| Security and observability | Live security graph | Queries live IAM, KMS, Cognito, and CloudWatch Logs APIs (plus `simulate_principal_policy`) to verify all 6 IAM roles, trust policies, and least-privilege resource boundaries, 4 enabled customer-managed KMS keys with key rotation enabled and aliases attached, Cognito resource server and client scopes, and 4 log groups with `retentionInDays >= 14`. | 5 |
+| Security and observability | Declared security | Inspects `terraform.tfstate` to verify the 6 IAM roles and policies (no wildcard actions or resources, prefix-scoped S3 writes without `s3:DeleteObject`, per-role KMS and log group isolation), 4 KMS keys (`enable_key_rotation = true`, `deletion_window_in_days` in `10..30`) and aliases, Cognito user pool/resource server/clients, and 4 CloudWatch Log Groups (`retention_in_days >= 14`). | 3 |
+| Security and observability | Authorization, audit and logs | Verifies `401` on missing/forged tokens and `403` across the full cross-scope matrix (`read`, `write`, `admin`), confirms that S3 audit batches validate against `events.schema.json`, and checks that all four CloudWatch Log Groups record `correlationId` without leaking `db_password` or Cognito `client_secret` values. | 3 |
+| **Total** | | | **100** |
 
 ### Prerequisite Gates and Score Caps
 
-Before running the 19 scored test blocks, `tests/suite/conftest.py` and `tests/suite/scoring.py` evaluate four prerequisite gates. If any prerequisite gate fails, the run halts and the final score is set to **`0`**:
+Before running the 19 scored test blocks, `tests/suite/conftest.py` and `tests/suite/scoring.py` check four prerequisite gates. If any gate fails, execution stops and the final score is **`0`**:
 
-1. **`submission_layout`**: `/workspace/submission/deploy.sh`, `/workspace/submission/destroy.sh`, and `/workspace/submission/infra/` (containing `.tf` or `.tofu` files) must exist.
-2. **`deploy_succeeded`**: Running `/workspace/submission/deploy.sh` must exit `0` within 720 seconds and produce `/workspace/submission/infra/terraform.tfstate`.
-3. **`manifest_valid`**: `/workspace/submission/manifest.json` must exist (`<= 1 MiB`), validate against `/workspace/contracts/schemas/manifest.schema.json`, and match the configured `resource_prefix`.
+1. **`submission_layout`**: `/workspace/submission/deploy.sh`, `/workspace/submission/destroy.sh`, and `/workspace/submission/infra/` (with `.tf` or `.tofu` files) must exist.
+2. **`deploy_succeeded`**: `/workspace/submission/deploy.sh` must exit `0` within 720 seconds and write `/workspace/submission/infra/terraform.tfstate`.
+3. **`manifest_valid`**: `/workspace/submission/manifest.json` must exist (`<= 1 MiB`), validate against `/workspace/contracts/schemas/manifest.schema.json`, and match `config.json`'s `resource_prefix`.
 4. **`service_reachable`**: `GET /health/live` and `GET /health/ready` against `manifest.service_url` must return HTTP `200`.
 
-In addition to the prerequisite gates and point weights above, the verifier applies three score caps if critical runtime or lifecycle invariants are violated:
+In addition, three score caps override the raw point total if a critical reliability, security, or lifecycle rule is broken:
 
-- **Accepted write loss or corruption (`accepted_write_loss`, score cap: `49`)**: Applied if any settlement creation or ledger entry write that returned HTTP `201`/`202` is lost or corrupted in PostgreSQL or the rebuilt projection during normal workflow execution, SQS outage recovery, or RDS reboot recovery.
-- **Critical authorization escalation (`auth_escalation`, score cap: `49`)**: Applied if an unauthenticated request or an under-scoped token (`read`, `write`, or `admin` outside its permitted routes) is accepted, or if database passwords or OAuth client secrets are leaked in CloudWatch Logs.
-- **Teardown resource leak (`cleanup_leak`, score cap: `79`)**: Applied if `destroy.sh` exits non-zero, leaves managed resources in `terraform.tfstate` or leaked trial resources in the AWS account, or deletes/disables any pre-existing baseline resource.
-
+- **Accepted write loss or corruption (`accepted_write_loss`, cap: `49`)**: Applied if any settlement initiation (`201`) or ledger entry (`202`) accepted by the API is lost or corrupted in PostgreSQL or the rebuilt projection during normal workflow execution, SQS outage recovery, or RDS reboot recovery.
+- **Authorization escalation or secret leak (`auth_escalation`, cap: `49`)**: Applied if an unauthenticated request or an under-scoped token (`read`, `write`, or `admin` outside its permitted routes) is accepted, or if `db_password` or any Cognito `client_secret` appears in CloudWatch Logs.
+- **Teardown resource leak or baseline damage (`cleanup_leak`, cap: `79`)**: Applied if `destroy.sh` exits non-zero, leaves managed resources in `terraform.tfstate`, leaks prefix-scoped resources in the cloud account, or deletes/disables any pre-existing baseline (`cl-base-*`) resource.
