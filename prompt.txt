@@ -10,16 +10,23 @@ HOW TO USE THIS FILE
       `=== END COPY-PASTE PROMPT ===`
 2. Before sending the prompt to your AI coding tool, scroll to the bottom section
    titled `[NEW TASK CONFIGURATION — EDIT THESE FIELDS]` and fill in:
-   - `CLOUD_PROVIDER`: Choose `AWS`, `GCP`, or `Azure` (or `Multi-Cloud`).
-   - `DOMAIN_VERTICAL`: Choose a domain (see the pre-built list of domains below,
-     or write your own, or leave as `AUTO_PROPOSE_3_OPTIONS` to have the AI pitch
-     3 non-overlapping ideas first).
-   - `TASK_CATEGORY`: e.g., `reliability_and_recovery`, `security_and_compliance`,
-     `multi_service_architecture`, `data_reconciliation`, `zero_trust_networking`.
+   - `CLOUD_PROVIDER`: Choose `AWS`, `GCP`, or `Azure`.
+   - `REALM_DOMAIN` (maps to `category` in `task.toml`): Choose one of the 6 official
+     Realm DevCloud domains:
+       1. `compute_and_deployment`      (Compute and Deployment)
+       2. `data_and_storage`            (Data and Storage)
+       3. `identity_and_access`         (Identity and Access)
+       4. `messaging_and_events`        (Messaging and Events)
+       5. `networking_and_traffic`      (Networking and Traffic)
+       6. `observability_and_monitoring` (Observability and Monitoring)
+       *(or `reliability_and_recovery` if building a cross-domain recovery task)*
+   - `BUSINESS_SCENARIO`: Choose a concrete industry scenario (or leave as
+     `AUTO_PROPOSE_3_OPTIONS` so the AI proposes 3 high-difficulty scenarios tailored
+     to your chosen `CLOUD_PROVIDER` and `REALM_DOMAIN`).
    - `TASK_NAME` & `TASK_ID`: e.g., `devcloud/medvault-clinical-ledger`, `task_id = "3"`.
    - `AUTHOR_NAME` & `AUTHOR_EMAIL`: Your name and email for `task.toml`.
    - `TARGET_MODELS`: The frontier models being evaluated on Realm
-     (default: `claude-sonnet-5-5`, `claude-opus-5-5`, `gpt-6.1-sol`, `gpt-astra`).
+     (`claude-sonnet-5-5`, `claude-opus-5-5`, `gpt-6.1-sol`, `gpt-astra`).
 3. Send the prompt to the AI tool. It will design and build the entire repository
    (`task.toml`, `instruction.md`, `reasoning.md`, `environment/`, `solution/`, `tests/`).
 4. After you upload the task to Realm and download a model evaluation artifact folder
@@ -28,9 +35,9 @@ HOW TO USE THIS FILE
    `True Fail`, `False Fail`, `True Pass`, or `False Pass`.
 
 
-QUICK-PICK OPTIONS FOR `CLOUD_PROVIDER` & `DOMAIN_VERTICAL`
------------------------------------------------------------
-* Cloud Providers:
+QUICK-PICK OPTIONS FOR `CLOUD_PROVIDER`, `REALM_DOMAIN`, & `BUSINESS_SCENARIO`
+------------------------------------------------------------------------------
+* 1. Cloud Providers (`CLOUD_PROVIDER`):
   - `AWS`: Uses Floci (`mirror.gcr.io/floci/floci:2.1.0`) local AWS control plane
     with Terraform/OpenTofu `hashicorp/aws` provider, real container-backed ECS,
     RDS Postgres, ElastiCache Valkey, container Lambda, DynamoDB, SQS FIFO, S3,
@@ -44,24 +51,45 @@ QUICK-PICK OPTIONS FOR `CLOUD_PROVIDER` & `DOMAIN_VERTICAL`
     Queues/Topics + DLQ, Cosmos DB, Blob Storage, Key Vault, Managed Identities)
     with pre-cached Terraform/OpenTofu `hashicorp/azurerm` provider.
 
-* Example High-Difficulty Domains (`DOMAIN_VERTICAL`):
-  1. `FinTech / Real-Time Clearing & Settlement Ledger` (Double-entry journal,
-     transactional outbox, FIFO projection, KMS audit archive).
-  2. `Healthcare / Clinical Trial Adverse-Event & Consent Ledger` (HIPAA-grade
-     blind/unblind state machine, immutable consent chain, de-identified read
-     projections, strict KMS & cross-role deny boundaries).
-  3. `Supply Chain / Cold-Chain Pharmaceutical Custody & Quarantine Platform`
-     (IoT telemetry ingestion, temperature-excursion state transitions, lot
-     quarantine locks, customs manifest archive, drift-resilient infrastructure).
-  4. `Energy Grid / Carbon Credit Issuance, Retirement & Double-Counting Guard`
-     (Serial-block reservation, atomic retirement triggers, registry sync outbox,
-     tamper-evident S3/GCS registry snapshots).
-  5. `Telecom / Real-Time Roaming CDR Mediation & Fraud Circuit-Breaker`
-     (High-throughput rating state machine, credit-limit reservation, DLQ poison
-     CDR isolation, cross-store cache/projection reconciliation).
-  6. `SecOps / Automated Threat Quarantine, Evidence Custody & SOAR Pipeline`
-     (Chain-of-custody append-only ledger, monotonic incident severity state
-     machine, zero-egress forensic vaults, least-privilege responder roles).
+* 2. Official Realm DevCloud Domains (`REALM_DOMAIN` -> `task.toml` `category`):
+  1. `compute_and_deployment` (Compute and Deployment):
+     - Multi-service container orchestration (ECS Fargate / Cloud Run / ACA),
+       serverless worker fleets (Lambda / Cloud Functions), zero-downtime task
+       rollouts, health-check gating, task crash self-healing, and artifact/image
+       deployment pipelines integrated with stateful backends.
+  2. `data_and_storage` (Data and Storage):
+     - Polyglot persistence across relational (RDS/Cloud SQL Postgres with PL/pgSQL
+       immutability & monotonic state triggers), NoSQL (DynamoDB/Firestore with GSIs
+       & PITR), in-memory cache (Valkey/Redis with namespace eviction), and KMS-encrypted
+       object storage (S3/GCS with versioning, lifecycle rules & tamper-evident archives).
+  3. `identity_and_access` (Identity and Access):
+     - Multi-role least-privilege IAM topologies (6+ distinct execution, task, and
+       worker roles), explicit `Effect = "Deny"` destructive-action guardrails,
+       cross-service role boundary denies, KMS key policies & rotation, Secrets Manager
+       / SSM credential isolation, and Cognito / JWT token authentication.
+  4. `messaging_and_events` (Messaging and Events):
+     - Transactional outbox relay, ordered FIFO queues (SQS FIFO / Pub/Sub ordered
+       subscriptions / Service Bus sessions), content-based deduplication, poison-message
+       redrive isolation to DLQs (`maxReceiveCount = 3`), S3/storage event notifications,
+       and EventBridge Scheduler recurring reconciliation pipelines.
+  5. `networking_and_traffic` (Networking and Traffic):
+     - Multi-AZ VPC topologies (public & private subnet tiers, custom route tables,
+       IGW), Application Load Balancers + Target Groups + health-checked listeners,
+       zero-trust security group chains (strict port-scoped `alb -> ecs -> rds/valkey`
+       ingress and `egress = []` on data-store security groups), and live drift remediation.
+  6. `observability_and_monitoring` (Observability and Monitoring):
+     - Structured CloudWatch Log Groups with strict retention & IAM log-stream scoping,
+       composite/metric CloudWatch Alarms (DLQ depth, unhealthy host count, error rate,
+       reconciler lag) wired to SNS notification topics, automated drift & audit
+       discrepancy detection, and live JSON verification evidence reporting.
+
+* 3. Example Business Scenarios (`BUSINESS_SCENARIO` — works with any Realm Domain):
+  - `FinTech / Real-Time Clearing & Settlement Ledger`
+  - `Healthcare / Clinical Trial Adverse-Event & Consent Ledger`
+  - `Supply Chain / Cold-Chain Pharmaceutical Custody & Quarantine Platform`
+  - `Energy Grid / Carbon Credit Issuance, Retirement & Double-Counting Guard`
+  - `Telecom / Real-Time Roaming CDR Mediation & Fraud Circuit-Breaker`
+  - `SecOps / Automated Threat Quarantine, Evidence Custody & SOAR Pipeline`
 
 
 ================================================================================
@@ -214,10 +242,28 @@ Both `instruction.md` and `reasoning.md` **must read like authentic engineering 
 
 ---
 
-## 6. Execution Workflow
+## 6. Official Realm Domains (How to Tailor the Task to the Selected `REALM_DOMAIN`)
+
+Every DevCloud Benchmark task belongs to one of the 6 official Realm domains (or `reliability_and_recovery`). While every task must remain a multi-service architecture with all 5 Frontier-Breaker invariants, anchor the primary challenge and deepest rubric checks around the selected `REALM_DOMAIN`:
+1. **`compute_and_deployment` (Compute and Deployment)**:
+   - Emphasize multi-container ECS Fargate / Cloud Run / ACA service orchestration, container-backed Lambda / serverless worker fleets, rollout/task recovery, health-check readiness gating, runtime environment/SSM wiring, and zero-downtime reapply idempotence.
+2. **`data_and_storage` (Data and Storage)**:
+   - Emphasize polyglot persistence invariants across PostgreSQL (PL/pgSQL immutability & monotonic state rank triggers), DynamoDB/NoSQL (composite keys, GSIs, PITR, KMS encryption), Valkey/Redis (read-through caching & full `<prefix>:*` namespace eviction), and S3/Object Storage (versioning, KMS default encryption, lifecycle policies, and tamper-evident audit archives).
+3. **`identity_and_access` (Identity and Access)**:
+   - Emphasize 6+ separated IAM roles / service accounts with resource-scoped least-privilege `Allow` policies (exact table + `/index/<GSI>` ARNs, bucket vs. object ARNs, per-service log group ARNs), explicit `Effect = "Deny"` guardrails against destructive actions, cross-service role boundary denies, KMS key rotation & aliases, Secrets Manager / SSM secret isolation, Cognito/JWT auth, and out-of-band IAM policy drift cleanup.
+4. **`messaging_and_events` (Messaging and Events)**:
+   - Emphasize transactional outbox relay from PostgreSQL to ordered FIFO queues (`.fifo`, content-based deduplication, message group ordering), poison-message redrive isolation (`maxReceiveCount = 3` to DLQ without blocking healthy message groups), S3/storage event notifications, and EventBridge Scheduler (`rate(1 minute)`) self-healing triggers.
+5. **`networking_and_traffic` (Networking and Traffic)**:
+   - Emphasize multi-AZ VPC design (2 public + 2 private subnets across `us-east-1a` and `us-east-1b`, custom route tables, IGW), ALB + Target Group + Listener routing, strict security group chaining (`alb -> ecs -> rds/valkey`), zero outbound egress (`egress = []`) on data-store security groups (`rds`, `valkey`), port-restricted egress on `alb` (TCP `8080` to VPC CIDR), and live EC2 security group drift remediation.
+6. **`observability_and_monitoring` (Observability and Monitoring)**:
+   - Emphasize CloudWatch Log Groups (`retention_in_days = 14`, strict per-workload IAM scoping), CloudWatch Metric Alarms (DLQ visible messages, ALB unhealthy hosts, worker error rates, reconciliation lag) wired to SNS topics, automated cross-store audit discrepancy detection, and the structured `/workspace/evidence/verification-report.json` verification artifact.
+
+---
+
+## 7. Execution Workflow
 
 Execute these steps in order:
-1. **Design Architecture, Contracts & Frontier-Breaker Invariants**: Present the domain architecture, state machine, database schema/triggers, cloud resource inventory, and 100-point rubric.
+1. **Design Architecture, Contracts & Frontier-Breaker Invariants**: Present the domain architecture tailored to `REALM_DOMAIN` and `CLOUD_PROVIDER`, state machine, database schema/triggers, cloud resource inventory, and 100-point rubric.
 2. **Implement Application Workloads (`environment/application/`)**: Write the pre-built service and worker binaries (e.g., Rust or Go).
 3. **Implement Environment & Contracts (`environment/Dockerfile`, `docker-compose.yaml`, `runtime.sh`, `workspace/contracts/*`)**: Build the container topology, bootstrapper, and complete contract documentation.
 4. **Implement Oracle Reference Solution (`solution/`)**: Write modular Terraform/OpenTofu files, `deploy.sh` (including schema setup, trigger creation, drift remediation, and cross-store reconciliation), `destroy.sh`, and `solve.sh`.
@@ -228,18 +274,27 @@ Execute these steps in order:
 
 ## [NEW TASK CONFIGURATION — EDIT THESE FIELDS]
 
-- **CLOUD_PROVIDER**: `AWS`  # Options: AWS | GCP | Azure
-- **DOMAIN_VERTICAL**: `AUTO_PROPOSE_3_OPTIONS`  # Or specify e.g. "Healthcare / Clinical Trial Adverse-Event & Consent Ledger"
-- **TASK_CATEGORY**: `reliability_and_recovery`  # e.g., reliability_and_recovery | security_and_compliance | multi_service_architecture
+- **CLOUD_PROVIDER**: `AWS`
+  # Choose one: AWS | GCP | Azure
+- **REALM_DOMAIN** (`category` in `task.toml`): `compute_and_deployment`
+  # Choose one of the 6 Realm domains:
+  #   1. compute_and_deployment
+  #   2. data_and_storage
+  #   3. identity_and_access
+  #   4. messaging_and_events
+  #   5. networking_and_traffic
+  #   6. observability_and_monitoring
+- **BUSINESS_SCENARIO**: `AUTO_PROPOSE_3_OPTIONS`
+  # Leave as AUTO_PROPOSE_3_OPTIONS, or specify e.g. "Healthcare / Clinical Trial Adverse-Event & Consent Ledger"
 - **TASK_NAME**: `devcloud/<task-slug>`
 - **TASK_ID**: `3`
-- **INSTANCE_ID**: `reliability_and_recovery_<task_slug>`
+- **INSTANCE_ID**: `<realm_domain>_<task_slug>`
 - **DIFFICULTY**: `hard`
 - **AUTHOR_NAME**: `Azeez`
 - **AUTHOR_EMAIL**: `azeez@micro1.ai`
 - **TARGET_MODELS (Must all evaluate to True Fail < 100/100)**: `claude-sonnet-5-5`, `claude-opus-5-5`, `gpt-6.1-sol`, `gpt-astra`
 - **ORACLE_TARGET**: `100% True Pass (100/100, reward = 1.0)`
-- **ADDITIONAL_NOTES**: `Start by proposing 3 distinct, high-difficulty domain architectures for the selected CLOUD_PROVIDER and TASK_CATEGORY, or if a specific DOMAIN_VERTICAL is set above, begin implementing Step 1 immediately.`
+- **ADDITIONAL_NOTES**: `Start by proposing 3 distinct, high-difficulty task architectures for the selected CLOUD_PROVIDER and REALM_DOMAIN, or if a specific BUSINESS_SCENARIO is set above, begin implementing Step 1 immediately.`
 
 ================================================================================
 === END COPY-PASTE PROMPT ===
