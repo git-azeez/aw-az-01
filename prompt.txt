@@ -286,9 +286,24 @@ Execute these steps in order:
   #   6. observability_and_monitoring
 - **BUSINESS_SCENARIO**: `AUTO_PROPOSE_3_OPTIONS`
   # Leave as AUTO_PROPOSE_3_OPTIONS, or specify e.g. "Healthcare / Clinical Trial Adverse-Event & Consent Ledger"
-- **TASK_NAME**: `devcloud/<task-slug>`
+- **TASK_NAME**: `AUTO_GENERATE`
+  # Format: `devcloud/<task-slug>` (where `<task-slug>` is a short 2-word kebab-case name of the platform).
+  # Reference examples from existing tasks:
+  #   - Current repo (`aw-az-01`): `devcloud/clearledger-settlement`
+  #   - Healthcare example:        `devcloud/medvault-consent`
+  #   - Supply chain example:      `devcloud/cryoguard-custody`
+  #   - Carbon registry example:   `devcloud/gridpulse-registry`
+  #   - SecOps example:            `devcloud/aegisvault-quarantine`
+  # (If left as `AUTO_GENERATE`, the AI will pick a clean `devcloud/<task-slug>` automatically based on the scenario.)
 - **TASK_ID**: `3`
-- **INSTANCE_ID**: `<realm_domain>_<task_slug>`
+- **INSTANCE_ID**: `AUTO_GENERATE`
+  # Format: `<realm_domain>_<task_slug_with_underscores>`
+  # Reference examples:
+  #   - Current repo (`aw-az-01`): `reliability_and_recovery_clearledger_settlement`
+  #   - Compute & Deployment:      `compute_and_deployment_medvault_consent`
+  #   - Data & Storage:            `data_and_storage_cryoguard_custody`
+  #   - Identity & Access:         `identity_and_access_aegisvault_quarantine`
+  # (If left as `AUTO_GENERATE`, the AI will format `<realm_domain>_<task_slug>` automatically.)
 - **DIFFICULTY**: `hard`
 - **AUTHOR_NAME**: `Azeez`
 - **AUTHOR_EMAIL**: `azeez@micro1.ai`
