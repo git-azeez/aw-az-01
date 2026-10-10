@@ -1,7 +1,0 @@
-{
-  "/workspace/submission": {
-    ".lifecycle.lock": "600",
-    "infra/terraform.tfstate.backup": "600",
-    "manifest.json": "600"
-  }
-}

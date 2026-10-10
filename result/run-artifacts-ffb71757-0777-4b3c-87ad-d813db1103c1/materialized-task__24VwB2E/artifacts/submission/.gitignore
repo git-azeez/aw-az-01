@@ -1,8 +1,0 @@
-__pycache__/
-.lifecycle.lock
-manifest.json
-drill-snapshot.json
-infra/.terraform/
-infra/*.tfstate*
-infra/*.plan
-infra/*.log
