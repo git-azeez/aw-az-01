@@ -1,0 +1,12 @@
+aws_elasticache_replication_group.cache: Modifying... [id=cl-455472-cache]
+aws_elasticache_replication_group.cache: Modifications complete after 0s [id=cl-455472-cache]
+aws_lambda_event_source_mapping.projector: Modifying... [id=f71e43a0-cecd-4f00-982d-bf66fbf057dc]
+aws_ecs_task_definition.api: Modifying... [id=cl-455472-api]
+aws_lambda_event_source_mapping.projector: Modifications complete after 0s [id=f71e43a0-cecd-4f00-982d-bf66fbf057dc]
+aws_ecs_task_definition.api: Modifications complete after 0s [id=cl-455472-api]
+
+Apply complete! Resources: 0 added, 3 changed, 0 destroyed.
+
+Outputs:
+
+manifest = <sensitive>

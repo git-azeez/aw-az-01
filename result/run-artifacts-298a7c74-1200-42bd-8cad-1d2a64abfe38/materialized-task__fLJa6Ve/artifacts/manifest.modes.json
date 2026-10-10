@@ -1,0 +1,15 @@
+{
+  "/workspace/submission": {
+    ".lifecycle.lock": "600",
+    "apply.log": "600",
+    "destroy.log": "600",
+    "infra/deploy.plan": "600",
+    "infra/inputs.auto.tfvars.json": "600",
+    "infra/terraform.tfstate": "600",
+    "infra/terraform.tfstate.backup": "600",
+    "init.log": "600",
+    "manifest.json": "600",
+    "plan.log": "600",
+    "schema.log": "600"
+  }
+}

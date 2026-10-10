@@ -1,0 +1,57 @@
+BEGIN
+ pg_advisory_xact_lock 
+-----------------------
+ 
+(1 row)
+
+psql:/workspace/submission/schema.sql:4: NOTICE:  schema "clearledger" already exists, skipping
+CREATE SCHEMA
+psql:/workspace/submission/schema.sql:11: NOTICE:  relation "settlements" already exists, skipping
+CREATE TABLE
+psql:/workspace/submission/schema.sql:17: NOTICE:  relation "events" already exists, skipping
+CREATE TABLE
+psql:/workspace/submission/schema.sql:23: NOTICE:  relation "outbox" already exists, skipping
+CREATE TABLE
+psql:/workspace/submission/schema.sql:27: NOTICE:  relation "idempotency_keys" already exists, skipping
+CREATE TABLE
+LOCK TABLE
+DO
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+DO
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+DO
+CREATE TRIGGER
+CREATE TRIGGER
+CREATE TRIGGER
+CREATE TRIGGER
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+ALTER TABLE
+DROP INDEX
+DROP INDEX
+DROP INDEX
+DROP INDEX
+DROP INDEX
+DROP INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+COMMIT

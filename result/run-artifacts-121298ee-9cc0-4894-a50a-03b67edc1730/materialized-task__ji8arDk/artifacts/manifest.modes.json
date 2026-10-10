@@ -1,0 +1,10 @@
+{
+  "/workspace/submission": {
+    ".lifecycle.lock": "600",
+    "infra/deploy.tfplan": "600",
+    "infra/destroy-plan.log": "600",
+    "infra/destroy.tfplan": "600",
+    "infra/plan.log": "600",
+    "manifest.json": "600"
+  }
+}

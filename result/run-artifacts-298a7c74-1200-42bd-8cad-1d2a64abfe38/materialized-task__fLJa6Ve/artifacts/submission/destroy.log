@@ -1,0 +1,3750 @@
+aws_cloudwatch_log_group.workload["archiver"]: Refreshing state... [id=/clearledger/cl-455472/audit-archiver]
+aws_iam_role.workload["ecs_execution"]: Refreshing state... [id=cl-455472-ecs_execution]
+aws_iam_role.workload["ecs_task"]: Refreshing state... [id=cl-455472-ecs_task]
+aws_iam_role.workload["archiver"]: Refreshing state... [id=cl-455472-archiver]
+aws_iam_role.workload["relay"]: Refreshing state... [id=cl-455472-relay]
+aws_iam_role.workload["scheduler"]: Refreshing state... [id=cl-455472-scheduler]
+aws_cloudwatch_log_group.workload["api"]: Refreshing state... [id=/clearledger/cl-455472/api]
+aws_cloudwatch_log_group.workload["projector"]: Refreshing state... [id=/clearledger/cl-455472/projector]
+aws_s3_bucket.audit: Refreshing state... [id=cl-455472-audit]
+aws_cloudwatch_log_group.workload["relay"]: Refreshing state... [id=/clearledger/cl-455472/outbox-relay]
+aws_iam_role.workload["projector"]: Refreshing state... [id=cl-455472-projector]
+aws_vpc.main: Refreshing state... [id=vpc-a06e539e]
+aws_ecs_cluster.api: Refreshing state... [id=arn:aws:ecs:us-east-1:000000000000:cluster/cl-455472-api]
+aws_cognito_user_pool.auth: Refreshing state... [id=us-east-1_f9d89a798]
+aws_kms_key.store["audit"]: Refreshing state... [id=47b6b001-9373-458b-9389-ca76a5fc7161]
+aws_subnet.public[1]: Refreshing state... [id=subnet-bd54cadc]
+aws_security_group.valkey: Refreshing state... [id=sg-363fa2c3fe92544b5]
+aws_kms_key.store["database"]: Refreshing state... [id=7c20193c-daac-4709-84a9-d15e74a33837]
+aws_subnet.public[0]: Refreshing state... [id=subnet-861cf7d3]
+aws_kms_key.store["projection"]: Refreshing state... [id=de63609f-700f-4418-a8f2-9ea3eff0de24]
+aws_subnet.private[1]: Refreshing state... [id=subnet-fb1d32dd]
+aws_kms_key.store["messaging"]: Refreshing state... [id=151fbd00-b6aa-47ae-b1a7-56f1401ce5d6]
+aws_s3_bucket_versioning.audit: Refreshing state... [id=cl-455472-audit]
+aws_s3_bucket_policy.audit: Refreshing state... [id=cl-455472-audit]
+aws_s3_bucket_public_access_block.audit: Refreshing state... [id=cl-455472-audit]
+aws_security_group.alb: Refreshing state... [id=sg-7fbe02dad022c4836]
+aws_subnet.private[0]: Refreshing state... [id=subnet-92a32865]
+aws_cognito_resource_server.auth: Refreshing state... [id=us-east-1_f9d89a798|clearledger]
+aws_internet_gateway.main: Refreshing state... [id=igw-79a6d9c0]
+aws_lb_target_group.api: Refreshing state... [id=arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/cl-455472-api/b2f35a92862b4e65]
+aws_route_table.private: Refreshing state... [id=rtb-7e7e48d1]
+aws_security_group.rds: Refreshing state... [id=sg-976c57d784f84391b]
+aws_sqs_queue.dlq: Refreshing state... [id=http://aws:4566/000000000000/cl-455472-dlq]
+aws_dynamodb_table.projection: Refreshing state... [id=cl-455472-projection]
+aws_s3_bucket_server_side_encryption_configuration.audit: Refreshing state... [id=cl-455472-audit]
+aws_kms_alias.store["audit"]: Refreshing state... [id=alias/cl-455472-audit]
+aws_elasticache_subnet_group.cache: Refreshing state... [id=cl-455472-cache]
+aws_db_subnet_group.ledger: Refreshing state... [id=cl-455472-database]
+aws_kms_alias.store["database"]: Refreshing state... [id=alias/cl-455472-database]
+aws_kms_alias.store["messaging"]: Refreshing state... [id=alias/cl-455472-messaging]
+aws_kms_alias.store["projection"]: Refreshing state... [id=alias/cl-455472-projection]
+aws_security_group.ecs: Refreshing state... [id=sg-8d6f7eca67ca0bcef]
+aws_route_table_association.private[0]: Refreshing state... [id=rtbassoc-374b1c8b]
+aws_route_table.public: Refreshing state... [id=rtb-a4d33ead]
+aws_route_table_association.private[1]: Refreshing state... [id=rtbassoc-e65970cb]
+aws_lb.api: Refreshing state... [id=arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/cl-455472-api/6b576f1dc19e4722]
+aws_cognito_user_pool_client.auth["admin"]: Refreshing state... [id=5ff44607aec44fd089aa17c26c]
+aws_cognito_user_pool_client.auth["write"]: Refreshing state... [id=fbf8eb9739a6485c852b52805d]
+aws_cognito_user_pool_client.auth["read"]: Refreshing state... [id=bf6a82afb5c445f687c18b9177]
+aws_sqs_queue_policy.dlq: Refreshing state... [id=http://aws:4566/000000000000/cl-455472-dlq]
+aws_db_instance.ledger: Refreshing state... [id=db-6AE1868A097D44B59B99971A]
+aws_elasticache_replication_group.cache: Refreshing state... [id=cl-455472-cache]
+aws_route_table_association.public[0]: Refreshing state... [id=rtbassoc-dfd37b44]
+aws_route_table_association.public[1]: Refreshing state... [id=rtbassoc-6909877e]
+aws_sqs_queue.events: Refreshing state... [id=http://aws:4566/000000000000/cl-455472-events]
+aws_lb_listener.api: Refreshing state... [id=arn:aws:elasticloadbalancing:us-east-1:000000000000:listener/app/cl-455472-api/6b576f1dc19e4722/448520a93a1b46ad]
+aws_sqs_queue_policy.events: Refreshing state... [id=http://aws:4566/000000000000/cl-455472-events]
+aws_iam_role_policy.workload["projector"]: Refreshing state... [id=cl-455472-projector:cl-455472-projector-canonical]
+aws_iam_role_policy.workload["ecs_task"]: Refreshing state... [id=cl-455472-ecs_task:cl-455472-ecs_task-canonical]
+aws_iam_role_policy.workload["relay"]: Refreshing state... [id=cl-455472-relay:cl-455472-relay-canonical]
+aws_iam_role_policy.workload["ecs_execution"]: Refreshing state... [id=cl-455472-ecs_execution:cl-455472-ecs_execution-canonical]
+aws_iam_role_policy.workload["archiver"]: Refreshing state... [id=cl-455472-archiver:cl-455472-archiver-canonical]
+aws_iam_role_policy.workload["scheduler"]: Refreshing state... [id=cl-455472-scheduler:cl-455472-scheduler-canonical]
+aws_ecs_task_definition.api: Refreshing state... [id=cl-455472-api]
+aws_ecs_service.api: Refreshing state... [id=arn:aws:ecs:us-east-1:000000000000:service/cl-455472-api/cl-455472-api]
+aws_lambda_function.worker["relay"]: Refreshing state... [id=cl-455472-relay]
+aws_lambda_function.worker["archiver"]: Refreshing state... [id=cl-455472-archiver]
+aws_lambda_function.worker["projector"]: Refreshing state... [id=cl-455472-projector]
+aws_scheduler_schedule.worker["relay"]: Refreshing state... [id=default/cl-455472-relay]
+aws_scheduler_schedule.worker["archiver"]: Refreshing state... [id=default/cl-455472-archiver]
+aws_lambda_event_source_mapping.projector: Refreshing state... [id=b9584cf5-f3f3-4476-98b0-dd14c84394c1]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  - destroy
+
+Terraform will perform the following actions:
+
+  # aws_cloudwatch_log_group.workload["api"] will be destroyed
+  - resource "aws_cloudwatch_log_group" "workload" {
+      - arn                         = "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/api" -> null
+      - deletion_protection_enabled = false -> null
+      - id                          = "/clearledger/cl-455472/api" -> null
+      - name                        = (sensitive value) -> null
+      - region                      = "us-east-1" -> null
+      - retention_in_days           = 14 -> null
+      - skip_destroy                = false -> null
+      - tags                        = {} -> null
+      - tags_all                    = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+        # (3 unchanged attributes hidden)
+    }
+
+  # aws_cloudwatch_log_group.workload["archiver"] will be destroyed
+  - resource "aws_cloudwatch_log_group" "workload" {
+      - arn                         = "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/audit-archiver" -> null
+      - deletion_protection_enabled = false -> null
+      - id                          = "/clearledger/cl-455472/audit-archiver" -> null
+      - name                        = (sensitive value) -> null
+      - region                      = "us-east-1" -> null
+      - retention_in_days           = 14 -> null
+      - skip_destroy                = false -> null
+      - tags                        = {} -> null
+      - tags_all                    = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+        # (3 unchanged attributes hidden)
+    }
+
+  # aws_cloudwatch_log_group.workload["projector"] will be destroyed
+  - resource "aws_cloudwatch_log_group" "workload" {
+      - arn                         = "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/projector" -> null
+      - deletion_protection_enabled = false -> null
+      - id                          = "/clearledger/cl-455472/projector" -> null
+      - name                        = (sensitive value) -> null
+      - region                      = "us-east-1" -> null
+      - retention_in_days           = 14 -> null
+      - skip_destroy                = false -> null
+      - tags                        = {} -> null
+      - tags_all                    = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+        # (3 unchanged attributes hidden)
+    }
+
+  # aws_cloudwatch_log_group.workload["relay"] will be destroyed
+  - resource "aws_cloudwatch_log_group" "workload" {
+      - arn                         = "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/outbox-relay" -> null
+      - deletion_protection_enabled = false -> null
+      - id                          = "/clearledger/cl-455472/outbox-relay" -> null
+      - name                        = (sensitive value) -> null
+      - region                      = "us-east-1" -> null
+      - retention_in_days           = 14 -> null
+      - skip_destroy                = false -> null
+      - tags                        = {} -> null
+      - tags_all                    = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+        # (3 unchanged attributes hidden)
+    }
+
+  # aws_cognito_resource_server.auth will be destroyed
+  - resource "aws_cognito_resource_server" "auth" {
+      - id                = "us-east-1_f9d89a798|clearledger" -> null
+      - identifier        = "clearledger" -> null
+      - name              = (sensitive value) -> null
+      - region            = "us-east-1" -> null
+      - scope_identifiers = [
+          - "clearledger/write",
+          - "clearledger/read",
+          - "clearledger/admin",
+        ] -> null
+      - user_pool_id      = "us-east-1_f9d89a798" -> null
+
+      - scope {
+          - scope_description = "ClearLedger admin" -> null
+          - scope_name        = "admin" -> null
+        }
+      - scope {
+          - scope_description = "ClearLedger read" -> null
+          - scope_name        = "read" -> null
+        }
+      - scope {
+          - scope_description = "ClearLedger write" -> null
+          - scope_name        = "write" -> null
+        }
+    }
+
+  # aws_cognito_user_pool.auth will be destroyed
+  - resource "aws_cognito_user_pool" "auth" {
+      - alias_attributes           = [] -> null
+      - arn                        = "arn:aws:cognito-idp:us-east-1:000000000000:userpool/us-east-1_f9d89a798" -> null
+      - auto_verified_attributes   = [] -> null
+      - creation_date              = "2026-10-10T19:19:08Z" -> null
+      - deletion_protection        = "INACTIVE" -> null
+      - endpoint                   = "cognito-idp.us-east-1.amazonaws.com/us-east-1_f9d89a798" -> null
+      - estimated_number_of_users  = 0 -> null
+      - id                         = "us-east-1_f9d89a798" -> null
+      - last_modified_date         = "2026-10-10T19:19:09Z" -> null
+      - mfa_configuration          = "OFF" -> null
+      - name                       = (sensitive value) -> null
+      - region                     = "us-east-1" -> null
+      - tags                       = {} -> null
+      - tags_all                   = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - user_pool_tier             = "ESSENTIALS" -> null
+      - username_attributes        = [] -> null
+        # (6 unchanged attributes hidden)
+
+      - admin_create_user_config {
+          - allow_admin_create_user_only = false -> null
+        }
+
+      - email_configuration {
+          - email_sending_account  = "COGNITO_DEFAULT" -> null
+            # (4 unchanged attributes hidden)
+        }
+
+      - sms_configuration {}
+
+      - username_configuration {
+          - case_sensitive = false -> null
+        }
+
+      - verification_message_template {
+            # (6 unchanged attributes hidden)
+        }
+    }
+
+  # aws_cognito_user_pool_client.auth["admin"] will be destroyed
+  - resource "aws_cognito_user_pool_client" "auth" {
+      - access_token_validity                = 0 -> null
+      - allowed_oauth_flows                  = [
+          - "client_credentials",
+        ] -> null
+      - allowed_oauth_flows_user_pool_client = true -> null
+      - allowed_oauth_scopes                 = [
+          - "clearledger/admin",
+        ] -> null
+      - callback_urls                        = [] -> null
+      - client_secret                        = (sensitive value) -> null
+      - enable_token_revocation              = true -> null
+      - explicit_auth_flows                  = [] -> null
+      - generate_secret                      = true -> null
+      - id                                   = "5ff44607aec44fd089aa17c26c" -> null
+      - id_token_validity                    = 0 -> null
+      - logout_urls                          = [] -> null
+      - name                                 = (sensitive value) -> null
+      - read_attributes                      = [] -> null
+      - refresh_token_validity               = 0 -> null
+      - region                               = "us-east-1" -> null
+      - supported_identity_providers         = [
+          - "COGNITO",
+        ] -> null
+      - user_pool_id                         = "us-east-1_f9d89a798" -> null
+      - write_attributes                     = [] -> null
+        # (2 unchanged attributes hidden)
+    }
+
+  # aws_cognito_user_pool_client.auth["read"] will be destroyed
+  - resource "aws_cognito_user_pool_client" "auth" {
+      - access_token_validity                = 0 -> null
+      - allowed_oauth_flows                  = [
+          - "client_credentials",
+        ] -> null
+      - allowed_oauth_flows_user_pool_client = true -> null
+      - allowed_oauth_scopes                 = [
+          - "clearledger/read",
+        ] -> null
+      - callback_urls                        = [] -> null
+      - client_secret                        = (sensitive value) -> null
+      - enable_token_revocation              = true -> null
+      - explicit_auth_flows                  = [] -> null
+      - generate_secret                      = true -> null
+      - id                                   = "bf6a82afb5c445f687c18b9177" -> null
+      - id_token_validity                    = 0 -> null
+      - logout_urls                          = [] -> null
+      - name                                 = (sensitive value) -> null
+      - read_attributes                      = [] -> null
+      - refresh_token_validity               = 0 -> null
+      - region                               = "us-east-1" -> null
+      - supported_identity_providers         = [
+          - "COGNITO",
+        ] -> null
+      - user_pool_id                         = "us-east-1_f9d89a798" -> null
+      - write_attributes                     = [] -> null
+        # (2 unchanged attributes hidden)
+    }
+
+  # aws_cognito_user_pool_client.auth["write"] will be destroyed
+  - resource "aws_cognito_user_pool_client" "auth" {
+      - access_token_validity                = 0 -> null
+      - allowed_oauth_flows                  = [
+          - "client_credentials",
+        ] -> null
+      - allowed_oauth_flows_user_pool_client = true -> null
+      - allowed_oauth_scopes                 = [
+          - "clearledger/write",
+        ] -> null
+      - callback_urls                        = [] -> null
+      - client_secret                        = (sensitive value) -> null
+      - enable_token_revocation              = true -> null
+      - explicit_auth_flows                  = [] -> null
+      - generate_secret                      = true -> null
+      - id                                   = "fbf8eb9739a6485c852b52805d" -> null
+      - id_token_validity                    = 0 -> null
+      - logout_urls                          = [] -> null
+      - name                                 = (sensitive value) -> null
+      - read_attributes                      = [] -> null
+      - refresh_token_validity               = 0 -> null
+      - region                               = "us-east-1" -> null
+      - supported_identity_providers         = [
+          - "COGNITO",
+        ] -> null
+      - user_pool_id                         = "us-east-1_f9d89a798" -> null
+      - write_attributes                     = [] -> null
+        # (2 unchanged attributes hidden)
+    }
+
+  # aws_db_instance.ledger will be destroyed
+  - resource "aws_db_instance" "ledger" {
+      - address                               = "aws" -> null
+      - allocated_storage                     = 20 -> null
+      - apply_immediately                     = true -> null
+      - arn                                   = "arn:aws:rds:us-east-1:000000000000:db:cl-455472-database" -> null
+      - auto_minor_version_upgrade            = true -> null
+      - availability_zone                     = "us-east-1a" -> null
+      - backup_retention_period               = 0 -> null
+      - backup_window                         = "04:00-06:00" -> null
+      - copy_tags_to_snapshot                 = false -> null
+      - customer_owned_ip_enabled             = false -> null
+      - db_name                               = (sensitive value) -> null
+      - db_subnet_group_name                  = (sensitive value) -> null
+      - dedicated_log_volume                  = false -> null
+      - delete_automated_backups              = true -> null
+      - deletion_protection                   = false -> null
+      - domain_dns_ips                        = [] -> null
+      - enabled_cloudwatch_logs_exports       = [] -> null
+      - endpoint                              = "aws:7001" -> null
+      - engine                                = "postgres" -> null
+      - engine_version                        = "16.3" -> null
+      - engine_version_actual                 = "16.3" -> null
+      - iam_database_authentication_enabled   = false -> null
+      - id                                    = "db-6AE1868A097D44B59B99971A" -> null
+      - identifier                            = (sensitive value) -> null
+      - instance_class                        = "db.t4g.micro" -> null
+      - iops                                  = 0 -> null
+      - kms_key_id                            = "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837" -> null
+      - listener_endpoint                     = [] -> null
+      - maintenance_window                    = "mon:00:00-mon:03:00" -> null
+      - master_user_secret                    = [] -> null
+      - max_allocated_storage                 = 0 -> null
+      - monitoring_interval                   = 0 -> null
+      - multi_az                              = false -> null
+      - option_group_name                     = "default:postgres-16" -> null
+      - parameter_group_name                  = "default.postgres16" -> null
+      - password                              = (sensitive value) -> null
+      - performance_insights_enabled          = false -> null
+      - performance_insights_retention_period = 0 -> null
+      - port                                  = 7001 -> null
+      - publicly_accessible                   = false -> null
+      - region                                = "us-east-1" -> null
+      - replicas                              = [] -> null
+      - resource_id                           = "db-6AE1868A097D44B59B99971A" -> null
+      - skip_final_snapshot                   = true -> null
+      - status                                = "available" -> null
+      - storage_encrypted                     = true -> null
+      - storage_throughput                    = 0 -> null
+      - storage_type                          = "gp2" -> null
+      - tags                                  = {} -> null
+      - tags_all                              = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - username                              = (sensitive value) -> null
+      - vpc_security_group_ids                = [
+          - "sg-976c57d784f84391b",
+        ] -> null
+        # (23 unchanged attributes hidden)
+    }
+
+  # aws_db_subnet_group.ledger will be destroyed
+  - resource "aws_db_subnet_group" "ledger" {
+      - arn                     = "arn:aws:rds:us-east-1:000000000000:subgrp:cl-455472-database" -> null
+      - description             = "Managed by Terraform" -> null
+      - id                      = "cl-455472-database" -> null
+      - name                    = (sensitive value) -> null
+      - region                  = "us-east-1" -> null
+      - subnet_ids              = [
+          - "subnet-92a32865",
+          - "subnet-fb1d32dd",
+        ] -> null
+      - supported_network_types = [] -> null
+      - tags                    = {} -> null
+      - tags_all                = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - vpc_id                  = "vpc-a06e539e" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_dynamodb_table.projection will be destroyed
+  - resource "aws_dynamodb_table" "projection" {
+      - arn                         = "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection" -> null
+      - billing_mode                = "PAY_PER_REQUEST" -> null
+      - deletion_protection_enabled = false -> null
+      - hash_key                    = "PK" -> null
+      - id                          = "cl-455472-projection" -> null
+      - name                        = (sensitive value) -> null
+      - range_key                   = "SK" -> null
+      - read_capacity               = 0 -> null
+      - region                      = "us-east-1" -> null
+      - stream_enabled              = false -> null
+      - table_class                 = "STANDARD" -> null
+      - tags                        = {} -> null
+      - tags_all                    = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - write_capacity              = 0 -> null
+        # (3 unchanged attributes hidden)
+
+      - attribute {
+          - name = "GSI1PK" -> null
+          - type = "S" -> null
+        }
+      - attribute {
+          - name = "GSI1SK" -> null
+          - type = "S" -> null
+        }
+      - attribute {
+          - name = "PK" -> null
+          - type = "S" -> null
+        }
+      - attribute {
+          - name = "SK" -> null
+          - type = "S" -> null
+        }
+
+      - global_secondary_index {
+          - hash_key           = "GSI1PK" -> null
+          - name               = "AccountIndex" -> null
+          - non_key_attributes = [] -> null
+          - projection_type    = "ALL" -> null
+          - range_key          = "GSI1SK" -> null
+          - read_capacity      = 0 -> null
+          - write_capacity     = 0 -> null
+
+          - key_schema {
+              - attribute_name = "GSI1PK" -> null
+              - key_type       = "HASH" -> null
+            }
+          - key_schema {
+              - attribute_name = "GSI1SK" -> null
+              - key_type       = "RANGE" -> null
+            }
+        }
+
+      - point_in_time_recovery {
+          - enabled                 = true -> null
+          - recovery_period_in_days = 35 -> null
+        }
+
+      - server_side_encryption {
+          - enabled     = true -> null
+          - kms_key_arn = "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24" -> null
+        }
+
+      - ttl {
+          - enabled        = false -> null
+            # (1 unchanged attribute hidden)
+        }
+    }
+
+  # aws_ecs_cluster.api will be destroyed
+  - resource "aws_ecs_cluster" "api" {
+      - arn      = "arn:aws:ecs:us-east-1:000000000000:cluster/cl-455472-api" -> null
+      - id       = "arn:aws:ecs:us-east-1:000000000000:cluster/cl-455472-api" -> null
+      - name     = (sensitive value) -> null
+      - region   = "us-east-1" -> null
+      - tags     = {} -> null
+      - tags_all = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+
+      - setting {
+          - name  = "containerInsights" -> null
+          - value = "enabled" -> null
+        }
+    }
+
+  # aws_ecs_service.api will be destroyed
+  - resource "aws_ecs_service" "api" {
+      - arn                                = "arn:aws:ecs:us-east-1:000000000000:service/cl-455472-api/cl-455472-api" -> null
+      - availability_zone_rebalancing      = "ENABLED" -> null
+      - cluster                            = "arn:aws:ecs:us-east-1:000000000000:cluster/cl-455472-api" -> null
+      - deployment_maximum_percent         = 200 -> null
+      - deployment_minimum_healthy_percent = 100 -> null
+      - desired_count                      = 2 -> null
+      - enable_ecs_managed_tags            = false -> null
+      - enable_execute_command             = false -> null
+      - health_check_grace_period_seconds  = 0 -> null
+      - id                                 = "arn:aws:ecs:us-east-1:000000000000:service/cl-455472-api/cl-455472-api" -> null
+      - launch_type                        = "FARGATE" -> null
+      - name                               = (sensitive value) -> null
+      - region                             = "us-east-1" -> null
+      - scheduling_strategy                = "REPLICA" -> null
+      - tags                               = {} -> null
+      - tags_all                           = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - task_definition                    = "arn:aws:ecs:us-east-1:000000000000:task-definition/cl-455472-api:2" -> null
+      - triggers                           = {} -> null
+      - wait_for_steady_state              = false -> null
+        # (2 unchanged attributes hidden)
+
+      - deployment_controller {
+          - type = "ECS" -> null
+        }
+
+      - load_balancer {
+          - container_name   = "api" -> null
+          - container_port   = 8080 -> null
+          - target_group_arn = "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/cl-455472-api/b2f35a92862b4e65" -> null
+            # (1 unchanged attribute hidden)
+        }
+
+      - network_configuration {
+          - assign_public_ip = false -> null
+          - security_groups  = [
+              - "sg-8d6f7eca67ca0bcef",
+            ] -> null
+          - subnets          = [
+              - "subnet-92a32865",
+              - "subnet-fb1d32dd",
+            ] -> null
+        }
+    }
+
+  # aws_ecs_task_definition.api will be destroyed
+  - resource "aws_ecs_task_definition" "api" {
+      - arn                      = "arn:aws:ecs:us-east-1:000000000000:task-definition/cl-455472-api:2" -> null
+      - arn_without_revision     = "arn:aws:ecs:us-east-1:000000000000:task-definition/cl-455472-api" -> null
+      - container_definitions    = (sensitive value) -> null
+      - cpu                      = "256" -> null
+      - enable_fault_injection   = false -> null
+      - execution_role_arn       = "arn:aws:iam::000000000000:role/cl-455472-ecs_execution" -> null
+      - family                   = (sensitive value) -> null
+      - id                       = "cl-455472-api" -> null
+      - memory                   = "512" -> null
+      - network_mode             = "awsvpc" -> null
+      - region                   = "us-east-1" -> null
+      - requires_compatibilities = [
+          - "FARGATE",
+        ] -> null
+      - revision                 = 2 -> null
+      - skip_destroy             = false -> null
+      - tags                     = {} -> null
+      - tags_all                 = {} -> null
+      - task_role_arn            = "arn:aws:iam::000000000000:role/cl-455472-ecs_task" -> null
+      - track_latest             = false -> null
+        # (2 unchanged attributes hidden)
+    }
+
+  # aws_elasticache_replication_group.cache will be destroyed
+  - resource "aws_elasticache_replication_group" "cache" {
+      - apply_immediately              = true -> null
+      - arn                            = "arn:aws:elasticache:us-east-1:000000000000:replicationgroup:cl-455472-cache" -> null
+      - at_rest_encryption_enabled     = "false" -> null
+      - auto_minor_version_upgrade     = "true" -> null
+      - automatic_failover_enabled     = false -> null
+      - cluster_enabled                = false -> null
+      - cluster_mode                   = "disabled" -> null
+      - configuration_endpoint_address = "aws" -> null
+      - data_tiering_enabled           = false -> null
+      - description                    = (sensitive value) -> null
+      - engine                         = "valkey" -> null
+      - engine_version                 = "8.0" -> null
+      - engine_version_actual          = "8.0.0" -> null
+      - id                             = "cl-455472-cache" -> null
+      - member_clusters                = [
+          - "cl-455472-cache-001",
+        ] -> null
+      - multi_az_enabled               = false -> null
+      - node_type                      = "cache.t4g.micro" -> null
+      - num_cache_clusters             = 1 -> null
+      - num_node_groups                = 1 -> null
+      - port                           = 6379 -> null
+      - region                         = "us-east-1" -> null
+      - replicas_per_node_group        = 0 -> null
+      - replication_group_id           = (sensitive value) -> null
+      - security_group_ids             = [] -> null
+      - security_group_names           = [] -> null
+      - snapshot_retention_limit       = 0 -> null
+      - snapshot_window                = "00:00-01:00" -> null
+      - subnet_group_name              = (sensitive value) -> null
+      - tags                           = {} -> null
+      - tags_all                       = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - transit_encryption_enabled     = false -> null
+      - user_group_ids                 = [] -> null
+        # (7 unchanged attributes hidden)
+
+      - node_group_configuration {
+          - node_group_id              = "0001" -> null
+          - replica_availability_zones = [] -> null
+          - replica_count              = 0 -> null
+          - replica_outpost_arns       = [] -> null
+            # (3 unchanged attributes hidden)
+        }
+    }
+
+  # aws_elasticache_subnet_group.cache will be destroyed
+  - resource "aws_elasticache_subnet_group" "cache" {
+      - arn         = "arn:aws:elasticache:us-east-1:000000000000:subnetgroup:cl-455472-cache" -> null
+      - description = "Managed by Terraform" -> null
+      - id          = "cl-455472-cache" -> null
+      - name        = (sensitive value) -> null
+      - region      = "us-east-1" -> null
+      - subnet_ids  = [
+          - "subnet-92a32865",
+          - "subnet-fb1d32dd",
+        ] -> null
+      - tags        = {} -> null
+      - tags_all    = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - vpc_id      = "vpc-a06e539e" -> null
+    }
+
+  # aws_iam_role.workload["archiver"] will be destroyed
+  - resource "aws_iam_role" "workload" {
+      - arn                   = "arn:aws:iam::000000000000:role/cl-455472-archiver" -> null
+      - assume_role_policy    = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action    = "sts:AssumeRole"
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - Service = "lambda.amazonaws.com"
+                        }
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - create_date           = "2026-10-10T19:19:08Z" -> null
+      - force_detach_policies = false -> null
+      - id                    = "cl-455472-archiver" -> null
+      - managed_policy_arns   = [] -> null
+      - max_session_duration  = 3600 -> null
+      - name                  = (sensitive value) -> null
+      - path                  = "/" -> null
+      - tags                  = {
+          - "ClearLedgerRole" = "archiver"
+        } -> null
+      - tags_all              = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "ClearLedgerRole"       = "archiver"
+        } -> null
+      - unique_id             = "AROA77DI5JLA4R31XJL0" -> null
+        # (3 unchanged attributes hidden)
+
+      - inline_policy {
+          - name   = "cl-455472-archiver-canonical" -> null
+          - policy = jsonencode(
+                {
+                  - Statement = [
+                      - {
+                          - Action   = [
+                              - "s3:PutObject",
+                              - "s3:GetObject",
+                              - "s3:AbortMultipartUpload",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:s3:::cl-455472-audit/ledger-audit/*",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "s3:ListBucket",
+                              - "s3:GetBucketLocation",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:s3:::cl-455472-audit",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "s3:DeleteObject",
+                              - "s3:DeleteObjectVersion",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:s3:::cl-455472-audit",
+                              - "arn:aws:s3:::cl-455472-audit/*",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "sqs:SendMessage",
+                              - "sqs:ReceiveMessage",
+                              - "sqs:DeleteMessage",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "dynamodb:GetItem",
+                              - "dynamodb:PutItem",
+                              - "dynamodb:UpdateItem",
+                              - "dynamodb:DeleteItem",
+                              - "dynamodb:Query",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection/index/AccountIndex",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "logs:CreateLogStream",
+                              - "logs:PutLogEvents",
+                              - "logs:DescribeLogStreams",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/audit-archiver:*",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:Decrypt",
+                              - "kms:GenerateDataKey",
+                              - "kms:DescribeKey",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                              - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:DisableKey",
+                              - "kms:ScheduleKeyDeletion",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                              - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                              - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                              - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:Decrypt",
+                              - "kms:GenerateDataKey",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                              - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "logs:CreateLogStream",
+                              - "logs:PutLogEvents",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/api:*",
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/projector:*",
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/outbox-relay:*",
+                            ]
+                        },
+                    ]
+                  - Version   = "2012-10-17"
+                }
+            ) -> null
+        }
+    }
+
+  # aws_iam_role.workload["ecs_execution"] will be destroyed
+  - resource "aws_iam_role" "workload" {
+      - arn                   = "arn:aws:iam::000000000000:role/cl-455472-ecs_execution" -> null
+      - assume_role_policy    = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action    = "sts:AssumeRole"
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - Service = "ecs-tasks.amazonaws.com"
+                        }
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - create_date           = "2026-10-10T19:19:08Z" -> null
+      - force_detach_policies = false -> null
+      - id                    = "cl-455472-ecs_execution" -> null
+      - managed_policy_arns   = [] -> null
+      - max_session_duration  = 3600 -> null
+      - name                  = (sensitive value) -> null
+      - path                  = "/" -> null
+      - tags                  = {
+          - "ClearLedgerRole" = "ecs_execution"
+        } -> null
+      - tags_all              = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "ClearLedgerRole"       = "ecs_execution"
+        } -> null
+      - unique_id             = "AROA5H68QRVRHZ13FOIH" -> null
+        # (3 unchanged attributes hidden)
+
+      - inline_policy {
+          - name   = "cl-455472-ecs_execution-canonical" -> null
+          - policy = jsonencode(
+                {
+                  - Statement = [
+                      - {
+                          - Action   = [
+                              - "sqs:SendMessage",
+                              - "sqs:ReceiveMessage",
+                              - "sqs:DeleteMessage",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "dynamodb:GetItem",
+                              - "dynamodb:PutItem",
+                              - "dynamodb:UpdateItem",
+                              - "dynamodb:DeleteItem",
+                              - "dynamodb:Query",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection/index/AccountIndex",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "s3:GetObject",
+                              - "s3:PutObject",
+                              - "s3:DeleteObject",
+                              - "s3:ListBucket",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:s3:::cl-455472-audit",
+                              - "arn:aws:s3:::cl-455472-audit/*",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "logs:CreateLogStream",
+                              - "logs:PutLogEvents",
+                              - "logs:DescribeLogStreams",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/api:*",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:DisableKey",
+                              - "kms:ScheduleKeyDeletion",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                              - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                              - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                              - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:Decrypt",
+                              - "kms:GenerateDataKey",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                              - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                              - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                              - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "logs:CreateLogStream",
+                              - "logs:PutLogEvents",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/audit-archiver:*",
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/projector:*",
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/outbox-relay:*",
+                            ]
+                        },
+                    ]
+                  - Version   = "2012-10-17"
+                }
+            ) -> null
+        }
+    }
+
+  # aws_iam_role.workload["ecs_task"] will be destroyed
+  - resource "aws_iam_role" "workload" {
+      - arn                   = "arn:aws:iam::000000000000:role/cl-455472-ecs_task" -> null
+      - assume_role_policy    = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action    = "sts:AssumeRole"
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - Service = "ecs-tasks.amazonaws.com"
+                        }
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - create_date           = "2026-10-10T19:19:08Z" -> null
+      - force_detach_policies = false -> null
+      - id                    = "cl-455472-ecs_task" -> null
+      - managed_policy_arns   = [] -> null
+      - max_session_duration  = 3600 -> null
+      - name                  = (sensitive value) -> null
+      - path                  = "/" -> null
+      - tags                  = {
+          - "ClearLedgerRole" = "ecs_task"
+        } -> null
+      - tags_all              = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "ClearLedgerRole"       = "ecs_task"
+        } -> null
+      - unique_id             = "AROATM61594CQW5AG6F0" -> null
+        # (3 unchanged attributes hidden)
+
+      - inline_policy {
+          - name   = "cl-455472-ecs_task-canonical" -> null
+          - policy = jsonencode(
+                {
+                  - Statement = [
+                      - {
+                          - Action   = [
+                              - "sqs:SendMessage",
+                              - "sqs:GetQueueAttributes",
+                              - "sqs:GetQueueUrl",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "dynamodb:GetItem",
+                              - "dynamodb:Query",
+                              - "dynamodb:DescribeTable",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection/index/AccountIndex",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "sqs:ReceiveMessage",
+                              - "sqs:DeleteMessage",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "sqs:SendMessage",
+                              - "sqs:ReceiveMessage",
+                              - "sqs:DeleteMessage",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "dynamodb:PutItem",
+                              - "dynamodb:UpdateItem",
+                              - "dynamodb:DeleteItem",
+                              - "dynamodb:DeleteTable",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "s3:GetObject",
+                              - "s3:PutObject",
+                              - "s3:DeleteObject",
+                              - "s3:ListBucket",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:s3:::cl-455472-audit",
+                              - "arn:aws:s3:::cl-455472-audit/*",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "logs:CreateLogStream",
+                              - "logs:PutLogEvents",
+                              - "logs:DescribeLogStreams",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/api:*",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:Decrypt",
+                              - "kms:GenerateDataKey",
+                              - "kms:DescribeKey",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                              - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:DisableKey",
+                              - "kms:ScheduleKeyDeletion",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                              - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                              - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                              - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:Decrypt",
+                              - "kms:GenerateDataKey",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                              - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "logs:CreateLogStream",
+                              - "logs:PutLogEvents",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/audit-archiver:*",
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/projector:*",
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/outbox-relay:*",
+                            ]
+                        },
+                    ]
+                  - Version   = "2012-10-17"
+                }
+            ) -> null
+        }
+    }
+
+  # aws_iam_role.workload["projector"] will be destroyed
+  - resource "aws_iam_role" "workload" {
+      - arn                   = "arn:aws:iam::000000000000:role/cl-455472-projector" -> null
+      - assume_role_policy    = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action    = "sts:AssumeRole"
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - Service = "lambda.amazonaws.com"
+                        }
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - create_date           = "2026-10-10T19:19:08Z" -> null
+      - force_detach_policies = false -> null
+      - id                    = "cl-455472-projector" -> null
+      - managed_policy_arns   = [] -> null
+      - max_session_duration  = 3600 -> null
+      - name                  = (sensitive value) -> null
+      - path                  = "/" -> null
+      - tags                  = {
+          - "ClearLedgerRole" = "projector"
+        } -> null
+      - tags_all              = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "ClearLedgerRole"       = "projector"
+        } -> null
+      - unique_id             = "AROA32V8JUX9SCPWHOCP" -> null
+        # (3 unchanged attributes hidden)
+
+      - inline_policy {
+          - name   = "cl-455472-projector-canonical" -> null
+          - policy = jsonencode(
+                {
+                  - Statement = [
+                      - {
+                          - Action   = [
+                              - "sqs:ReceiveMessage",
+                              - "sqs:DeleteMessage",
+                              - "sqs:GetQueueAttributes",
+                              - "sqs:ChangeMessageVisibility",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "sqs:SendMessage",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "dynamodb:GetItem",
+                              - "dynamodb:PutItem",
+                              - "dynamodb:UpdateItem",
+                              - "dynamodb:Query",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection/index/AccountIndex",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "sqs:SendMessage",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "sqs:ReceiveMessage",
+                              - "sqs:DeleteMessage",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "dynamodb:DeleteItem",
+                              - "dynamodb:DeleteTable",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "s3:GetObject",
+                              - "s3:PutObject",
+                              - "s3:DeleteObject",
+                              - "s3:ListBucket",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:s3:::cl-455472-audit",
+                              - "arn:aws:s3:::cl-455472-audit/*",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "logs:CreateLogStream",
+                              - "logs:PutLogEvents",
+                              - "logs:DescribeLogStreams",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/projector:*",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:Decrypt",
+                              - "kms:GenerateDataKey",
+                              - "kms:DescribeKey",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                              - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:DisableKey",
+                              - "kms:ScheduleKeyDeletion",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                              - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                              - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                              - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:Decrypt",
+                              - "kms:GenerateDataKey",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                              - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "logs:CreateLogStream",
+                              - "logs:PutLogEvents",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/api:*",
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/audit-archiver:*",
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/outbox-relay:*",
+                            ]
+                        },
+                    ]
+                  - Version   = "2012-10-17"
+                }
+            ) -> null
+        }
+    }
+
+  # aws_iam_role.workload["relay"] will be destroyed
+  - resource "aws_iam_role" "workload" {
+      - arn                   = "arn:aws:iam::000000000000:role/cl-455472-relay" -> null
+      - assume_role_policy    = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action    = "sts:AssumeRole"
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - Service = "lambda.amazonaws.com"
+                        }
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - create_date           = "2026-10-10T19:19:08Z" -> null
+      - force_detach_policies = false -> null
+      - id                    = "cl-455472-relay" -> null
+      - managed_policy_arns   = [] -> null
+      - max_session_duration  = 3600 -> null
+      - name                  = (sensitive value) -> null
+      - path                  = "/" -> null
+      - tags                  = {
+          - "ClearLedgerRole" = "relay"
+        } -> null
+      - tags_all              = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "ClearLedgerRole"       = "relay"
+        } -> null
+      - unique_id             = "AROAP45FGQ13ECAWFVAZ" -> null
+        # (3 unchanged attributes hidden)
+
+      - inline_policy {
+          - name   = "cl-455472-relay-canonical" -> null
+          - policy = jsonencode(
+                {
+                  - Statement = [
+                      - {
+                          - Action   = [
+                              - "sqs:SendMessage",
+                              - "sqs:GetQueueAttributes",
+                              - "sqs:GetQueueUrl",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "sqs:ReceiveMessage",
+                              - "sqs:DeleteMessage",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "sqs:SendMessage",
+                              - "sqs:ReceiveMessage",
+                              - "sqs:DeleteMessage",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "dynamodb:GetItem",
+                              - "dynamodb:PutItem",
+                              - "dynamodb:UpdateItem",
+                              - "dynamodb:DeleteItem",
+                              - "dynamodb:Query",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection/index/AccountIndex",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "s3:GetObject",
+                              - "s3:PutObject",
+                              - "s3:DeleteObject",
+                              - "s3:ListBucket",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:s3:::cl-455472-audit",
+                              - "arn:aws:s3:::cl-455472-audit/*",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "logs:CreateLogStream",
+                              - "logs:PutLogEvents",
+                              - "logs:DescribeLogStreams",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/outbox-relay:*",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:Decrypt",
+                              - "kms:GenerateDataKey",
+                              - "kms:DescribeKey",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                              - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:DisableKey",
+                              - "kms:ScheduleKeyDeletion",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                              - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                              - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                              - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:Decrypt",
+                              - "kms:GenerateDataKey",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                              - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "logs:CreateLogStream",
+                              - "logs:PutLogEvents",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/api:*",
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/audit-archiver:*",
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/projector:*",
+                            ]
+                        },
+                    ]
+                  - Version   = "2012-10-17"
+                }
+            ) -> null
+        }
+    }
+
+  # aws_iam_role.workload["scheduler"] will be destroyed
+  - resource "aws_iam_role" "workload" {
+      - arn                   = "arn:aws:iam::000000000000:role/cl-455472-scheduler" -> null
+      - assume_role_policy    = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action    = "sts:AssumeRole"
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - Service = "scheduler.amazonaws.com"
+                        }
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - create_date           = "2026-10-10T19:19:08Z" -> null
+      - force_detach_policies = false -> null
+      - id                    = "cl-455472-scheduler" -> null
+      - managed_policy_arns   = [] -> null
+      - max_session_duration  = 3600 -> null
+      - name                  = (sensitive value) -> null
+      - path                  = "/" -> null
+      - tags                  = {
+          - "ClearLedgerRole" = "scheduler"
+        } -> null
+      - tags_all              = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "ClearLedgerRole"       = "scheduler"
+        } -> null
+      - unique_id             = "AROACZDGWKL05WV7L720" -> null
+        # (3 unchanged attributes hidden)
+
+      - inline_policy {
+          - name   = "cl-455472-scheduler-canonical" -> null
+          - policy = jsonencode(
+                {
+                  - Statement = [
+                      - {
+                          - Action   = [
+                              - "lambda:InvokeFunction",
+                            ]
+                          - Effect   = "Allow"
+                          - Resource = [
+                              - "arn:aws:lambda:us-east-1:000000000000:function:cl-455472-relay",
+                              - "arn:aws:lambda:us-east-1:000000000000:function:cl-455472-archiver",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "lambda:InvokeFunction",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:lambda:us-east-1:000000000000:function:cl-455472-projector",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "sqs:SendMessage",
+                              - "sqs:ReceiveMessage",
+                              - "sqs:DeleteMessage",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                              - "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "dynamodb:GetItem",
+                              - "dynamodb:PutItem",
+                              - "dynamodb:UpdateItem",
+                              - "dynamodb:DeleteItem",
+                              - "dynamodb:Query",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                              - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection/index/AccountIndex",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "s3:GetObject",
+                              - "s3:PutObject",
+                              - "s3:DeleteObject",
+                              - "s3:ListBucket",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:s3:::cl-455472-audit",
+                              - "arn:aws:s3:::cl-455472-audit/*",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:DisableKey",
+                              - "kms:ScheduleKeyDeletion",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                              - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                              - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                              - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "kms:Decrypt",
+                              - "kms:GenerateDataKey",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                              - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                              - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                              - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                            ]
+                        },
+                      - {
+                          - Action   = [
+                              - "logs:CreateLogStream",
+                              - "logs:PutLogEvents",
+                            ]
+                          - Effect   = "Deny"
+                          - Resource = [
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/api:*",
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/audit-archiver:*",
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/projector:*",
+                              - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/outbox-relay:*",
+                            ]
+                        },
+                    ]
+                  - Version   = "2012-10-17"
+                }
+            ) -> null
+        }
+    }
+
+  # aws_iam_role_policy.workload["archiver"] will be destroyed
+  - resource "aws_iam_role_policy" "workload" {
+      - id          = "cl-455472-archiver:cl-455472-archiver-canonical" -> null
+      - name        = (sensitive value) -> null
+      - policy      = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action   = [
+                          - "s3:PutObject",
+                          - "s3:GetObject",
+                          - "s3:AbortMultipartUpload",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:s3:::cl-455472-audit/ledger-audit/*",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "s3:ListBucket",
+                          - "s3:GetBucketLocation",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:s3:::cl-455472-audit",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "s3:DeleteObject",
+                          - "s3:DeleteObjectVersion",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:s3:::cl-455472-audit",
+                          - "arn:aws:s3:::cl-455472-audit/*",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "sqs:SendMessage",
+                          - "sqs:ReceiveMessage",
+                          - "sqs:DeleteMessage",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "dynamodb:GetItem",
+                          - "dynamodb:PutItem",
+                          - "dynamodb:UpdateItem",
+                          - "dynamodb:DeleteItem",
+                          - "dynamodb:Query",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                          - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection/index/AccountIndex",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "logs:CreateLogStream",
+                          - "logs:PutLogEvents",
+                          - "logs:DescribeLogStreams",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/audit-archiver:*",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:Decrypt",
+                          - "kms:GenerateDataKey",
+                          - "kms:DescribeKey",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                          - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:DisableKey",
+                          - "kms:ScheduleKeyDeletion",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                          - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                          - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                          - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:Decrypt",
+                          - "kms:GenerateDataKey",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                          - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "logs:CreateLogStream",
+                          - "logs:PutLogEvents",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/api:*",
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/projector:*",
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/outbox-relay:*",
+                        ]
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - role        = "cl-455472-archiver" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_iam_role_policy.workload["ecs_execution"] will be destroyed
+  - resource "aws_iam_role_policy" "workload" {
+      - id          = "cl-455472-ecs_execution:cl-455472-ecs_execution-canonical" -> null
+      - name        = (sensitive value) -> null
+      - policy      = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action   = [
+                          - "sqs:SendMessage",
+                          - "sqs:ReceiveMessage",
+                          - "sqs:DeleteMessage",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "dynamodb:GetItem",
+                          - "dynamodb:PutItem",
+                          - "dynamodb:UpdateItem",
+                          - "dynamodb:DeleteItem",
+                          - "dynamodb:Query",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                          - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection/index/AccountIndex",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "s3:GetObject",
+                          - "s3:PutObject",
+                          - "s3:DeleteObject",
+                          - "s3:ListBucket",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:s3:::cl-455472-audit",
+                          - "arn:aws:s3:::cl-455472-audit/*",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "logs:CreateLogStream",
+                          - "logs:PutLogEvents",
+                          - "logs:DescribeLogStreams",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/api:*",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:DisableKey",
+                          - "kms:ScheduleKeyDeletion",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                          - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                          - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                          - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:Decrypt",
+                          - "kms:GenerateDataKey",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                          - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                          - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                          - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "logs:CreateLogStream",
+                          - "logs:PutLogEvents",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/audit-archiver:*",
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/projector:*",
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/outbox-relay:*",
+                        ]
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - role        = "cl-455472-ecs_execution" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_iam_role_policy.workload["ecs_task"] will be destroyed
+  - resource "aws_iam_role_policy" "workload" {
+      - id          = "cl-455472-ecs_task:cl-455472-ecs_task-canonical" -> null
+      - name        = (sensitive value) -> null
+      - policy      = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action   = [
+                          - "sqs:SendMessage",
+                          - "sqs:GetQueueAttributes",
+                          - "sqs:GetQueueUrl",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "dynamodb:GetItem",
+                          - "dynamodb:Query",
+                          - "dynamodb:DescribeTable",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                          - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection/index/AccountIndex",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "sqs:ReceiveMessage",
+                          - "sqs:DeleteMessage",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "sqs:SendMessage",
+                          - "sqs:ReceiveMessage",
+                          - "sqs:DeleteMessage",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "dynamodb:PutItem",
+                          - "dynamodb:UpdateItem",
+                          - "dynamodb:DeleteItem",
+                          - "dynamodb:DeleteTable",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "s3:GetObject",
+                          - "s3:PutObject",
+                          - "s3:DeleteObject",
+                          - "s3:ListBucket",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:s3:::cl-455472-audit",
+                          - "arn:aws:s3:::cl-455472-audit/*",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "logs:CreateLogStream",
+                          - "logs:PutLogEvents",
+                          - "logs:DescribeLogStreams",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/api:*",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:Decrypt",
+                          - "kms:GenerateDataKey",
+                          - "kms:DescribeKey",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                          - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:DisableKey",
+                          - "kms:ScheduleKeyDeletion",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                          - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                          - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                          - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:Decrypt",
+                          - "kms:GenerateDataKey",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                          - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "logs:CreateLogStream",
+                          - "logs:PutLogEvents",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/audit-archiver:*",
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/projector:*",
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/outbox-relay:*",
+                        ]
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - role        = "cl-455472-ecs_task" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_iam_role_policy.workload["projector"] will be destroyed
+  - resource "aws_iam_role_policy" "workload" {
+      - id          = "cl-455472-projector:cl-455472-projector-canonical" -> null
+      - name        = (sensitive value) -> null
+      - policy      = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action   = [
+                          - "sqs:ReceiveMessage",
+                          - "sqs:DeleteMessage",
+                          - "sqs:GetQueueAttributes",
+                          - "sqs:ChangeMessageVisibility",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "sqs:SendMessage",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "dynamodb:GetItem",
+                          - "dynamodb:PutItem",
+                          - "dynamodb:UpdateItem",
+                          - "dynamodb:Query",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                          - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection/index/AccountIndex",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "sqs:SendMessage",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "sqs:ReceiveMessage",
+                          - "sqs:DeleteMessage",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "dynamodb:DeleteItem",
+                          - "dynamodb:DeleteTable",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "s3:GetObject",
+                          - "s3:PutObject",
+                          - "s3:DeleteObject",
+                          - "s3:ListBucket",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:s3:::cl-455472-audit",
+                          - "arn:aws:s3:::cl-455472-audit/*",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "logs:CreateLogStream",
+                          - "logs:PutLogEvents",
+                          - "logs:DescribeLogStreams",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/projector:*",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:Decrypt",
+                          - "kms:GenerateDataKey",
+                          - "kms:DescribeKey",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                          - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:DisableKey",
+                          - "kms:ScheduleKeyDeletion",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                          - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                          - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                          - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:Decrypt",
+                          - "kms:GenerateDataKey",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                          - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "logs:CreateLogStream",
+                          - "logs:PutLogEvents",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/api:*",
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/audit-archiver:*",
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/outbox-relay:*",
+                        ]
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - role        = "cl-455472-projector" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_iam_role_policy.workload["relay"] will be destroyed
+  - resource "aws_iam_role_policy" "workload" {
+      - id          = "cl-455472-relay:cl-455472-relay-canonical" -> null
+      - name        = (sensitive value) -> null
+      - policy      = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action   = [
+                          - "sqs:SendMessage",
+                          - "sqs:GetQueueAttributes",
+                          - "sqs:GetQueueUrl",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "sqs:ReceiveMessage",
+                          - "sqs:DeleteMessage",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-events",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "sqs:SendMessage",
+                          - "sqs:ReceiveMessage",
+                          - "sqs:DeleteMessage",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "dynamodb:GetItem",
+                          - "dynamodb:PutItem",
+                          - "dynamodb:UpdateItem",
+                          - "dynamodb:DeleteItem",
+                          - "dynamodb:Query",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection",
+                          - "arn:aws:dynamodb:us-east-1:000000000000:table/cl-455472-projection/index/AccountIndex",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "s3:GetObject",
+                          - "s3:PutObject",
+                          - "s3:DeleteObject",
+                          - "s3:ListBucket",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:s3:::cl-455472-audit",
+                          - "arn:aws:s3:::cl-455472-audit/*",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "logs:CreateLogStream",
+                          - "logs:PutLogEvents",
+                          - "logs:DescribeLogStreams",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/outbox-relay:*",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:Decrypt",
+                          - "kms:GenerateDataKey",
+                          - "kms:DescribeKey",
+                        ]
+                      - Effect   = "Allow"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                          - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:DisableKey",
+                          - "kms:ScheduleKeyDeletion",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                          - "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837",
+                          - "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6",
+                          - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "kms:Decrypt",
+                          - "kms:GenerateDataKey",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161",
+                          - "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24",
+                        ]
+                    },
+                  - {
+                      - Action   = [
+                          - "logs:CreateLogStream",
+                          - "logs:PutLogEvents",
+                        ]
+                      - Effect   = "Deny"
+                      - Resource = [
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/api:*",
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/audit-archiver:*",
+                          - "arn:aws:logs:us-east-1:000000000000:log-group:/clearledger/cl-455472/projector:*",
+                        ]
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - role        = "cl-455472-relay" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_iam_role_policy.workload["scheduler"] will be destroyed
+  - resource "aws_iam_role_policy" "workload" {
+      - id          = "cl-455472-scheduler:cl-455472-scheduler-canonical" -> null
+      - name        = (sensitive value) -> null
+      - policy      = (sensitive value) -> null
+      - role        = "cl-455472-scheduler" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_internet_gateway.main will be destroyed
+  - resource "aws_internet_gateway" "main" {
+      - arn      = "arn:aws:ec2:us-east-1:000000000000:internet-gateway/igw-79a6d9c0" -> null
+      - id       = "igw-79a6d9c0" -> null
+      - owner_id = "000000000000" -> null
+      - region   = "us-east-1" -> null
+      - tags     = {
+          - "Name" = (sensitive value)
+        } -> null
+      - tags_all = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "Name"                  = "cl-455472-igw"
+        } -> null
+      - vpc_id   = "vpc-a06e539e" -> null
+    }
+
+  # aws_kms_alias.store["audit"] will be destroyed
+  - resource "aws_kms_alias" "store" {
+      - arn            = "arn:aws:kms:us-east-1:000000000000:alias/cl-455472-audit" -> null
+      - id             = "alias/cl-455472-audit" -> null
+      - name           = (sensitive value) -> null
+      - region         = "us-east-1" -> null
+      - target_key_arn = "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161" -> null
+      - target_key_id  = "47b6b001-9373-458b-9389-ca76a5fc7161" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_kms_alias.store["database"] will be destroyed
+  - resource "aws_kms_alias" "store" {
+      - arn            = "arn:aws:kms:us-east-1:000000000000:alias/cl-455472-database" -> null
+      - id             = "alias/cl-455472-database" -> null
+      - name           = (sensitive value) -> null
+      - region         = "us-east-1" -> null
+      - target_key_arn = "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837" -> null
+      - target_key_id  = "7c20193c-daac-4709-84a9-d15e74a33837" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_kms_alias.store["messaging"] will be destroyed
+  - resource "aws_kms_alias" "store" {
+      - arn            = "arn:aws:kms:us-east-1:000000000000:alias/cl-455472-messaging" -> null
+      - id             = "alias/cl-455472-messaging" -> null
+      - name           = (sensitive value) -> null
+      - region         = "us-east-1" -> null
+      - target_key_arn = "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6" -> null
+      - target_key_id  = "151fbd00-b6aa-47ae-b1a7-56f1401ce5d6" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_kms_alias.store["projection"] will be destroyed
+  - resource "aws_kms_alias" "store" {
+      - arn            = "arn:aws:kms:us-east-1:000000000000:alias/cl-455472-projection" -> null
+      - id             = "alias/cl-455472-projection" -> null
+      - name           = (sensitive value) -> null
+      - region         = "us-east-1" -> null
+      - target_key_arn = "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24" -> null
+      - target_key_id  = "de63609f-700f-4418-a8f2-9ea3eff0de24" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_kms_key.store["audit"] will be destroyed
+  - resource "aws_kms_key" "store" {
+      - arn                                = "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161" -> null
+      - bypass_policy_lockout_safety_check = false -> null
+      - customer_master_key_spec           = "SYMMETRIC_DEFAULT" -> null
+      - deletion_window_in_days            = 10 -> null
+      - description                        = (sensitive value) -> null
+      - enable_key_rotation                = true -> null
+      - id                                 = "47b6b001-9373-458b-9389-ca76a5fc7161" -> null
+      - is_enabled                         = true -> null
+      - key_id                             = "47b6b001-9373-458b-9389-ca76a5fc7161" -> null
+      - key_usage                          = "ENCRYPT_DECRYPT" -> null
+      - multi_region                       = false -> null
+      - policy                             = (sensitive value) -> null
+      - region                             = "us-east-1" -> null
+      - rotation_period_in_days            = 0 -> null
+      - tags                               = {
+          - "ClearLedgerKeyUsage" = "audit"
+        } -> null
+      - tags_all                           = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "ClearLedgerKeyUsage"   = "audit"
+        } -> null
+        # (2 unchanged attributes hidden)
+    }
+
+  # aws_kms_key.store["database"] will be destroyed
+  - resource "aws_kms_key" "store" {
+      - arn                                = "arn:aws:kms:us-east-1:000000000000:key/7c20193c-daac-4709-84a9-d15e74a33837" -> null
+      - bypass_policy_lockout_safety_check = false -> null
+      - customer_master_key_spec           = "SYMMETRIC_DEFAULT" -> null
+      - deletion_window_in_days            = 10 -> null
+      - description                        = (sensitive value) -> null
+      - enable_key_rotation                = true -> null
+      - id                                 = "7c20193c-daac-4709-84a9-d15e74a33837" -> null
+      - is_enabled                         = true -> null
+      - key_id                             = "7c20193c-daac-4709-84a9-d15e74a33837" -> null
+      - key_usage                          = "ENCRYPT_DECRYPT" -> null
+      - multi_region                       = false -> null
+      - policy                             = (sensitive value) -> null
+      - region                             = "us-east-1" -> null
+      - rotation_period_in_days            = 0 -> null
+      - tags                               = {
+          - "ClearLedgerKeyUsage" = "database"
+        } -> null
+      - tags_all                           = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "ClearLedgerKeyUsage"   = "database"
+        } -> null
+        # (2 unchanged attributes hidden)
+    }
+
+  # aws_kms_key.store["messaging"] will be destroyed
+  - resource "aws_kms_key" "store" {
+      - arn                                = "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6" -> null
+      - bypass_policy_lockout_safety_check = false -> null
+      - customer_master_key_spec           = "SYMMETRIC_DEFAULT" -> null
+      - deletion_window_in_days            = 10 -> null
+      - description                        = (sensitive value) -> null
+      - enable_key_rotation                = true -> null
+      - id                                 = "151fbd00-b6aa-47ae-b1a7-56f1401ce5d6" -> null
+      - is_enabled                         = true -> null
+      - key_id                             = "151fbd00-b6aa-47ae-b1a7-56f1401ce5d6" -> null
+      - key_usage                          = "ENCRYPT_DECRYPT" -> null
+      - multi_region                       = false -> null
+      - policy                             = (sensitive value) -> null
+      - region                             = "us-east-1" -> null
+      - rotation_period_in_days            = 0 -> null
+      - tags                               = {
+          - "ClearLedgerKeyUsage" = "messaging"
+        } -> null
+      - tags_all                           = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "ClearLedgerKeyUsage"   = "messaging"
+        } -> null
+        # (2 unchanged attributes hidden)
+    }
+
+  # aws_kms_key.store["projection"] will be destroyed
+  - resource "aws_kms_key" "store" {
+      - arn                                = "arn:aws:kms:us-east-1:000000000000:key/de63609f-700f-4418-a8f2-9ea3eff0de24" -> null
+      - bypass_policy_lockout_safety_check = false -> null
+      - customer_master_key_spec           = "SYMMETRIC_DEFAULT" -> null
+      - deletion_window_in_days            = 10 -> null
+      - description                        = (sensitive value) -> null
+      - enable_key_rotation                = true -> null
+      - id                                 = "de63609f-700f-4418-a8f2-9ea3eff0de24" -> null
+      - is_enabled                         = true -> null
+      - key_id                             = "de63609f-700f-4418-a8f2-9ea3eff0de24" -> null
+      - key_usage                          = "ENCRYPT_DECRYPT" -> null
+      - multi_region                       = false -> null
+      - policy                             = (sensitive value) -> null
+      - region                             = "us-east-1" -> null
+      - rotation_period_in_days            = 0 -> null
+      - tags                               = {
+          - "ClearLedgerKeyUsage" = "projection"
+        } -> null
+      - tags_all                           = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "ClearLedgerKeyUsage"   = "projection"
+        } -> null
+        # (2 unchanged attributes hidden)
+    }
+
+  # aws_lambda_event_source_mapping.projector will be destroyed
+  - resource "aws_lambda_event_source_mapping" "projector" {
+      - batch_size                         = 5 -> null
+      - bisect_batch_on_function_error     = false -> null
+      - enabled                            = true -> null
+      - event_source_arn                   = "arn:aws:sqs:us-east-1:000000000000:cl-455472-events" -> null
+      - function_arn                       = "arn:aws:lambda:us-east-1:000000000000:function:cl-455472-projector" -> null
+      - function_name                      = "arn:aws:lambda:us-east-1:000000000000:function:cl-455472-projector" -> null
+      - function_response_types            = [
+          - "ReportBatchItemFailures",
+        ] -> null
+      - id                                 = "b9584cf5-f3f3-4476-98b0-dd14c84394c1" -> null
+      - last_modified                      = "2026-10-10T19:30:54Z" -> null
+      - maximum_batching_window_in_seconds = 0 -> null
+      - maximum_record_age_in_seconds      = 0 -> null
+      - maximum_retry_attempts             = 0 -> null
+      - parallelization_factor             = 0 -> null
+      - queues                             = [] -> null
+      - region                             = "us-east-1" -> null
+      - state                              = "Enabled" -> null
+      - tags                               = {} -> null
+      - tags_all                           = {} -> null
+      - topics                             = [] -> null
+      - tumbling_window_in_seconds         = 0 -> null
+      - uuid                               = "b9584cf5-f3f3-4476-98b0-dd14c84394c1" -> null
+        # (6 unchanged attributes hidden)
+    }
+
+  # aws_lambda_function.worker["archiver"] will be destroyed
+  - resource "aws_lambda_function" "worker" {
+      - architectures                  = [
+          - "x86_64",
+        ] -> null
+      - arn                            = "arn:aws:lambda:us-east-1:000000000000:function:cl-455472-archiver" -> null
+      - function_name                  = (sensitive value) -> null
+      - id                             = "cl-455472-archiver" -> null
+      - image_uri                      = (sensitive value) -> null
+      - invoke_arn                     = "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:000000000000:function:cl-455472-archiver/invocations" -> null
+      - last_modified                  = "2026-10-10T19:21:20.753+0000" -> null
+      - layers                         = [] -> null
+      - memory_size                    = 256 -> null
+      - package_type                   = "Image" -> null
+      - publish                        = false -> null
+      - qualified_arn                  = "arn:aws:lambda:us-east-1:000000000000:function:cl-455472-archiver" -> null
+      - qualified_invoke_arn           = "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:000000000000:function:cl-455472-archiver/invocations" -> null
+      - region                         = "us-east-1" -> null
+      - reserved_concurrent_executions = -1 -> null
+      - response_streaming_invoke_arn  = "arn:aws:apigateway:us-east-1:lambda:path/2021-11-15/functions/arn:aws:lambda:us-east-1:000000000000:function:cl-455472-archiver/response-streaming-invocations" -> null
+      - role                           = "arn:aws:iam::000000000000:role/cl-455472-archiver" -> null
+      - skip_destroy                   = false -> null
+      - source_code_hash               = (sensitive value) -> null
+      - source_code_size               = 0 -> null
+      - tags                           = {} -> null
+      - tags_all                       = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - timeout                        = 30 -> null
+      - version                        = "$LATEST" -> null
+        # (9 unchanged attributes hidden)
+
+      - environment {
+          - variables = {
+              - "AUDIT_BUCKET"          = "cl-455472-audit"
+              - "AUDIT_PREFIX"          = "ledger-audit/"
+              - "AWS_ACCESS_KEY_ID"     = "test"
+              - "AWS_DEFAULT_REGION"    = (sensitive value)
+              - "AWS_ENDPOINT_URL"      = (sensitive value)
+              - "AWS_REGION"            = (sensitive value)
+              - "AWS_SECRET_ACCESS_KEY" = "test"
+              - "CLOUDWATCH_LOG_GROUP"  = (sensitive value)
+              - "DATABASE_URL"          = (sensitive value)
+            } -> null
+        }
+
+      - ephemeral_storage {
+          - size = 512 -> null
+        }
+
+      - image_config {
+          - command           = [] -> null
+          - entry_point       = [] -> null
+            # (1 unchanged attribute hidden)
+        }
+
+      - logging_config {
+          - log_format            = "Text" -> null
+          - log_group             = "/aws/lambda/cl-455472-archiver" -> null
+            # (2 unchanged attributes hidden)
+        }
+
+      - tracing_config {
+          - mode = "PassThrough" -> null
+        }
+    }
+
+  # aws_lambda_function.worker["projector"] will be destroyed
+  - resource "aws_lambda_function" "worker" {
+      - architectures                  = [
+          - "x86_64",
+        ] -> null
+      - arn                            = "arn:aws:lambda:us-east-1:000000000000:function:cl-455472-projector" -> null
+      - function_name                  = (sensitive value) -> null
+      - id                             = "cl-455472-projector" -> null
+      - image_uri                      = (sensitive value) -> null
+      - invoke_arn                     = "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:000000000000:function:cl-455472-projector/invocations" -> null
+      - last_modified                  = "2026-10-10T19:21:20.758+0000" -> null
+      - layers                         = [] -> null
+      - memory_size                    = 256 -> null
+      - package_type                   = "Image" -> null
+      - publish                        = false -> null
+      - qualified_arn                  = "arn:aws:lambda:us-east-1:000000000000:function:cl-455472-projector" -> null
+      - qualified_invoke_arn           = "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:000000000000:function:cl-455472-projector/invocations" -> null
+      - region                         = "us-east-1" -> null
+      - reserved_concurrent_executions = -1 -> null
+      - response_streaming_invoke_arn  = "arn:aws:apigateway:us-east-1:lambda:path/2021-11-15/functions/arn:aws:lambda:us-east-1:000000000000:function:cl-455472-projector/response-streaming-invocations" -> null
+      - role                           = "arn:aws:iam::000000000000:role/cl-455472-projector" -> null
+      - skip_destroy                   = false -> null
+      - source_code_hash               = (sensitive value) -> null
+      - source_code_size               = 0 -> null
+      - tags                           = {} -> null
+      - tags_all                       = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - timeout                        = 30 -> null
+      - version                        = "$LATEST" -> null
+        # (9 unchanged attributes hidden)
+
+      - environment {
+          - variables = {
+              - "AWS_ACCESS_KEY_ID"     = "test"
+              - "AWS_DEFAULT_REGION"    = (sensitive value)
+              - "AWS_ENDPOINT_URL"      = (sensitive value)
+              - "AWS_REGION"            = (sensitive value)
+              - "AWS_SECRET_ACCESS_KEY" = "test"
+              - "CLOUDWATCH_LOG_GROUP"  = (sensitive value)
+              - "PROJECTION_TABLE"      = (sensitive value)
+              - "VALKEY_URL"            = "redis://aws:6379"
+            } -> null
+        }
+
+      - ephemeral_storage {
+          - size = 512 -> null
+        }
+
+      - image_config {
+          - command           = [] -> null
+          - entry_point       = [] -> null
+            # (1 unchanged attribute hidden)
+        }
+
+      - logging_config {
+          - log_format            = "Text" -> null
+          - log_group             = "/aws/lambda/cl-455472-projector" -> null
+            # (2 unchanged attributes hidden)
+        }
+
+      - tracing_config {
+          - mode = "PassThrough" -> null
+        }
+    }
+
+  # aws_lambda_function.worker["relay"] will be destroyed
+  - resource "aws_lambda_function" "worker" {
+      - architectures                  = [
+          - "x86_64",
+        ] -> null
+      - arn                            = "arn:aws:lambda:us-east-1:000000000000:function:cl-455472-relay" -> null
+      - function_name                  = (sensitive value) -> null
+      - id                             = "cl-455472-relay" -> null
+      - image_uri                      = (sensitive value) -> null
+      - invoke_arn                     = "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:000000000000:function:cl-455472-relay/invocations" -> null
+      - last_modified                  = "2026-10-10T19:21:20.751+0000" -> null
+      - layers                         = [] -> null
+      - memory_size                    = 256 -> null
+      - package_type                   = "Image" -> null
+      - publish                        = false -> null
+      - qualified_arn                  = "arn:aws:lambda:us-east-1:000000000000:function:cl-455472-relay" -> null
+      - qualified_invoke_arn           = "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:000000000000:function:cl-455472-relay/invocations" -> null
+      - region                         = "us-east-1" -> null
+      - reserved_concurrent_executions = -1 -> null
+      - response_streaming_invoke_arn  = "arn:aws:apigateway:us-east-1:lambda:path/2021-11-15/functions/arn:aws:lambda:us-east-1:000000000000:function:cl-455472-relay/response-streaming-invocations" -> null
+      - role                           = "arn:aws:iam::000000000000:role/cl-455472-relay" -> null
+      - skip_destroy                   = false -> null
+      - source_code_hash               = (sensitive value) -> null
+      - source_code_size               = 0 -> null
+      - tags                           = {} -> null
+      - tags_all                       = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - timeout                        = 30 -> null
+      - version                        = "$LATEST" -> null
+        # (9 unchanged attributes hidden)
+
+      - environment {
+          - variables = {
+              - "AWS_ACCESS_KEY_ID"     = "test"
+              - "AWS_DEFAULT_REGION"    = (sensitive value)
+              - "AWS_ENDPOINT_URL"      = (sensitive value)
+              - "AWS_REGION"            = (sensitive value)
+              - "AWS_SECRET_ACCESS_KEY" = "test"
+              - "CLOUDWATCH_LOG_GROUP"  = (sensitive value)
+              - "DATABASE_URL"          = (sensitive value)
+              - "OUTBOX_BATCH_SIZE"     = "50"
+              - "SQS_QUEUE_URL"         = "http://aws:4566/000000000000/cl-455472-events"
+            } -> null
+        }
+
+      - ephemeral_storage {
+          - size = 512 -> null
+        }
+
+      - image_config {
+          - command           = [] -> null
+          - entry_point       = [] -> null
+            # (1 unchanged attribute hidden)
+        }
+
+      - logging_config {
+          - log_format            = "Text" -> null
+          - log_group             = "/aws/lambda/cl-455472-relay" -> null
+            # (2 unchanged attributes hidden)
+        }
+
+      - tracing_config {
+          - mode = "PassThrough" -> null
+        }
+    }
+
+  # aws_lb.api will be destroyed
+  - resource "aws_lb" "api" {
+      - arn                                                          = "arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/cl-455472-api/6b576f1dc19e4722" -> null
+      - arn_suffix                                                   = "app/cl-455472-api/6b576f1dc19e4722" -> null
+      - client_keep_alive                                            = 3600 -> null
+      - desync_mitigation_mode                                       = "defensive" -> null
+      - dns_name                                                     = "cl-455472-api-6b576f1dc19e4722.elb.aws" -> null
+      - drop_invalid_header_fields                                   = false -> null
+      - enable_cross_zone_load_balancing                             = true -> null
+      - enable_deletion_protection                                   = false -> null
+      - enable_http2                                                 = true -> null
+      - enable_tls_version_and_cipher_suite_headers                  = false -> null
+      - enable_waf_fail_open                                         = false -> null
+      - enable_xff_client_port                                       = false -> null
+      - enable_zonal_shift                                           = false -> null
+      - id                                                           = "arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/cl-455472-api/6b576f1dc19e4722" -> null
+      - idle_timeout                                                 = 60 -> null
+      - internal                                                     = false -> null
+      - ip_address_type                                              = "ipv4" -> null
+      - load_balancer_type                                           = "application" -> null
+      - name                                                         = (sensitive value) -> null
+      - preserve_host_header                                         = false -> null
+      - region                                                       = "us-east-1" -> null
+      - security_groups                                              = [
+          - "sg-7fbe02dad022c4836",
+        ] -> null
+      - subnets                                                      = [
+          - "subnet-861cf7d3",
+          - "subnet-bd54cadc",
+        ] -> null
+      - tags                                                         = {} -> null
+      - tags_all                                                     = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - vpc_id                                                       = "vpc-a06e539e" -> null
+      - xff_header_processing_mode                                   = "append" -> null
+      - zone_id                                                      = "Z35SXDOTRQ7X7K" -> null
+        # (4 unchanged attributes hidden)
+
+      - access_logs {
+          - enabled = false -> null
+            # (2 unchanged attributes hidden)
+        }
+
+      - connection_logs {
+          - enabled = false -> null
+            # (2 unchanged attributes hidden)
+        }
+
+      - health_check_logs {
+          - enabled = false -> null
+            # (2 unchanged attributes hidden)
+        }
+
+      - subnet_mapping {
+          - subnet_id            = "subnet-861cf7d3" -> null
+            # (4 unchanged attributes hidden)
+        }
+      - subnet_mapping {
+          - subnet_id            = "subnet-bd54cadc" -> null
+            # (4 unchanged attributes hidden)
+        }
+    }
+
+  # aws_lb_listener.api will be destroyed
+  - resource "aws_lb_listener" "api" {
+      - arn               = "arn:aws:elasticloadbalancing:us-east-1:000000000000:listener/app/cl-455472-api/6b576f1dc19e4722/448520a93a1b46ad" -> null
+      - id                = "arn:aws:elasticloadbalancing:us-east-1:000000000000:listener/app/cl-455472-api/6b576f1dc19e4722/448520a93a1b46ad" -> null
+      - load_balancer_arn = "arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/cl-455472-api/6b576f1dc19e4722" -> null
+      - port              = 80 -> null
+      - protocol          = "HTTP" -> null
+      - region            = "us-east-1" -> null
+      - tags              = {} -> null
+      - tags_all          = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+        # (1 unchanged attribute hidden)
+
+      - default_action {
+          - order            = 1 -> null
+          - target_group_arn = "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/cl-455472-api/b2f35a92862b4e65" -> null
+          - type             = "forward" -> null
+        }
+    }
+
+  # aws_lb_target_group.api will be destroyed
+  - resource "aws_lb_target_group" "api" {
+      - arn                                = "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/cl-455472-api/b2f35a92862b4e65" -> null
+      - arn_suffix                         = "targetgroup/cl-455472-api/b2f35a92862b4e65" -> null
+      - deregistration_delay               = "5" -> null
+      - id                                 = "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/cl-455472-api/b2f35a92862b4e65" -> null
+      - ip_address_type                    = "ipv4" -> null
+      - lambda_multi_value_headers_enabled = false -> null
+      - load_balancer_arns                 = [
+          - "arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/cl-455472-api/6b576f1dc19e4722",
+        ] -> null
+      - load_balancing_algorithm_type      = "round_robin" -> null
+      - load_balancing_cross_zone_enabled  = "use_load_balancer_configuration" -> null
+      - name                               = (sensitive value) -> null
+      - port                               = 8080 -> null
+      - protocol                           = "HTTP" -> null
+      - proxy_protocol_v2                  = false -> null
+      - region                             = "us-east-1" -> null
+      - slow_start                         = 0 -> null
+      - tags                               = {} -> null
+      - tags_all                           = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - target_control_port                = 0 -> null
+      - target_type                        = "ip" -> null
+      - vpc_id                             = "vpc-a06e539e" -> null
+        # (2 unchanged attributes hidden)
+
+      - health_check {
+          - enabled             = true -> null
+          - healthy_threshold   = 2 -> null
+          - interval            = 5 -> null
+          - matcher             = "200" -> null
+          - path                = "/health/ready" -> null
+          - port                = "traffic-port" -> null
+          - protocol            = "HTTP" -> null
+          - timeout             = 2 -> null
+          - unhealthy_threshold = 3 -> null
+        }
+
+      - stickiness {
+          - cookie_duration = 86400 -> null
+          - enabled         = false -> null
+          - type            = "lb_cookie" -> null
+            # (1 unchanged attribute hidden)
+        }
+
+      - target_failover {}
+
+      - target_group_health {
+          - dns_failover {
+              - minimum_healthy_targets_count      = "off" -> null
+              - minimum_healthy_targets_percentage = "off" -> null
+            }
+          - unhealthy_state_routing {
+              - minimum_healthy_targets_count      = 1 -> null
+              - minimum_healthy_targets_percentage = "off" -> null
+            }
+        }
+
+      - target_health_state {}
+    }
+
+  # aws_route_table.private will be destroyed
+  - resource "aws_route_table" "private" {
+      - arn              = "arn:aws:ec2:us-east-1:000000000000:route-table/rtb-7e7e48d1" -> null
+      - id               = "rtb-7e7e48d1" -> null
+      - owner_id         = "000000000000" -> null
+      - propagating_vgws = [] -> null
+      - region           = "us-east-1" -> null
+      - route            = [] -> null
+      - tags             = {
+          - "Name" = (sensitive value)
+        } -> null
+      - tags_all         = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "Name"                  = "cl-455472-private"
+        } -> null
+      - vpc_id           = "vpc-a06e539e" -> null
+    }
+
+  # aws_route_table.public will be destroyed
+  - resource "aws_route_table" "public" {
+      - arn              = "arn:aws:ec2:us-east-1:000000000000:route-table/rtb-a4d33ead" -> null
+      - id               = "rtb-a4d33ead" -> null
+      - owner_id         = "000000000000" -> null
+      - propagating_vgws = [] -> null
+      - region           = "us-east-1" -> null
+      - route            = [
+          - {
+              - cidr_block                 = "0.0.0.0/0"
+              - gateway_id                 = "igw-79a6d9c0"
+                # (12 unchanged attributes hidden)
+            },
+        ] -> null
+      - tags             = {
+          - "Name" = (sensitive value)
+        } -> null
+      - tags_all         = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "Name"                  = "cl-455472-public"
+        } -> null
+      - vpc_id           = "vpc-a06e539e" -> null
+    }
+
+  # aws_route_table_association.private[0] will be destroyed
+  - resource "aws_route_table_association" "private" {
+      - id             = "rtbassoc-374b1c8b" -> null
+      - region         = "us-east-1" -> null
+      - route_table_id = "rtb-7e7e48d1" -> null
+      - subnet_id      = "subnet-92a32865" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_route_table_association.private[1] will be destroyed
+  - resource "aws_route_table_association" "private" {
+      - id             = "rtbassoc-e65970cb" -> null
+      - region         = "us-east-1" -> null
+      - route_table_id = "rtb-7e7e48d1" -> null
+      - subnet_id      = "subnet-fb1d32dd" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_route_table_association.public[0] will be destroyed
+  - resource "aws_route_table_association" "public" {
+      - id             = "rtbassoc-dfd37b44" -> null
+      - region         = "us-east-1" -> null
+      - route_table_id = "rtb-a4d33ead" -> null
+      - subnet_id      = "subnet-861cf7d3" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_route_table_association.public[1] will be destroyed
+  - resource "aws_route_table_association" "public" {
+      - id             = "rtbassoc-6909877e" -> null
+      - region         = "us-east-1" -> null
+      - route_table_id = "rtb-a4d33ead" -> null
+      - subnet_id      = "subnet-bd54cadc" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_s3_bucket.audit will be destroyed
+  - resource "aws_s3_bucket" "audit" {
+      - arn                         = "arn:aws:s3:::cl-455472-audit" -> null
+      - bucket                      = (sensitive value) -> null
+      - bucket_domain_name          = "cl-455472-audit.s3.amazonaws.com" -> null
+      - bucket_namespace            = "global" -> null
+      - bucket_region               = "us-east-1" -> null
+      - bucket_regional_domain_name = "cl-455472-audit.s3.us-east-1.amazonaws.com" -> null
+      - force_destroy               = true -> null
+      - hosted_zone_id              = "Z3AQBSTGFYJSTF" -> null
+      - id                          = "cl-455472-audit" -> null
+      - object_lock_enabled         = false -> null
+      - policy                      = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action    = [
+                          - "s3:PutObject",
+                          - "s3:GetObject",
+                          - "s3:AbortMultipartUpload",
+                        ]
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - AWS = "arn:aws:iam::000000000000:role/cl-455472-archiver"
+                        }
+                      - Resource  = "arn:aws:s3:::cl-455472-audit/ledger-audit/*"
+                    },
+                  - {
+                      - Action    = [
+                          - "s3:ListBucket",
+                          - "s3:GetBucketLocation",
+                        ]
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - AWS = "arn:aws:iam::000000000000:role/cl-455472-archiver"
+                        }
+                      - Resource  = "arn:aws:s3:::cl-455472-audit"
+                    },
+                  - {
+                      - Action    = [
+                          - "s3:DeleteObject",
+                          - "s3:DeleteObjectVersion",
+                        ]
+                      - Effect    = "Deny"
+                      - Principal = {
+                          - AWS = [
+                              - "arn:aws:iam::000000000000:role/cl-455472-archiver",
+                              - "arn:aws:iam::000000000000:role/cl-455472-ecs_execution",
+                              - "arn:aws:iam::000000000000:role/cl-455472-ecs_task",
+                              - "arn:aws:iam::000000000000:role/cl-455472-projector",
+                              - "arn:aws:iam::000000000000:role/cl-455472-relay",
+                              - "arn:aws:iam::000000000000:role/cl-455472-scheduler",
+                            ]
+                        }
+                      - Resource  = [
+                          - "arn:aws:s3:::cl-455472-audit",
+                          - "arn:aws:s3:::cl-455472-audit/*",
+                        ]
+                    },
+                  - {
+                      - Action    = "s3:PutObject"
+                      - Effect    = "Deny"
+                      - Principal = {
+                          - AWS = [
+                              - "arn:aws:iam::000000000000:role/cl-455472-ecs_execution",
+                              - "arn:aws:iam::000000000000:role/cl-455472-ecs_task",
+                              - "arn:aws:iam::000000000000:role/cl-455472-projector",
+                              - "arn:aws:iam::000000000000:role/cl-455472-relay",
+                              - "arn:aws:iam::000000000000:role/cl-455472-scheduler",
+                            ]
+                        }
+                      - Resource  = [
+                          - "arn:aws:s3:::cl-455472-audit",
+                          - "arn:aws:s3:::cl-455472-audit/*",
+                        ]
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - region                      = "us-east-1" -> null
+      - request_payer               = "BucketOwner" -> null
+      - tags                        = {} -> null
+      - tags_all                    = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+        # (2 unchanged attributes hidden)
+
+      - grant {
+          - id          = "000000000000" -> null
+          - permissions = [
+              - "FULL_CONTROL",
+            ] -> null
+          - type        = "CanonicalUser" -> null
+            # (1 unchanged attribute hidden)
+        }
+
+      - server_side_encryption_configuration {
+          - rule {
+              - bucket_key_enabled = false -> null
+
+              - apply_server_side_encryption_by_default {
+                  - kms_master_key_id = "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161" -> null
+                  - sse_algorithm     = "aws:kms" -> null
+                }
+            }
+        }
+
+      - versioning {
+          - enabled    = true -> null
+          - mfa_delete = false -> null
+        }
+    }
+
+  # aws_s3_bucket_policy.audit will be destroyed
+  - resource "aws_s3_bucket_policy" "audit" {
+      - bucket = "cl-455472-audit" -> null
+      - id     = "cl-455472-audit" -> null
+      - policy = (sensitive value) -> null
+      - region = "us-east-1" -> null
+    }
+
+  # aws_s3_bucket_public_access_block.audit will be destroyed
+  - resource "aws_s3_bucket_public_access_block" "audit" {
+      - block_public_acls       = true -> null
+      - block_public_policy     = true -> null
+      - bucket                  = "cl-455472-audit" -> null
+      - id                      = "cl-455472-audit" -> null
+      - ignore_public_acls      = true -> null
+      - region                  = "us-east-1" -> null
+      - restrict_public_buckets = true -> null
+    }
+
+  # aws_s3_bucket_server_side_encryption_configuration.audit will be destroyed
+  - resource "aws_s3_bucket_server_side_encryption_configuration" "audit" {
+      - bucket                = "cl-455472-audit" -> null
+      - id                    = "cl-455472-audit" -> null
+      - region                = "us-east-1" -> null
+        # (1 unchanged attribute hidden)
+
+      - rule {
+          - blocked_encryption_types = [] -> null
+          - bucket_key_enabled       = false -> null
+
+          - apply_server_side_encryption_by_default {
+              - kms_master_key_id = "arn:aws:kms:us-east-1:000000000000:key/47b6b001-9373-458b-9389-ca76a5fc7161" -> null
+              - sse_algorithm     = "aws:kms" -> null
+            }
+        }
+    }
+
+  # aws_s3_bucket_versioning.audit will be destroyed
+  - resource "aws_s3_bucket_versioning" "audit" {
+      - bucket                = "cl-455472-audit" -> null
+      - id                    = "cl-455472-audit" -> null
+      - region                = "us-east-1" -> null
+        # (1 unchanged attribute hidden)
+
+      - versioning_configuration {
+          - mfa_delete = "Disabled" -> null
+          - status     = "Enabled" -> null
+        }
+    }
+
+  # aws_scheduler_schedule.worker["archiver"] will be destroyed
+  - resource "aws_scheduler_schedule" "worker" {
+      - arn                          = "arn:aws:scheduler:us-east-1:000000000000:schedule/default/cl-455472-archiver" -> null
+      - group_name                   = "default" -> null
+      - id                           = "default/cl-455472-archiver" -> null
+      - name                         = (sensitive value) -> null
+      - region                       = "us-east-1" -> null
+      - schedule_expression          = "rate(5 minutes)" -> null
+      - schedule_expression_timezone = "UTC" -> null
+      - state                        = "ENABLED" -> null
+        # (6 unchanged attributes hidden)
+
+      - flexible_time_window {
+          - maximum_window_in_minutes = 0 -> null
+          - mode                      = "OFF" -> null
+        }
+
+      - target {
+          - arn      = "arn:aws:lambda:us-east-1:000000000000:function:cl-455472-archiver" -> null
+          - input    = jsonencode({})
+          - role_arn = "arn:aws:iam::000000000000:role/cl-455472-scheduler" -> null
+        }
+    }
+
+  # aws_scheduler_schedule.worker["relay"] will be destroyed
+  - resource "aws_scheduler_schedule" "worker" {
+      - arn                          = "arn:aws:scheduler:us-east-1:000000000000:schedule/default/cl-455472-relay" -> null
+      - group_name                   = "default" -> null
+      - id                           = "default/cl-455472-relay" -> null
+      - name                         = (sensitive value) -> null
+      - region                       = "us-east-1" -> null
+      - schedule_expression          = "rate(1 minute)" -> null
+      - schedule_expression_timezone = "UTC" -> null
+      - state                        = "ENABLED" -> null
+        # (6 unchanged attributes hidden)
+
+      - flexible_time_window {
+          - maximum_window_in_minutes = 0 -> null
+          - mode                      = "OFF" -> null
+        }
+
+      - target {
+          - arn      = "arn:aws:lambda:us-east-1:000000000000:function:cl-455472-relay" -> null
+          - input    = jsonencode({})
+          - role_arn = "arn:aws:iam::000000000000:role/cl-455472-scheduler" -> null
+        }
+    }
+
+  # aws_security_group.alb will be destroyed
+  - resource "aws_security_group" "alb" {
+      - arn                    = "arn:aws:ec2:us-east-1:000000000000:security-group/sg-7fbe02dad022c4836" -> null
+      - description            = "Managed by Terraform" -> null
+      - egress                 = [
+          - {
+              - cidr_blocks      = [
+                  - "10.42.0.0/16",
+                ]
+              - from_port        = 8080
+              - ipv6_cidr_blocks = []
+              - prefix_list_ids  = []
+              - protocol         = "tcp"
+              - security_groups  = []
+              - self             = false
+              - to_port          = 8080
+                # (1 unchanged attribute hidden)
+            },
+        ] -> null
+      - id                     = "sg-7fbe02dad022c4836" -> null
+      - ingress                = [
+          - {
+              - cidr_blocks      = [
+                  - "0.0.0.0/0",
+                ]
+              - from_port        = 80
+              - ipv6_cidr_blocks = []
+              - prefix_list_ids  = []
+              - protocol         = "tcp"
+              - security_groups  = []
+              - self             = false
+              - to_port          = 80
+                # (1 unchanged attribute hidden)
+            },
+        ] -> null
+      - name                   = (sensitive value) -> null
+      - owner_id               = "000000000000" -> null
+      - region                 = "us-east-1" -> null
+      - revoke_rules_on_delete = false -> null
+      - tags                   = {} -> null
+      - tags_all               = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - vpc_id                 = "vpc-a06e539e" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_security_group.ecs will be destroyed
+  - resource "aws_security_group" "ecs" {
+      - arn                    = "arn:aws:ec2:us-east-1:000000000000:security-group/sg-8d6f7eca67ca0bcef" -> null
+      - description            = "Managed by Terraform" -> null
+      - egress                 = [
+          - {
+              - cidr_blocks      = [
+                  - "0.0.0.0/0",
+                ]
+              - from_port        = 0
+              - ipv6_cidr_blocks = []
+              - prefix_list_ids  = []
+              - protocol         = "-1"
+              - security_groups  = []
+              - self             = false
+              - to_port          = 0
+                # (1 unchanged attribute hidden)
+            },
+        ] -> null
+      - id                     = "sg-8d6f7eca67ca0bcef" -> null
+      - ingress                = [
+          - {
+              - cidr_blocks      = []
+              - from_port        = 8080
+              - ipv6_cidr_blocks = []
+              - prefix_list_ids  = []
+              - protocol         = "tcp"
+              - security_groups  = [
+                  - "sg-7fbe02dad022c4836",
+                ]
+              - self             = false
+              - to_port          = 8080
+                # (1 unchanged attribute hidden)
+            },
+        ] -> null
+      - name                   = (sensitive value) -> null
+      - owner_id               = "000000000000" -> null
+      - region                 = "us-east-1" -> null
+      - revoke_rules_on_delete = false -> null
+      - tags                   = {} -> null
+      - tags_all               = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - vpc_id                 = "vpc-a06e539e" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_security_group.rds will be destroyed
+  - resource "aws_security_group" "rds" {
+      - arn                    = "arn:aws:ec2:us-east-1:000000000000:security-group/sg-976c57d784f84391b" -> null
+      - description            = "Managed by Terraform" -> null
+      - egress                 = [] -> null
+      - id                     = "sg-976c57d784f84391b" -> null
+      - ingress                = [
+          - {
+              - cidr_blocks      = [
+                  - "10.42.0.0/16",
+                ]
+              - from_port        = 5432
+              - ipv6_cidr_blocks = []
+              - prefix_list_ids  = []
+              - protocol         = "tcp"
+              - security_groups  = []
+              - self             = false
+              - to_port          = 5432
+                # (1 unchanged attribute hidden)
+            },
+        ] -> null
+      - name                   = (sensitive value) -> null
+      - owner_id               = "000000000000" -> null
+      - region                 = "us-east-1" -> null
+      - revoke_rules_on_delete = false -> null
+      - tags                   = {} -> null
+      - tags_all               = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - vpc_id                 = "vpc-a06e539e" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_security_group.valkey will be destroyed
+  - resource "aws_security_group" "valkey" {
+      - arn                    = "arn:aws:ec2:us-east-1:000000000000:security-group/sg-363fa2c3fe92544b5" -> null
+      - description            = "Managed by Terraform" -> null
+      - egress                 = [] -> null
+      - id                     = "sg-363fa2c3fe92544b5" -> null
+      - ingress                = [
+          - {
+              - cidr_blocks      = [
+                  - "10.42.0.0/16",
+                ]
+              - from_port        = 6379
+              - ipv6_cidr_blocks = []
+              - prefix_list_ids  = []
+              - protocol         = "tcp"
+              - security_groups  = []
+              - self             = false
+              - to_port          = 6379
+                # (1 unchanged attribute hidden)
+            },
+        ] -> null
+      - name                   = (sensitive value) -> null
+      - owner_id               = "000000000000" -> null
+      - region                 = "us-east-1" -> null
+      - revoke_rules_on_delete = false -> null
+      - tags                   = {} -> null
+      - tags_all               = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - vpc_id                 = "vpc-a06e539e" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_sqs_queue.dlq will be destroyed
+  - resource "aws_sqs_queue" "dlq" {
+      - arn                               = "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq" -> null
+      - content_based_deduplication       = false -> null
+      - delay_seconds                     = 0 -> null
+      - fifo_queue                        = false -> null
+      - id                                = "http://aws:4566/000000000000/cl-455472-dlq" -> null
+      - kms_data_key_reuse_period_seconds = 300 -> null
+      - kms_master_key_id                 = "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6" -> null
+      - max_message_size                  = 262144 -> null
+      - message_retention_seconds         = 1209600 -> null
+      - name                              = (sensitive value) -> null
+      - policy                            = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action    = "sqs:SendMessage"
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - AWS = "arn:aws:iam::000000000000:role/cl-455472-projector"
+                        }
+                      - Resource  = "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq"
+                    },
+                  - {
+                      - Action    = [
+                          - "sqs:ReceiveMessage",
+                          - "sqs:DeleteMessage",
+                        ]
+                      - Effect    = "Deny"
+                      - Principal = {
+                          - AWS = [
+                              - "arn:aws:iam::000000000000:role/cl-455472-archiver",
+                              - "arn:aws:iam::000000000000:role/cl-455472-ecs_execution",
+                              - "arn:aws:iam::000000000000:role/cl-455472-ecs_task",
+                              - "arn:aws:iam::000000000000:role/cl-455472-projector",
+                              - "arn:aws:iam::000000000000:role/cl-455472-relay",
+                              - "arn:aws:iam::000000000000:role/cl-455472-scheduler",
+                            ]
+                        }
+                      - Resource  = "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq"
+                    },
+                  - {
+                      - Action    = "sqs:SendMessage"
+                      - Effect    = "Deny"
+                      - Principal = {
+                          - AWS = [
+                              - "arn:aws:iam::000000000000:role/cl-455472-archiver",
+                              - "arn:aws:iam::000000000000:role/cl-455472-ecs_execution",
+                              - "arn:aws:iam::000000000000:role/cl-455472-ecs_task",
+                              - "arn:aws:iam::000000000000:role/cl-455472-relay",
+                              - "arn:aws:iam::000000000000:role/cl-455472-scheduler",
+                            ]
+                        }
+                      - Resource  = "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq"
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - receive_wait_time_seconds         = 0 -> null
+      - region                            = "us-east-1" -> null
+      - sqs_managed_sse_enabled           = false -> null
+      - tags                              = {} -> null
+      - tags_all                          = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - url                               = "http://aws:4566/000000000000/cl-455472-dlq" -> null
+      - visibility_timeout_seconds        = 30 -> null
+        # (5 unchanged attributes hidden)
+    }
+
+  # aws_sqs_queue.events will be destroyed
+  - resource "aws_sqs_queue" "events" {
+      - arn                               = "arn:aws:sqs:us-east-1:000000000000:cl-455472-events" -> null
+      - content_based_deduplication       = false -> null
+      - delay_seconds                     = 0 -> null
+      - fifo_queue                        = false -> null
+      - id                                = "http://aws:4566/000000000000/cl-455472-events" -> null
+      - kms_data_key_reuse_period_seconds = 300 -> null
+      - kms_master_key_id                 = "arn:aws:kms:us-east-1:000000000000:key/151fbd00-b6aa-47ae-b1a7-56f1401ce5d6" -> null
+      - max_message_size                  = 262144 -> null
+      - message_retention_seconds         = 172800 -> null
+      - name                              = (sensitive value) -> null
+      - policy                            = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action    = [
+                          - "sqs:SendMessage",
+                          - "sqs:GetQueueAttributes",
+                          - "sqs:GetQueueUrl",
+                        ]
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - AWS = [
+                              - "arn:aws:iam::000000000000:role/cl-455472-ecs_task",
+                              - "arn:aws:iam::000000000000:role/cl-455472-relay",
+                            ]
+                        }
+                      - Resource  = "arn:aws:sqs:us-east-1:000000000000:cl-455472-events"
+                    },
+                  - {
+                      - Action    = [
+                          - "sqs:ReceiveMessage",
+                          - "sqs:DeleteMessage",
+                          - "sqs:GetQueueAttributes",
+                          - "sqs:ChangeMessageVisibility",
+                        ]
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - AWS = "arn:aws:iam::000000000000:role/cl-455472-projector"
+                        }
+                      - Resource  = "arn:aws:sqs:us-east-1:000000000000:cl-455472-events"
+                    },
+                  - {
+                      - Action    = "sqs:SendMessage"
+                      - Effect    = "Deny"
+                      - Principal = {
+                          - AWS = [
+                              - "arn:aws:iam::000000000000:role/cl-455472-ecs_execution",
+                              - "arn:aws:iam::000000000000:role/cl-455472-projector",
+                              - "arn:aws:iam::000000000000:role/cl-455472-archiver",
+                              - "arn:aws:iam::000000000000:role/cl-455472-scheduler",
+                            ]
+                        }
+                      - Resource  = "arn:aws:sqs:us-east-1:000000000000:cl-455472-events"
+                    },
+                  - {
+                      - Action    = [
+                          - "sqs:ReceiveMessage",
+                          - "sqs:DeleteMessage",
+                        ]
+                      - Effect    = "Deny"
+                      - Principal = {
+                          - AWS = [
+                              - "arn:aws:iam::000000000000:role/cl-455472-archiver",
+                              - "arn:aws:iam::000000000000:role/cl-455472-ecs_execution",
+                              - "arn:aws:iam::000000000000:role/cl-455472-ecs_task",
+                              - "arn:aws:iam::000000000000:role/cl-455472-relay",
+                              - "arn:aws:iam::000000000000:role/cl-455472-scheduler",
+                            ]
+                        }
+                      - Resource  = "arn:aws:sqs:us-east-1:000000000000:cl-455472-events"
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - receive_wait_time_seconds         = 2 -> null
+      - redrive_policy                    = jsonencode(
+            {
+              - deadLetterTargetArn = "arn:aws:sqs:us-east-1:000000000000:cl-455472-dlq"
+              - maxReceiveCount     = 4
+            }
+        ) -> null
+      - region                            = "us-east-1" -> null
+      - sqs_managed_sse_enabled           = false -> null
+      - tags                              = {} -> null
+      - tags_all                          = {
+          - "ClearLedgerDeployment" = "cl-455472"
+        } -> null
+      - url                               = "http://aws:4566/000000000000/cl-455472-events" -> null
+      - visibility_timeout_seconds        = 3 -> null
+        # (4 unchanged attributes hidden)
+    }
+
+  # aws_sqs_queue_policy.dlq will be destroyed
+  - resource "aws_sqs_queue_policy" "dlq" {
+      - id        = "http://aws:4566/000000000000/cl-455472-dlq" -> null
+      - policy    = (sensitive value) -> null
+      - queue_url = "http://aws:4566/000000000000/cl-455472-dlq" -> null
+      - region    = "us-east-1" -> null
+    }
+
+  # aws_sqs_queue_policy.events will be destroyed
+  - resource "aws_sqs_queue_policy" "events" {
+      - id        = "http://aws:4566/000000000000/cl-455472-events" -> null
+      - policy    = (sensitive value) -> null
+      - queue_url = "http://aws:4566/000000000000/cl-455472-events" -> null
+      - region    = "us-east-1" -> null
+    }
+
+  # aws_subnet.private[0] will be destroyed
+  - resource "aws_subnet" "private" {
+      - arn                                            = "arn:aws:ec2:us-east-1:000000000000:subnet/subnet-92a32865" -> null
+      - assign_ipv6_address_on_creation                = false -> null
+      - availability_zone                              = (sensitive value) -> null
+      - availability_zone_id                           = "us-east-1-az1" -> null
+      - cidr_block                                     = "10.42.10.0/24" -> null
+      - enable_dns64                                   = false -> null
+      - enable_lni_at_device_index                     = 0 -> null
+      - enable_resource_name_dns_a_record_on_launch    = false -> null
+      - enable_resource_name_dns_aaaa_record_on_launch = false -> null
+      - id                                             = "subnet-92a32865" -> null
+      - ipv6_native                                    = false -> null
+      - map_customer_owned_ip_on_launch                = false -> null
+      - map_public_ip_on_launch                        = false -> null
+      - owner_id                                       = "000000000000" -> null
+      - region                                         = "us-east-1" -> null
+      - tags                                           = {
+          - "Name" = (sensitive value)
+        } -> null
+      - tags_all                                       = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "Name"                  = "cl-455472-private-0"
+        } -> null
+      - vpc_id                                         = "vpc-a06e539e" -> null
+        # (5 unchanged attributes hidden)
+    }
+
+  # aws_subnet.private[1] will be destroyed
+  - resource "aws_subnet" "private" {
+      - arn                                            = "arn:aws:ec2:us-east-1:000000000000:subnet/subnet-fb1d32dd" -> null
+      - assign_ipv6_address_on_creation                = false -> null
+      - availability_zone                              = (sensitive value) -> null
+      - availability_zone_id                           = "us-east-1-az2" -> null
+      - cidr_block                                     = "10.42.11.0/24" -> null
+      - enable_dns64                                   = false -> null
+      - enable_lni_at_device_index                     = 0 -> null
+      - enable_resource_name_dns_a_record_on_launch    = false -> null
+      - enable_resource_name_dns_aaaa_record_on_launch = false -> null
+      - id                                             = "subnet-fb1d32dd" -> null
+      - ipv6_native                                    = false -> null
+      - map_customer_owned_ip_on_launch                = false -> null
+      - map_public_ip_on_launch                        = false -> null
+      - owner_id                                       = "000000000000" -> null
+      - region                                         = "us-east-1" -> null
+      - tags                                           = {
+          - "Name" = (sensitive value)
+        } -> null
+      - tags_all                                       = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "Name"                  = "cl-455472-private-1"
+        } -> null
+      - vpc_id                                         = "vpc-a06e539e" -> null
+        # (5 unchanged attributes hidden)
+    }
+
+  # aws_subnet.public[0] will be destroyed
+  - resource "aws_subnet" "public" {
+      - arn                                            = "arn:aws:ec2:us-east-1:000000000000:subnet/subnet-861cf7d3" -> null
+      - assign_ipv6_address_on_creation                = false -> null
+      - availability_zone                              = (sensitive value) -> null
+      - availability_zone_id                           = "us-east-1-az1" -> null
+      - cidr_block                                     = "10.42.0.0/24" -> null
+      - enable_dns64                                   = false -> null
+      - enable_lni_at_device_index                     = 0 -> null
+      - enable_resource_name_dns_a_record_on_launch    = false -> null
+      - enable_resource_name_dns_aaaa_record_on_launch = false -> null
+      - id                                             = "subnet-861cf7d3" -> null
+      - ipv6_native                                    = false -> null
+      - map_customer_owned_ip_on_launch                = false -> null
+      - map_public_ip_on_launch                        = true -> null
+      - owner_id                                       = "000000000000" -> null
+      - region                                         = "us-east-1" -> null
+      - tags                                           = {
+          - "Name" = (sensitive value)
+        } -> null
+      - tags_all                                       = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "Name"                  = "cl-455472-public-0"
+        } -> null
+      - vpc_id                                         = "vpc-a06e539e" -> null
+        # (5 unchanged attributes hidden)
+    }
+
+  # aws_subnet.public[1] will be destroyed
+  - resource "aws_subnet" "public" {
+      - arn                                            = "arn:aws:ec2:us-east-1:000000000000:subnet/subnet-bd54cadc" -> null
+      - assign_ipv6_address_on_creation                = false -> null
+      - availability_zone                              = (sensitive value) -> null
+      - availability_zone_id                           = "us-east-1-az2" -> null
+      - cidr_block                                     = "10.42.1.0/24" -> null
+      - enable_dns64                                   = false -> null
+      - enable_lni_at_device_index                     = 0 -> null
+      - enable_resource_name_dns_a_record_on_launch    = false -> null
+      - enable_resource_name_dns_aaaa_record_on_launch = false -> null
+      - id                                             = "subnet-bd54cadc" -> null
+      - ipv6_native                                    = false -> null
+      - map_customer_owned_ip_on_launch                = false -> null
+      - map_public_ip_on_launch                        = true -> null
+      - owner_id                                       = "000000000000" -> null
+      - region                                         = "us-east-1" -> null
+      - tags                                           = {
+          - "Name" = (sensitive value)
+        } -> null
+      - tags_all                                       = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "Name"                  = "cl-455472-public-1"
+        } -> null
+      - vpc_id                                         = "vpc-a06e539e" -> null
+        # (5 unchanged attributes hidden)
+    }
+
+  # aws_vpc.main will be destroyed
+  - resource "aws_vpc" "main" {
+      - arn                                  = "arn:aws:ec2:us-east-1:000000000000:vpc/vpc-a06e539e" -> null
+      - assign_generated_ipv6_cidr_block     = false -> null
+      - cidr_block                           = "10.42.0.0/16" -> null
+      - default_network_acl_id               = "acl-cde11427b84ac7d7f" -> null
+      - default_route_table_id               = "rtb-d3bb6c5f4c6029e06" -> null
+      - default_security_group_id            = "sg-2cc2f6890905e6d6c" -> null
+      - dhcp_options_id                      = "dopt-default" -> null
+      - enable_dns_hostnames                 = true -> null
+      - enable_dns_support                   = true -> null
+      - enable_network_address_usage_metrics = false -> null
+      - id                                   = "vpc-a06e539e" -> null
+      - instance_tenancy                     = "default" -> null
+      - ipv6_netmask_length                  = 0 -> null
+      - main_route_table_id                  = "rtb-d3bb6c5f4c6029e06" -> null
+      - owner_id                             = "000000000000" -> null
+      - region                               = "us-east-1" -> null
+      - tags                                 = {
+          - "Name" = (sensitive value)
+        } -> null
+      - tags_all                             = {
+          - "ClearLedgerDeployment" = "cl-455472"
+          - "Name"                  = "cl-455472-vpc"
+        } -> null
+        # (4 unchanged attributes hidden)
+    }
+
+Plan: 0 to add, 0 to change, 71 to destroy.
+
+Changes to Outputs:
+  - manifest = (sensitive value) -> null
+aws_kms_alias.store["messaging"]: Destroying... [id=alias/cl-455472-messaging]
+aws_route_table_association.private[0]: Destroying... [id=rtbassoc-374b1c8b]
+aws_s3_bucket_server_side_encryption_configuration.audit: Destroying... [id=cl-455472-audit]
+aws_sqs_queue_policy.dlq: Destroying... [id=http://aws:4566/000000000000/cl-455472-dlq]
+aws_kms_alias.store["database"]: Destroying... [id=alias/cl-455472-database]
+aws_s3_bucket_public_access_block.audit: Destroying... [id=cl-455472-audit]
+aws_route_table_association.public[1]: Destroying... [id=rtbassoc-6909877e]
+aws_route_table_association.private[1]: Destroying... [id=rtbassoc-e65970cb]
+aws_scheduler_schedule.worker["relay"]: Destroying... [id=default/cl-455472-relay]
+aws_kms_alias.store["projection"]: Destroying... [id=alias/cl-455472-projection]
+aws_kms_alias.store["messaging"]: Destruction complete after 0s
+aws_s3_bucket_public_access_block.audit: Destruction complete after 0s
+aws_s3_bucket_server_side_encryption_configuration.audit: Destruction complete after 0s
+aws_scheduler_schedule.worker["relay"]: Destruction complete after 0s
+aws_kms_alias.store["database"]: Destruction complete after 0s
+aws_kms_alias.store["projection"]: Destruction complete after 0s
+aws_route_table_association.public[1]: Destruction complete after 0s
+aws_route_table_association.private[0]: Destruction complete after 0s
+aws_route_table_association.private[1]: Destruction complete after 0s
+aws_sqs_queue_policy.events: Destroying... [id=http://aws:4566/000000000000/cl-455472-events]
+aws_lambda_event_source_mapping.projector: Destroying... [id=b9584cf5-f3f3-4476-98b0-dd14c84394c1]
+aws_route_table_association.public[0]: Destroying... [id=rtbassoc-dfd37b44]
+aws_s3_bucket_policy.audit: Destroying... [id=cl-455472-audit]
+aws_ecs_service.api: Destroying... [id=arn:aws:ecs:us-east-1:000000000000:service/cl-455472-api/cl-455472-api]
+aws_kms_alias.store["audit"]: Destroying... [id=alias/cl-455472-audit]
+aws_scheduler_schedule.worker["archiver"]: Destroying... [id=default/cl-455472-archiver]
+aws_lambda_event_source_mapping.projector: Destruction complete after 0s
+aws_route_table.private: Destroying... [id=rtb-7e7e48d1]
+aws_scheduler_schedule.worker["archiver"]: Destruction complete after 0s
+aws_s3_bucket_policy.audit: Destruction complete after 0s
+aws_route_table_association.public[0]: Destruction complete after 0s
+aws_kms_alias.store["audit"]: Destruction complete after 0s
+aws_lambda_function.worker["projector"]: Destroying... [id=cl-455472-projector]
+aws_lambda_function.worker["archiver"]: Destroying... [id=cl-455472-archiver]
+aws_lambda_function.worker["relay"]: Destroying... [id=cl-455472-relay]
+aws_route_table.public: Destroying... [id=rtb-a4d33ead]
+aws_route_table.private: Destruction complete after 0s
+aws_route_table.public: Destruction complete after 0s
+aws_internet_gateway.main: Destroying... [id=igw-79a6d9c0]
+aws_internet_gateway.main: Destruction complete after 0s
+aws_lambda_function.worker["projector"]: Destruction complete after 5s
+aws_lambda_function.worker["relay"]: Destruction complete after 7s
+aws_lambda_function.worker["archiver"]: Destruction complete after 7s
+aws_s3_bucket_versioning.audit: Destroying... [id=cl-455472-audit]
+aws_s3_bucket_versioning.audit: Destruction complete after 0s
+aws_sqs_queue_policy.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 10s elapsed]
+aws_sqs_queue_policy.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 10s elapsed]
+aws_ecs_service.api: Still destroying... [id=arn:aws:ecs:us-east-1:000000000000:service/cl-455472-api/cl-455472-api, 10s elapsed]
+aws_ecs_service.api: Destruction complete after 11s
+aws_iam_role_policy.workload["archiver"]: Destroying... [id=cl-455472-archiver:cl-455472-archiver-canonical]
+aws_iam_role_policy.workload["ecs_task"]: Destroying... [id=cl-455472-ecs_task:cl-455472-ecs_task-canonical]
+aws_iam_role_policy.workload["archiver"]: Destruction complete after 0s
+aws_iam_role_policy.workload["ecs_execution"]: Destroying... [id=cl-455472-ecs_execution:cl-455472-ecs_execution-canonical]
+aws_ecs_cluster.api: Destroying... [id=arn:aws:ecs:us-east-1:000000000000:cluster/cl-455472-api]
+aws_iam_role_policy.workload["scheduler"]: Destroying... [id=cl-455472-scheduler:cl-455472-scheduler-canonical]
+aws_iam_role_policy.workload["relay"]: Destroying... [id=cl-455472-relay:cl-455472-relay-canonical]
+aws_security_group.ecs: Destroying... [id=sg-8d6f7eca67ca0bcef]
+aws_lb_listener.api: Destroying... [id=arn:aws:elasticloadbalancing:us-east-1:000000000000:listener/app/cl-455472-api/6b576f1dc19e4722/448520a93a1b46ad]
+aws_iam_role_policy.workload["ecs_task"]: Destruction complete after 0s
+aws_iam_role_policy.workload["ecs_execution"]: Destruction complete after 0s
+aws_iam_role_policy.workload["scheduler"]: Destruction complete after 0s
+aws_iam_role_policy.workload["relay"]: Destruction complete after 0s
+aws_ecs_cluster.api: Destruction complete after 0s
+aws_ecs_task_definition.api: Destroying... [id=cl-455472-api]
+aws_iam_role_policy.workload["projector"]: Destroying... [id=cl-455472-projector:cl-455472-projector-canonical]
+aws_lb_listener.api: Destruction complete after 0s
+aws_iam_role_policy.workload["projector"]: Destruction complete after 0s
+aws_ecs_task_definition.api: Destruction complete after 0s
+aws_security_group.ecs: Destruction complete after 0s
+aws_lb.api: Destroying... [id=arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/cl-455472-api/6b576f1dc19e4722]
+aws_lb_target_group.api: Destroying... [id=arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/cl-455472-api/b2f35a92862b4e65]
+aws_cloudwatch_log_group.workload["projector"]: Destroying... [id=/clearledger/cl-455472/projector]
+aws_cloudwatch_log_group.workload["api"]: Destroying... [id=/clearledger/cl-455472/api]
+aws_s3_bucket.audit: Destroying... [id=cl-455472-audit]
+aws_lb.api: Destruction complete after 0s
+aws_lb_target_group.api: Destruction complete after 0s
+aws_cognito_user_pool_client.auth["read"]: Destroying... [id=bf6a82afb5c445f687c18b9177]
+aws_dynamodb_table.projection: Destroying... [id=cl-455472-projection]
+aws_cloudwatch_log_group.workload["archiver"]: Destroying... [id=/clearledger/cl-455472/audit-archiver]
+aws_cloudwatch_log_group.workload["relay"]: Destroying... [id=/clearledger/cl-455472/outbox-relay]
+aws_dynamodb_table.projection: Destruction complete after 0s
+aws_db_instance.ledger: Destroying... [id=db-6AE1868A097D44B59B99971A]
+aws_s3_bucket.audit: Destruction complete after 0s
+aws_cloudwatch_log_group.workload["projector"]: Destruction complete after 0s
+aws_elasticache_replication_group.cache: Destroying... [id=cl-455472-cache]
+aws_cognito_user_pool_client.auth["admin"]: Destroying... [id=5ff44607aec44fd089aa17c26c]
+aws_cognito_user_pool_client.auth["read"]: Destruction complete after 0s
+aws_cognito_user_pool_client.auth["admin"]: Destruction complete after 0s
+aws_cloudwatch_log_group.workload["archiver"]: Destruction complete after 0s
+aws_cognito_user_pool_client.auth["write"]: Destroying... [id=fbf8eb9739a6485c852b52805d]
+aws_subnet.public[0]: Destroying... [id=subnet-861cf7d3]
+aws_subnet.public[1]: Destroying... [id=subnet-bd54cadc]
+aws_cloudwatch_log_group.workload["relay"]: Destruction complete after 0s
+aws_cognito_user_pool_client.auth["write"]: Destruction complete after 0s
+aws_security_group.alb: Destroying... [id=sg-7fbe02dad022c4836]
+aws_cloudwatch_log_group.workload["api"]: Destruction complete after 0s
+aws_cognito_resource_server.auth: Destroying... [id=us-east-1_f9d89a798|clearledger]
+aws_cognito_resource_server.auth: Destruction complete after 0s
+aws_subnet.public[0]: Destruction complete after 0s
+aws_security_group.alb: Destruction complete after 0s
+aws_subnet.public[1]: Destruction complete after 0s
+aws_cognito_user_pool.auth: Destroying... [id=us-east-1_f9d89a798]
+aws_cognito_user_pool.auth: Destruction complete after 0s
+aws_sqs_queue_policy.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 20s elapsed]
+aws_sqs_queue_policy.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 20s elapsed]
+aws_db_instance.ledger: Still destroying... [id=db-6AE1868A097D44B59B99971A, 10s elapsed]
+aws_elasticache_replication_group.cache: Still destroying... [id=cl-455472-cache, 10s elapsed]
+aws_sqs_queue_policy.dlq: Destruction complete after 25s
+aws_sqs_queue_policy.events: Destruction complete after 25s
+aws_sqs_queue.events: Destroying... [id=http://aws:4566/000000000000/cl-455472-events]
+aws_db_instance.ledger: Still destroying... [id=db-6AE1868A097D44B59B99971A, 20s elapsed]
+aws_elasticache_replication_group.cache: Still destroying... [id=cl-455472-cache, 20s elapsed]
+aws_sqs_queue.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 10s elapsed]
+aws_db_instance.ledger: Still destroying... [id=db-6AE1868A097D44B59B99971A, 30s elapsed]
+aws_elasticache_replication_group.cache: Still destroying... [id=cl-455472-cache, 30s elapsed]
+aws_elasticache_replication_group.cache: Destruction complete after 30s
+aws_elasticache_subnet_group.cache: Destroying... [id=cl-455472-cache]
+aws_security_group.valkey: Destroying... [id=sg-363fa2c3fe92544b5]
+aws_elasticache_subnet_group.cache: Destruction complete after 0s
+aws_security_group.valkey: Destruction complete after 0s
+aws_sqs_queue.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 20s elapsed]
+aws_db_instance.ledger: Still destroying... [id=db-6AE1868A097D44B59B99971A, 40s elapsed]
+aws_sqs_queue.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 30s elapsed]
+aws_db_instance.ledger: Still destroying... [id=db-6AE1868A097D44B59B99971A, 50s elapsed]
+aws_sqs_queue.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 40s elapsed]
+aws_db_instance.ledger: Still destroying... [id=db-6AE1868A097D44B59B99971A, 1m0s elapsed]
+aws_sqs_queue.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 50s elapsed]
+aws_db_instance.ledger: Still destroying... [id=db-6AE1868A097D44B59B99971A, 1m10s elapsed]
+aws_sqs_queue.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 1m0s elapsed]
+aws_db_instance.ledger: Still destroying... [id=db-6AE1868A097D44B59B99971A, 1m20s elapsed]
+aws_db_instance.ledger: Destruction complete after 1m20s
+aws_db_subnet_group.ledger: Destroying... [id=cl-455472-database]
+aws_security_group.rds: Destroying... [id=sg-976c57d784f84391b]
+aws_db_subnet_group.ledger: Destruction complete after 0s
+aws_security_group.rds: Destruction complete after 0s
+aws_subnet.private[1]: Destroying... [id=subnet-fb1d32dd]
+aws_subnet.private[0]: Destroying... [id=subnet-92a32865]
+aws_subnet.private[1]: Destruction complete after 0s
+aws_subnet.private[0]: Destruction complete after 0s
+aws_vpc.main: Destroying... [id=vpc-a06e539e]
+aws_vpc.main: Destruction complete after 0s
+aws_sqs_queue.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 1m10s elapsed]
+aws_sqs_queue.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 1m20s elapsed]
+aws_sqs_queue.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 1m30s elapsed]
+aws_sqs_queue.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 1m40s elapsed]
+aws_sqs_queue.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 1m50s elapsed]
+aws_sqs_queue.events: Still destroying... [id=http://aws:4566/000000000000/cl-455472-events, 2m0s elapsed]
+aws_sqs_queue.events: Destruction complete after 2m9s
+aws_sqs_queue.dlq: Destroying... [id=http://aws:4566/000000000000/cl-455472-dlq]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 10s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 20s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 30s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 40s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 50s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 1m0s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 1m10s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 1m20s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 1m30s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 1m40s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 1m50s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-455472-dlq, 2m0s elapsed]
+aws_sqs_queue.dlq: Destruction complete after 2m9s
+aws_kms_key.store["messaging"]: Destroying... [id=151fbd00-b6aa-47ae-b1a7-56f1401ce5d6]
+aws_kms_key.store["audit"]: Destroying... [id=47b6b001-9373-458b-9389-ca76a5fc7161]
+aws_kms_key.store["database"]: Destroying... [id=7c20193c-daac-4709-84a9-d15e74a33837]
+aws_kms_key.store["projection"]: Destroying... [id=de63609f-700f-4418-a8f2-9ea3eff0de24]
+aws_kms_key.store["audit"]: Destruction complete after 0s
+aws_kms_key.store["database"]: Destruction complete after 0s
+aws_kms_key.store["projection"]: Destruction complete after 0s
+aws_kms_key.store["messaging"]: Destruction complete after 0s
+aws_iam_role.workload["archiver"]: Destroying... [id=cl-455472-archiver]
+aws_iam_role.workload["scheduler"]: Destroying... [id=cl-455472-scheduler]
+aws_iam_role.workload["ecs_task"]: Destroying... [id=cl-455472-ecs_task]
+aws_iam_role.workload["ecs_execution"]: Destroying... [id=cl-455472-ecs_execution]
+aws_iam_role.workload["projector"]: Destroying... [id=cl-455472-projector]
+aws_iam_role.workload["relay"]: Destroying... [id=cl-455472-relay]
+aws_iam_role.workload["archiver"]: Destruction complete after 0s
+aws_iam_role.workload["ecs_task"]: Destruction complete after 0s
+aws_iam_role.workload["scheduler"]: Destruction complete after 0s
+aws_iam_role.workload["projector"]: Destruction complete after 0s
+aws_iam_role.workload["ecs_execution"]: Destruction complete after 0s
+aws_iam_role.workload["relay"]: Destruction complete after 0s
+
+Warning: Argument is deprecated
+
+  with aws_dynamodb_table.projection,
+  on main.tf line 221, in resource "aws_dynamodb_table" "projection":
+ 221: resource "aws_dynamodb_table" "projection" {
+
+hash_key is deprecated. Use key_schema instead.
+
+(and one more similar warning elsewhere)
+
+Destroy complete! Resources: 71 destroyed.

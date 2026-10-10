@@ -1,0 +1,213 @@
+aws_ecs_cluster.api: Refreshing state... [id=arn:aws:ecs:us-east-1:000000000000:cluster/cl-32eb22-cluster]
+aws_cloudwatch_log_group.workload["projector"]: Refreshing state... [id=/clearledger/cl-32eb22/projector]
+aws_cloudwatch_log_group.workload["archiver"]: Refreshing state... [id=/clearledger/cl-32eb22/audit-archiver]
+aws_iam_role.workload["archiver"]: Refreshing state... [id=cl-32eb22-archiver]
+aws_iam_role.workload["projector"]: Refreshing state... [id=cl-32eb22-projector]
+aws_cloudwatch_log_group.workload["api"]: Refreshing state... [id=/clearledger/cl-32eb22/api]
+aws_vpc.main: Refreshing state... [id=vpc-1cf64edf]
+aws_cognito_user_pool.main: Refreshing state... [id=us-east-1_9c04c9469]
+aws_s3_bucket.audit: Refreshing state... [id=cl-32eb22-audit]
+aws_cloudwatch_log_group.workload["relay"]: Refreshing state... [id=/clearledger/cl-32eb22/outbox-relay]
+aws_iam_role.workload["ecs_execution"]: Refreshing state... [id=cl-32eb22-ecs_execution]
+aws_iam_role.workload["ecs_task"]: Refreshing state... [id=cl-32eb22-ecs_task]
+aws_iam_role.workload["relay"]: Refreshing state... [id=cl-32eb22-relay]
+aws_iam_role.workload["scheduler"]: Refreshing state... [id=cl-32eb22-scheduler]
+aws_cognito_resource_server.main: Refreshing state... [id=us-east-1_9c04c9469|clearledger]
+aws_subnet.public[0]: Refreshing state... [id=subnet-0c1d11e8]
+aws_subnet.public[1]: Refreshing state... [id=subnet-a69e9133]
+aws_security_group.alb: Refreshing state... [id=sg-09fb8c30d95fb2ac3]
+aws_lb_target_group.api: Refreshing state... [id=arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/cl-32eb22-api/3d29c4413234447e]
+aws_security_group.rds: Refreshing state... [id=sg-a805a037bef1012f2]
+aws_security_group.valkey: Refreshing state... [id=sg-a6e04a91e24b066ec]
+aws_route_table.private: Refreshing state... [id=rtb-af3d6435]
+aws_subnet.private[0]: Refreshing state... [id=subnet-cee97d80]
+aws_internet_gateway.main: Refreshing state... [id=igw-738d1bbc]
+aws_kms_key.store["messaging"]: Refreshing state... [id=cb5366d2-acee-4c9f-8173-b0099c02f660]
+aws_subnet.private[1]: Refreshing state... [id=subnet-2bfcd887]
+aws_kms_key.store["audit"]: Refreshing state... [id=abbbac08-ad34-4305-bc98-6f694d1d171a]
+aws_s3_bucket_versioning.audit: Refreshing state... [id=cl-32eb22-audit]
+aws_kms_key.store["database"]: Refreshing state... [id=c4f54840-78fa-4c3e-81d2-45625515fc2c]
+aws_s3_bucket_public_access_block.audit: Refreshing state... [id=cl-32eb22-audit]
+aws_s3_bucket_policy.audit: Refreshing state... [id=cl-32eb22-audit]
+aws_kms_key.store["projection"]: Refreshing state... [id=5a939a52-572d-4dbe-bce2-db0b6e2b6b66]
+aws_cognito_user_pool_client.scope["admin"]: Refreshing state... [id=94ca2e89469e4359abc2600f1c]
+aws_cognito_user_pool_client.scope["read"]: Refreshing state... [id=40d4957a07354bd695ac546c83]
+aws_cognito_user_pool_client.scope["write"]: Refreshing state... [id=0b48283bd1fc42d98400ca5b7f]
+aws_security_group.ecs: Refreshing state... [id=sg-b34e6172f410f3c84]
+aws_route_table.public: Refreshing state... [id=rtb-c774b4b1]
+aws_elasticache_subnet_group.main: Refreshing state... [id=cl-32eb22-cache]
+aws_lb.api: Refreshing state... [id=arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/cl-32eb22-alb/763889a6ce90493b]
+aws_route_table_association.private[0]: Refreshing state... [id=rtbassoc-824771e8]
+aws_db_subnet_group.main: Refreshing state... [id=cl-32eb22-database]
+aws_route_table_association.private[1]: Refreshing state... [id=rtbassoc-9eac4d71]
+aws_iam_role_policy.canonical["ecs_execution"]: Refreshing state... [id=cl-32eb22-ecs_execution:cl-32eb22-ecs_execution-canonical]
+aws_sqs_queue.dlq: Refreshing state... [id=http://aws:4566/000000000000/cl-32eb22-dlq]
+aws_iam_role_policy.canonical["archiver"]: Refreshing state... [id=cl-32eb22-archiver:cl-32eb22-archiver-canonical]
+aws_iam_role_policy.canonical["ecs_task"]: Refreshing state... [id=cl-32eb22-ecs_task:cl-32eb22-ecs_task-canonical]
+aws_iam_role_policy.canonical["projector"]: Refreshing state... [id=cl-32eb22-projector:cl-32eb22-projector-canonical]
+aws_iam_role_policy.canonical["scheduler"]: Refreshing state... [id=cl-32eb22-scheduler:cl-32eb22-scheduler-canonical]
+aws_iam_role_policy.canonical["relay"]: Refreshing state... [id=cl-32eb22-relay:cl-32eb22-relay-canonical]
+aws_s3_bucket_server_side_encryption_configuration.audit: Refreshing state... [id=cl-32eb22-audit]
+aws_kms_alias.store["audit"]: Refreshing state... [id=alias/cl-32eb22-audit]
+aws_dynamodb_table.projection: Refreshing state... [id=cl-32eb22-projections]
+aws_kms_alias.store["database"]: Refreshing state... [id=alias/cl-32eb22-database]
+aws_kms_alias.store["projection"]: Refreshing state... [id=alias/cl-32eb22-projection]
+aws_kms_alias.store["messaging"]: Refreshing state... [id=alias/cl-32eb22-messaging]
+aws_elasticache_replication_group.main: Refreshing state... [id=cl-32eb22-cache]
+aws_route_table_association.public[0]: Refreshing state... [id=rtbassoc-95255df0]
+aws_route_table_association.public[1]: Refreshing state... [id=rtbassoc-72680bc4]
+aws_lb_listener.api: Refreshing state... [id=arn:aws:elasticloadbalancing:us-east-1:000000000000:listener/app/cl-32eb22-alb/763889a6ce90493b/a8f8db681866441e]
+aws_sqs_queue.main: Refreshing state... [id=http://aws:4566/000000000000/cl-32eb22-events]
+aws_db_instance.main: Refreshing state... [id=db-300832C25FD2486DBA37DFC8]
+aws_ecs_task_definition.api: Refreshing state... [id=cl-32eb22-api]
+aws_lambda_function.worker["projector"]: Refreshing state... [id=cl-32eb22-projector]
+aws_lambda_function.worker["archiver"]: Refreshing state... [id=cl-32eb22-archiver]
+aws_lambda_function.worker["relay"]: Refreshing state... [id=cl-32eb22-relay]
+aws_ecs_service.api: Refreshing state... [id=arn:aws:ecs:us-east-1:000000000000:service/cl-32eb22-cluster/cl-32eb22-api]
+aws_lambda_event_source_mapping.projector: Refreshing state... [id=16bab4b9-1c2c-49b4-9a56-b80eca9ef47f]
+aws_scheduler_schedule.worker["archiver"]: Refreshing state... [id=default/cl-32eb22-archiver]
+aws_scheduler_schedule.worker["relay"]: Refreshing state... [id=default/cl-32eb22-relay]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  ~ update in-place
+
+Terraform will perform the following actions:
+
+  # aws_ecs_task_definition.api will be updated in-place
+  ~ resource "aws_ecs_task_definition" "api" {
+        id                       = "cl-32eb22-api"
+        tags                     = {}
+      ~ tags_all                 = {
+          + "ClearLedgerDeployment" = "cl-32eb22"
+        }
+        # (17 unchanged attributes hidden)
+    }
+
+  # aws_elasticache_replication_group.main will be updated in-place
+  ~ resource "aws_elasticache_replication_group" "main" {
+        id                             = "cl-32eb22-cache"
+      ~ security_group_ids             = [
+          + "sg-a6e04a91e24b066ec",
+        ]
+        tags                           = {}
+        # (36 unchanged attributes hidden)
+
+        # (1 unchanged block hidden)
+    }
+
+  # aws_lambda_event_source_mapping.projector will be updated in-place
+  ~ resource "aws_lambda_event_source_mapping" "projector" {
+        id                                 = "16bab4b9-1c2c-49b4-9a56-b80eca9ef47f"
+        tags                               = {}
+      ~ tags_all                           = {
+          + "ClearLedgerDeployment" = "cl-32eb22"
+        }
+        # (24 unchanged attributes hidden)
+    }
+
+  # aws_security_group.alb will be updated in-place
+  ~ resource "aws_security_group" "alb" {
+      ~ egress                 = [
+          - {
+              - cidr_blocks      = [
+                  - "0.0.0.0/0",
+                ]
+              - from_port        = 0
+              - ipv6_cidr_blocks = []
+              - prefix_list_ids  = []
+              - protocol         = "-1"
+              - security_groups  = []
+              - self             = false
+              - to_port          = 0
+                # (1 unchanged attribute hidden)
+            },
+          - {
+              - cidr_blocks      = [
+                  - "10.42.0.0/16",
+                ]
+              - from_port        = 8080
+              - ipv6_cidr_blocks = []
+              - prefix_list_ids  = []
+              - protocol         = "tcp"
+              - security_groups  = []
+              - self             = false
+              - to_port          = 8080
+                # (1 unchanged attribute hidden)
+            },
+          + {
+              + cidr_blocks      = [
+                  + "10.42.0.0/16",
+                ]
+              + from_port        = 8080
+              + ipv6_cidr_blocks = []
+              + prefix_list_ids  = []
+              + protocol         = "tcp"
+              + security_groups  = []
+              + self             = false
+              + to_port          = 8080
+            },
+        ]
+        id                     = "sg-09fb8c30d95fb2ac3"
+        name                   = "cl-32eb22-alb"
+        tags                   = {}
+        # (9 unchanged attributes hidden)
+    }
+
+  # aws_security_group.rds will be updated in-place
+  ~ resource "aws_security_group" "rds" {
+      ~ egress                 = [
+          - {
+              - cidr_blocks      = [
+                  - "0.0.0.0/0",
+                ]
+              - from_port        = 0
+              - ipv6_cidr_blocks = []
+              - prefix_list_ids  = []
+              - protocol         = "-1"
+              - security_groups  = []
+              - self             = false
+              - to_port          = 0
+                # (1 unchanged attribute hidden)
+            },
+        ]
+        id                     = "sg-a805a037bef1012f2"
+        name                   = "cl-32eb22-rds"
+        tags                   = {}
+        # (9 unchanged attributes hidden)
+    }
+
+  # aws_security_group.valkey will be updated in-place
+  ~ resource "aws_security_group" "valkey" {
+      ~ egress                 = [
+          - {
+              - cidr_blocks      = [
+                  - "0.0.0.0/0",
+                ]
+              - from_port        = 0
+              - ipv6_cidr_blocks = []
+              - prefix_list_ids  = []
+              - protocol         = "-1"
+              - security_groups  = []
+              - self             = false
+              - to_port          = 0
+                # (1 unchanged attribute hidden)
+            },
+        ]
+        id                     = "sg-a6e04a91e24b066ec"
+        name                   = "cl-32eb22-valkey"
+        tags                   = {}
+        # (9 unchanged attributes hidden)
+    }
+
+Plan: 0 to add, 6 to change, 0 to destroy.
+
+Warning: Argument is deprecated
+
+  with aws_dynamodb_table.projection,
+  on main.tf line 214, in resource "aws_dynamodb_table" "projection":
+ 214: resource "aws_dynamodb_table" "projection" {
+
+hash_key is deprecated. Use key_schema instead.
+
+(and 3 more similar warnings elsewhere)

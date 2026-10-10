@@ -1,0 +1,518 @@
+{
+  "command": "harbor trial start -p /tmp/m1-run-8b1b4908-80ca-434e-8bc5-c9a3416d2db8-91qww9mq/package/materialized-task -a oracle -m anthropic/claude-haiku-4-5-20251001 --trials-dir /tmp/m1-run-8b1b4908-80ca-434e-8bc5-c9a3416d2db8-91qww9mq/harbor-trials --environment-type daytona --agent-timeout 21600 --environment-kwarg auto_stop_interval_mins=60 --verifier-timeout 7200.0 --agent-setup-timeout 1800 --allow-agent-host llm-broker-prod-1062225351540.us-central1.run.app",
+  "returncode": 0,
+  "stdout": "Starting trial: materialized-task__myJxbd2\nTask: materialized-task\nAgent: oracle\nEnvironment: daytona\nTrials directory: \n/tmp/m1-run-8b1b4908-80ca-434e-8bc5-c9a3416d2db8-91qww9mq/harbor-trials\n\nTrial completed!\nTrial name: materialized-task__myJxbd2\nTask: devcloud/clearledger-settlement\nStarted: 2026-10-10 18:50:01.537065+00:00\nFinished: 2026-10-10 19:15:30.588403+00:00\nRewards: {'reward': 1.0, 'score': 100}\n",
+  "stderr": "Applied M1 host env template guard inside Harbor subprocess\nApplied M1 OpenCode run patch inside Harbor subprocess\nApplied M1 provider key alias patch inside Harbor subprocess\nApplied M1 verifier secret-strip patch inside Harbor subprocess\nApplied M1 verifier exceptional log collection patch inside Harbor subprocess\nApplied M1 submission-readable patch inside Harbor subprocess\nApplied M1 E2B sandbox-timeout clamp (<=3600s) inside Harbor subprocess\nApplied M1 OpenCode install nvm-alias-default patch inside Harbor subprocess\nApplied M1 Daytona BUILD_FAILED errorReason patch inside Harbor subprocess\nApplied M1 Harbor Daytona lifecycle telemetry patch inside Harbor subprocess\nApplied M1 Harbor Modal remote-identity and lifecycle patch\nApplied M1 Daytona DinD Docker-daemon timeout (180s) and registry auth inside Harbor subprocess\nApplied M1 Harbor Daytona _poll_response wait_for patch inside Harbor subprocess (timeout=0)\nApplied M1 Harbor Daytona per-command exec deadline patch inside Harbor subprocess (grace=120s)\nApplied M1 Harbor Daytona verifier transfer retry patch inside Harbor subprocess\nApplied M1 Daytona FileInfo null-timestamp tolerance patch inside Harbor subprocess (2 client(s))\nApplied M1 external task file patch inside Harbor subprocess\nApplied M1 multi-step grader isolation patch inside Harbor subprocess\nApplied M1 E2B sandbox timeout cap inside Harbor subprocess (timeout=3600)\nApplied M1 Harbor E2B patch inside Harbor subprocess\n--environment-type is deprecated; use --env instead.\n/opt/uv/tools/harbor/lib/python3.12/site-packages/harbor/trial/network_policy.py:157: UserWarning: Run-specific allowlist host(s) ['llm-broker-prod-1062225351540.us-central1.run.app'] are ignored because the effective network policy is public.\n  agent_phase = resolve_agent_phase_policy(\nM1_RUNTIME_EVENT_JSON={\"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_start_started\", \"force_build\": false, \"occurred_at\": \"2026-10-10T18:50:01.568228+00:00\", \"provider\": \"daytona\", \"session_id\": \"materialized-task__myJxbd2__env\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_image_selection_resolved\", \"image_digest_status\": \"unknown\", \"occurred_at\": \"2026-10-10T18:50:01.568304+00:00\", \"provider\": \"daytona\", \"selection\": \"compose_unresolved\", \"session_id\": \"materialized-task__myJxbd2__env\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"daytona_create_name\": \"m1-5a3f34f3edde4335de2b\", \"daytona_labels\": {\"m1-create-name\": \"m1-5a3f34f3edde4335de2b\", \"m1-dispatch-generation\": \"0\", \"m1-environment-id\": \"cloud-dev\", \"m1-managed\": \"true\", \"m1-run-id\": \"8b1b4908-80ca-434e-8bc5-c9a3416d2db8\", \"m1-worker-id\": \"modal:fc-01M4KJCFFJMNHSS1W8EJF48KSK:25ed3304-8a9a-486d-83ca-85f096708329\"}, \"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_create_started\", \"occurred_at\": \"2026-10-10T18:50:01.569254+00:00\", \"provider\": \"daytona\", \"session_id\": \"materialized-task__myJxbd2__env\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"environment_name\": null, \"event_type\": \"sandbox_create_completed\", \"occurred_at\": \"2026-10-10T18:50:02.180943+00:00\", \"provider\": \"daytona\", \"runner_id\": \"f0db7b76-afa3-4f91-a7c2-ba9496897289\", \"sandbox_id\": \"551adf7c-4c82-4b71-97ad-e6874c87bf91\", \"session_id\": null, \"source\": \"daytona_sdk\"}\nM1_RUNTIME_EVENT_JSON={\"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_create_completed\", \"occurred_at\": \"2026-10-10T18:50:02.181179+00:00\", \"provider\": \"daytona\", \"runner_id\": \"f0db7b76-afa3-4f91-a7c2-ba9496897289\", \"sandbox_id\": \"551adf7c-4c82-4b71-97ad-e6874c87bf91\", \"session_id\": \"materialized-task__myJxbd2__env\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"33512cf6-cc1b-46b8-88a2-05a142d34dff\", \"elapsed_sec\": \"60\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T18:51:05.466896+00:00\", \"provider\": \"daytona\", \"runner_id\": \"f0db7b76-afa3-4f91-a7c2-ba9496897289\", \"sandbox_id\": \"551adf7c-4c82-4b71-97ad-e6874c87bf91\", \"session_id\": \"a61200d4-f322-4a78-ba86-2319025c7a4b\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"33512cf6-cc1b-46b8-88a2-05a142d34dff\", \"elapsed_sec\": \"120\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T18:52:05.467620+00:00\", \"provider\": \"daytona\", \"runner_id\": \"f0db7b76-afa3-4f91-a7c2-ba9496897289\", \"sandbox_id\": \"551adf7c-4c82-4b71-97ad-e6874c87bf91\", \"session_id\": \"a61200d4-f322-4a78-ba86-2319025c7a4b\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"33512cf6-cc1b-46b8-88a2-05a142d34dff\", \"elapsed_sec\": \"180\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T18:53:05.469323+00:00\", \"provider\": \"daytona\", \"runner_id\": \"f0db7b76-afa3-4f91-a7c2-ba9496897289\", \"sandbox_id\": \"551adf7c-4c82-4b71-97ad-e6874c87bf91\", \"session_id\": \"a61200d4-f322-4a78-ba86-2319025c7a4b\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_started\", \"occurred_at\": \"2026-10-10T18:53:51.578935+00:00\", \"provider\": \"daytona\", \"runner_id\": \"f0db7b76-afa3-4f91-a7c2-ba9496897289\", \"sandbox_id\": \"551adf7c-4c82-4b71-97ad-e6874c87bf91\", \"session_id\": \"materialized-task__myJxbd2__env\", \"strategy\": \"_DaytonaDinD\", \"worker_runtime_config\": {\"agent_network_allowlist_configured\": false, \"broker_token_present\": true, \"daytona_api_host_class\": \"default\", \"daytona_api_key_present\": true, \"native_idle_proxy_enabled\": true, \"native_secret_bindings\": \"unset\", \"upstream_tunnel_enabled\": true}}\n/opt/uv/tools/harbor/lib/python3.12/site-packages/harbor/trial/network_policy.py:157: UserWarning: Run-specific allowlist host(s) ['llm-broker-prod-1062225351540.us-central1.run.app'] are ignored because the effective network policy is public.\n  agent_phase = resolve_agent_phase_policy(\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"57b60920-498c-44b5-9a9d-a62ddd6998b2\", \"elapsed_sec\": \"60\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T18:54:56.286151+00:00\", \"provider\": \"daytona\", \"runner_id\": \"f0db7b76-afa3-4f91-a7c2-ba9496897289\", \"sandbox_id\": \"551adf7c-4c82-4b71-97ad-e6874c87bf91\", \"session_id\": \"45f269b1-a6b5-4508-aba5-acfc771f7858\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"delete\": true, \"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_stop_started\", \"occurred_at\": \"2026-10-10T18:56:15.435430+00:00\", \"provider\": \"daytona\", \"runner_id\": \"f0db7b76-afa3-4f91-a7c2-ba9496897289\", \"sandbox_id\": \"551adf7c-4c82-4b71-97ad-e6874c87bf91\", \"session_id\": \"materialized-task__myJxbd2__env\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"auto_delete_interval\": -1, \"auto_stop_interval\": 480, \"capture_point\": \"before_harbor_delete\", \"created_at\": \"2026-10-10T18:50:01.709Z\", \"desired_state\": \"started\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_death_forensics\", \"http_status\": 200, \"m1-run-id\": \"8b1b4908-80ca-434e-8bc5-c9a3416d2db8\", \"occurred_at\": \"2026-10-10T18:56:15.510809+00:00\", \"provider\": \"daytona\", \"runner_id\": \"f0db7b76-afa3-4f91-a7c2-ba9496897289\", \"sampled\": false, \"sandbox_id\": \"551adf7c-4c82-4b71-97ad-e6874c87bf91\", \"session_id\": \"materialized-task__myJxbd2__env\", \"state\": \"started\", \"strategy\": \"_DaytonaDinD\", \"trial_failed\": true, \"updated_at\": \"2026-10-10T18:50:02.154Z\"}\nM1_RUNTIME_EVENT_JSON={\"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_stopped\", \"occurred_at\": \"2026-10-10T18:56:26.286507+00:00\", \"provider\": \"daytona\", \"sandbox_id\": \"551adf7c-4c82-4b71-97ad-e6874c87bf91\", \"session_id\": \"materialized-task__myJxbd2__env\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_start_started\", \"force_build\": false, \"occurred_at\": \"2026-10-10T18:56:26.292452+00:00\", \"provider\": \"daytona\", \"session_id\": \"materialized-task__myJxbd2__verifier__trial\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_image_selection_resolved\", \"image_digest_status\": \"unknown\", \"occurred_at\": \"2026-10-10T18:56:26.292508+00:00\", \"provider\": \"daytona\", \"selection\": \"compose_unresolved\", \"session_id\": \"materialized-task__myJxbd2__verifier__trial\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"daytona_create_name\": \"m1-ffa3f6c9ddd7bbeece0a\", \"daytona_labels\": {\"m1-create-name\": \"m1-ffa3f6c9ddd7bbeece0a\", \"m1-dispatch-generation\": \"0\", \"m1-environment-id\": \"cloud-dev\", \"m1-managed\": \"true\", \"m1-run-id\": \"8b1b4908-80ca-434e-8bc5-c9a3416d2db8\", \"m1-worker-id\": \"modal:fc-01M4KJCFFJMNHSS1W8EJF48KSK:25ed3304-8a9a-486d-83ca-85f096708329\"}, \"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_create_started\", \"occurred_at\": \"2026-10-10T18:56:26.293134+00:00\", \"provider\": \"daytona\", \"session_id\": \"materialized-task__myJxbd2__verifier__trial\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"environment_name\": null, \"event_type\": \"sandbox_create_completed\", \"occurred_at\": \"2026-10-10T18:56:26.893664+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": null, \"source\": \"daytona_sdk\"}\nM1_RUNTIME_EVENT_JSON={\"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_create_completed\", \"occurred_at\": \"2026-10-10T18:56:26.893883+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"materialized-task__myJxbd2__verifier__trial\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"165c77ba-d2a4-4793-a258-8db51d17f395\", \"elapsed_sec\": \"60\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T18:57:38.125999+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"1c2db0a8-8fe1-429a-95ae-037d725a19c0\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"165c77ba-d2a4-4793-a258-8db51d17f395\", \"elapsed_sec\": \"120\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T18:58:38.127358+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"1c2db0a8-8fe1-429a-95ae-037d725a19c0\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"165c77ba-d2a4-4793-a258-8db51d17f395\", \"elapsed_sec\": \"180\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T18:59:38.128777+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"1c2db0a8-8fe1-429a-95ae-037d725a19c0\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"165c77ba-d2a4-4793-a258-8db51d17f395\", \"elapsed_sec\": \"240\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:00:38.130133+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"1c2db0a8-8fe1-429a-95ae-037d725a19c0\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_started\", \"occurred_at\": \"2026-10-10T19:01:37.517241+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"materialized-task__myJxbd2__verifier__trial\", \"strategy\": \"_DaytonaDinD\", \"worker_runtime_config\": {\"agent_network_allowlist_configured\": false, \"broker_token_present\": true, \"daytona_api_host_class\": \"default\", \"daytona_api_key_present\": true, \"native_idle_proxy_enabled\": true, \"native_secret_bindings\": \"unset\", \"upstream_tunnel_enabled\": true}}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"dc52cc3c-6b99-47c8-9650-9ffabdf119cf\", \"elapsed_sec\": \"60\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:03:03.194500+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"ee0557ef-fee7-474d-9d17-c88e31125026\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"dc52cc3c-6b99-47c8-9650-9ffabdf119cf\", \"elapsed_sec\": \"120\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:04:03.196381+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"ee0557ef-fee7-474d-9d17-c88e31125026\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"dc52cc3c-6b99-47c8-9650-9ffabdf119cf\", \"elapsed_sec\": \"180\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:05:03.197473+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"ee0557ef-fee7-474d-9d17-c88e31125026\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"dc52cc3c-6b99-47c8-9650-9ffabdf119cf\", \"elapsed_sec\": \"240\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:06:03.199143+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"ee0557ef-fee7-474d-9d17-c88e31125026\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"dc52cc3c-6b99-47c8-9650-9ffabdf119cf\", \"elapsed_sec\": \"300\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:07:03.200502+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"ee0557ef-fee7-474d-9d17-c88e31125026\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"dc52cc3c-6b99-47c8-9650-9ffabdf119cf\", \"elapsed_sec\": \"360\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:08:03.201340+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"ee0557ef-fee7-474d-9d17-c88e31125026\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"dc52cc3c-6b99-47c8-9650-9ffabdf119cf\", \"elapsed_sec\": \"420\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:09:03.202365+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"ee0557ef-fee7-474d-9d17-c88e31125026\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"dc52cc3c-6b99-47c8-9650-9ffabdf119cf\", \"elapsed_sec\": \"480\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:10:03.203973+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"ee0557ef-fee7-474d-9d17-c88e31125026\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"dc52cc3c-6b99-47c8-9650-9ffabdf119cf\", \"elapsed_sec\": \"540\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:11:03.206263+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"ee0557ef-fee7-474d-9d17-c88e31125026\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"dc52cc3c-6b99-47c8-9650-9ffabdf119cf\", \"elapsed_sec\": \"600\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:12:03.207113+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"ee0557ef-fee7-474d-9d17-c88e31125026\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"dc52cc3c-6b99-47c8-9650-9ffabdf119cf\", \"elapsed_sec\": \"660\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:13:03.207984+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"ee0557ef-fee7-474d-9d17-c88e31125026\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"dc52cc3c-6b99-47c8-9650-9ffabdf119cf\", \"elapsed_sec\": \"720\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:14:03.208973+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"ee0557ef-fee7-474d-9d17-c88e31125026\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"command_id\": \"dc52cc3c-6b99-47c8-9650-9ffabdf119cf\", \"elapsed_sec\": \"780\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"exec_poll_heartbeat\", \"occurred_at\": \"2026-10-10T19:15:03.210282+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"ee0557ef-fee7-474d-9d17-c88e31125026\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"delete\": true, \"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_stop_started\", \"occurred_at\": \"2026-10-10T19:15:27.667639+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"materialized-task__myJxbd2__verifier__trial\", \"strategy\": \"_DaytonaDinD\"}\nM1_RUNTIME_EVENT_JSON={\"auto_delete_interval\": -1, \"auto_stop_interval\": 480, \"capture_point\": \"before_harbor_delete\", \"created_at\": \"2026-10-10T18:56:26.352Z\", \"desired_state\": \"started\", \"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_death_forensics\", \"http_status\": 200, \"m1-run-id\": \"8b1b4908-80ca-434e-8bc5-c9a3416d2db8\", \"occurred_at\": \"2026-10-10T19:15:27.782130+00:00\", \"provider\": \"daytona\", \"runner_id\": \"6ea70dde-b86c-4ebb-9dad-f620fdfa921f\", \"sampled\": false, \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"materialized-task__myJxbd2__verifier__trial\", \"state\": \"started\", \"strategy\": \"_DaytonaDinD\", \"updated_at\": \"2026-10-10T18:56:26.874Z\"}\nM1_RUNTIME_EVENT_JSON={\"environment_name\": \"clearledger-settlement\", \"event_type\": \"sandbox_stopped\", \"occurred_at\": \"2026-10-10T19:15:30.588210+00:00\", \"provider\": \"daytona\", \"sandbox_id\": \"3dccb297-aa56-47dd-b0d2-09620fe7a91f\", \"session_id\": \"materialized-task__myJxbd2__verifier__trial\", \"strategy\": \"_DaytonaDinD\"}\n",
+  "runtime_events": [
+    {
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_start_started",
+      "force_build": false,
+      "occurred_at": "2026-10-10T18:50:01.568228+00:00",
+      "provider": "daytona",
+      "session_id": "materialized-task__myJxbd2__env",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_image_selection_resolved",
+      "image_digest_status": "unknown",
+      "occurred_at": "2026-10-10T18:50:01.568304+00:00",
+      "provider": "daytona",
+      "selection": "compose_unresolved",
+      "session_id": "materialized-task__myJxbd2__env",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "daytona_create_name": "m1-5a3f34f3edde4335de2b",
+      "daytona_labels": {
+        "m1-create-name": "m1-5a3f34f3edde4335de2b",
+        "m1-dispatch-generation": "0",
+        "m1-environment-id": "cloud-dev",
+        "m1-managed": "true",
+        "m1-run-id": "8b1b4908-80ca-434e-8bc5-c9a3416d2db8",
+        "m1-worker-id": "modal:fc-01M4KJCFFJMNHSS1W8EJF48KSK:25ed3304-8a9a-486d-83ca-85f096708329"
+      },
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_create_started",
+      "occurred_at": "2026-10-10T18:50:01.569254+00:00",
+      "provider": "daytona",
+      "session_id": "materialized-task__myJxbd2__env",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "environment_name": null,
+      "event_type": "sandbox_create_completed",
+      "occurred_at": "2026-10-10T18:50:02.180943+00:00",
+      "provider": "daytona",
+      "runner_id": "f0db7b76-afa3-4f91-a7c2-ba9496897289",
+      "sandbox_id": "551adf7c-4c82-4b71-97ad-e6874c87bf91",
+      "session_id": null,
+      "source": "daytona_sdk"
+    },
+    {
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_create_completed",
+      "occurred_at": "2026-10-10T18:50:02.181179+00:00",
+      "provider": "daytona",
+      "runner_id": "f0db7b76-afa3-4f91-a7c2-ba9496897289",
+      "sandbox_id": "551adf7c-4c82-4b71-97ad-e6874c87bf91",
+      "session_id": "materialized-task__myJxbd2__env",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "33512cf6-cc1b-46b8-88a2-05a142d34dff",
+      "elapsed_sec": "60",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T18:51:05.466896+00:00",
+      "provider": "daytona",
+      "runner_id": "f0db7b76-afa3-4f91-a7c2-ba9496897289",
+      "sandbox_id": "551adf7c-4c82-4b71-97ad-e6874c87bf91",
+      "session_id": "a61200d4-f322-4a78-ba86-2319025c7a4b",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "33512cf6-cc1b-46b8-88a2-05a142d34dff",
+      "elapsed_sec": "120",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T18:52:05.467620+00:00",
+      "provider": "daytona",
+      "runner_id": "f0db7b76-afa3-4f91-a7c2-ba9496897289",
+      "sandbox_id": "551adf7c-4c82-4b71-97ad-e6874c87bf91",
+      "session_id": "a61200d4-f322-4a78-ba86-2319025c7a4b",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "33512cf6-cc1b-46b8-88a2-05a142d34dff",
+      "elapsed_sec": "180",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T18:53:05.469323+00:00",
+      "provider": "daytona",
+      "runner_id": "f0db7b76-afa3-4f91-a7c2-ba9496897289",
+      "sandbox_id": "551adf7c-4c82-4b71-97ad-e6874c87bf91",
+      "session_id": "a61200d4-f322-4a78-ba86-2319025c7a4b",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_started",
+      "occurred_at": "2026-10-10T18:53:51.578935+00:00",
+      "provider": "daytona",
+      "runner_id": "f0db7b76-afa3-4f91-a7c2-ba9496897289",
+      "sandbox_id": "551adf7c-4c82-4b71-97ad-e6874c87bf91",
+      "session_id": "materialized-task__myJxbd2__env",
+      "strategy": "_DaytonaDinD",
+      "worker_runtime_config": {
+        "agent_network_allowlist_configured": false,
+        "broker_token_present": true,
+        "daytona_api_host_class": "default",
+        "daytona_api_key_present": true,
+        "native_idle_proxy_enabled": true,
+        "native_secret_bindings": "unset",
+        "upstream_tunnel_enabled": true
+      }
+    },
+    {
+      "command_id": "57b60920-498c-44b5-9a9d-a62ddd6998b2",
+      "elapsed_sec": "60",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T18:54:56.286151+00:00",
+      "provider": "daytona",
+      "runner_id": "f0db7b76-afa3-4f91-a7c2-ba9496897289",
+      "sandbox_id": "551adf7c-4c82-4b71-97ad-e6874c87bf91",
+      "session_id": "45f269b1-a6b5-4508-aba5-acfc771f7858",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "delete": true,
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_stop_started",
+      "occurred_at": "2026-10-10T18:56:15.435430+00:00",
+      "provider": "daytona",
+      "runner_id": "f0db7b76-afa3-4f91-a7c2-ba9496897289",
+      "sandbox_id": "551adf7c-4c82-4b71-97ad-e6874c87bf91",
+      "session_id": "materialized-task__myJxbd2__env",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "auto_delete_interval": -1,
+      "auto_stop_interval": 480,
+      "capture_point": "before_harbor_delete",
+      "created_at": "2026-10-10T18:50:01.709Z",
+      "desired_state": "started",
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_death_forensics",
+      "http_status": 200,
+      "m1-run-id": "8b1b4908-80ca-434e-8bc5-c9a3416d2db8",
+      "occurred_at": "2026-10-10T18:56:15.510809+00:00",
+      "provider": "daytona",
+      "runner_id": "f0db7b76-afa3-4f91-a7c2-ba9496897289",
+      "sampled": false,
+      "sandbox_id": "551adf7c-4c82-4b71-97ad-e6874c87bf91",
+      "session_id": "materialized-task__myJxbd2__env",
+      "state": "started",
+      "strategy": "_DaytonaDinD",
+      "trial_failed": true,
+      "updated_at": "2026-10-10T18:50:02.154Z"
+    },
+    {
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_stopped",
+      "occurred_at": "2026-10-10T18:56:26.286507+00:00",
+      "provider": "daytona",
+      "sandbox_id": "551adf7c-4c82-4b71-97ad-e6874c87bf91",
+      "session_id": "materialized-task__myJxbd2__env",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_start_started",
+      "force_build": false,
+      "occurred_at": "2026-10-10T18:56:26.292452+00:00",
+      "provider": "daytona",
+      "session_id": "materialized-task__myJxbd2__verifier__trial",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_image_selection_resolved",
+      "image_digest_status": "unknown",
+      "occurred_at": "2026-10-10T18:56:26.292508+00:00",
+      "provider": "daytona",
+      "selection": "compose_unresolved",
+      "session_id": "materialized-task__myJxbd2__verifier__trial",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "daytona_create_name": "m1-ffa3f6c9ddd7bbeece0a",
+      "daytona_labels": {
+        "m1-create-name": "m1-ffa3f6c9ddd7bbeece0a",
+        "m1-dispatch-generation": "0",
+        "m1-environment-id": "cloud-dev",
+        "m1-managed": "true",
+        "m1-run-id": "8b1b4908-80ca-434e-8bc5-c9a3416d2db8",
+        "m1-worker-id": "modal:fc-01M4KJCFFJMNHSS1W8EJF48KSK:25ed3304-8a9a-486d-83ca-85f096708329"
+      },
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_create_started",
+      "occurred_at": "2026-10-10T18:56:26.293134+00:00",
+      "provider": "daytona",
+      "session_id": "materialized-task__myJxbd2__verifier__trial",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "environment_name": null,
+      "event_type": "sandbox_create_completed",
+      "occurred_at": "2026-10-10T18:56:26.893664+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": null,
+      "source": "daytona_sdk"
+    },
+    {
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_create_completed",
+      "occurred_at": "2026-10-10T18:56:26.893883+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "materialized-task__myJxbd2__verifier__trial",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "165c77ba-d2a4-4793-a258-8db51d17f395",
+      "elapsed_sec": "60",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T18:57:38.125999+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "1c2db0a8-8fe1-429a-95ae-037d725a19c0",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "165c77ba-d2a4-4793-a258-8db51d17f395",
+      "elapsed_sec": "120",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T18:58:38.127358+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "1c2db0a8-8fe1-429a-95ae-037d725a19c0",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "165c77ba-d2a4-4793-a258-8db51d17f395",
+      "elapsed_sec": "180",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T18:59:38.128777+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "1c2db0a8-8fe1-429a-95ae-037d725a19c0",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "165c77ba-d2a4-4793-a258-8db51d17f395",
+      "elapsed_sec": "240",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:00:38.130133+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "1c2db0a8-8fe1-429a-95ae-037d725a19c0",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_started",
+      "occurred_at": "2026-10-10T19:01:37.517241+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "materialized-task__myJxbd2__verifier__trial",
+      "strategy": "_DaytonaDinD",
+      "worker_runtime_config": {
+        "agent_network_allowlist_configured": false,
+        "broker_token_present": true,
+        "daytona_api_host_class": "default",
+        "daytona_api_key_present": true,
+        "native_idle_proxy_enabled": true,
+        "native_secret_bindings": "unset",
+        "upstream_tunnel_enabled": true
+      }
+    },
+    {
+      "command_id": "dc52cc3c-6b99-47c8-9650-9ffabdf119cf",
+      "elapsed_sec": "60",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:03:03.194500+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "ee0557ef-fee7-474d-9d17-c88e31125026",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "dc52cc3c-6b99-47c8-9650-9ffabdf119cf",
+      "elapsed_sec": "120",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:04:03.196381+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "ee0557ef-fee7-474d-9d17-c88e31125026",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "dc52cc3c-6b99-47c8-9650-9ffabdf119cf",
+      "elapsed_sec": "180",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:05:03.197473+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "ee0557ef-fee7-474d-9d17-c88e31125026",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "dc52cc3c-6b99-47c8-9650-9ffabdf119cf",
+      "elapsed_sec": "240",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:06:03.199143+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "ee0557ef-fee7-474d-9d17-c88e31125026",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "dc52cc3c-6b99-47c8-9650-9ffabdf119cf",
+      "elapsed_sec": "300",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:07:03.200502+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "ee0557ef-fee7-474d-9d17-c88e31125026",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "dc52cc3c-6b99-47c8-9650-9ffabdf119cf",
+      "elapsed_sec": "360",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:08:03.201340+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "ee0557ef-fee7-474d-9d17-c88e31125026",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "dc52cc3c-6b99-47c8-9650-9ffabdf119cf",
+      "elapsed_sec": "420",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:09:03.202365+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "ee0557ef-fee7-474d-9d17-c88e31125026",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "dc52cc3c-6b99-47c8-9650-9ffabdf119cf",
+      "elapsed_sec": "480",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:10:03.203973+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "ee0557ef-fee7-474d-9d17-c88e31125026",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "dc52cc3c-6b99-47c8-9650-9ffabdf119cf",
+      "elapsed_sec": "540",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:11:03.206263+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "ee0557ef-fee7-474d-9d17-c88e31125026",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "dc52cc3c-6b99-47c8-9650-9ffabdf119cf",
+      "elapsed_sec": "600",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:12:03.207113+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "ee0557ef-fee7-474d-9d17-c88e31125026",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "dc52cc3c-6b99-47c8-9650-9ffabdf119cf",
+      "elapsed_sec": "660",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:13:03.207984+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "ee0557ef-fee7-474d-9d17-c88e31125026",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "dc52cc3c-6b99-47c8-9650-9ffabdf119cf",
+      "elapsed_sec": "720",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:14:03.208973+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "ee0557ef-fee7-474d-9d17-c88e31125026",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "command_id": "dc52cc3c-6b99-47c8-9650-9ffabdf119cf",
+      "elapsed_sec": "780",
+      "environment_name": "clearledger-settlement",
+      "event_type": "exec_poll_heartbeat",
+      "occurred_at": "2026-10-10T19:15:03.210282+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "ee0557ef-fee7-474d-9d17-c88e31125026",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "delete": true,
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_stop_started",
+      "occurred_at": "2026-10-10T19:15:27.667639+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "materialized-task__myJxbd2__verifier__trial",
+      "strategy": "_DaytonaDinD"
+    },
+    {
+      "auto_delete_interval": -1,
+      "auto_stop_interval": 480,
+      "capture_point": "before_harbor_delete",
+      "created_at": "2026-10-10T18:56:26.352Z",
+      "desired_state": "started",
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_death_forensics",
+      "http_status": 200,
+      "m1-run-id": "8b1b4908-80ca-434e-8bc5-c9a3416d2db8",
+      "occurred_at": "2026-10-10T19:15:27.782130+00:00",
+      "provider": "daytona",
+      "runner_id": "6ea70dde-b86c-4ebb-9dad-f620fdfa921f",
+      "sampled": false,
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "materialized-task__myJxbd2__verifier__trial",
+      "state": "started",
+      "strategy": "_DaytonaDinD",
+      "updated_at": "2026-10-10T18:56:26.874Z"
+    },
+    {
+      "environment_name": "clearledger-settlement",
+      "event_type": "sandbox_stopped",
+      "occurred_at": "2026-10-10T19:15:30.588210+00:00",
+      "provider": "daytona",
+      "sandbox_id": "3dccb297-aa56-47dd-b0d2-09620fe7a91f",
+      "session_id": "materialized-task__myJxbd2__verifier__trial",
+      "strategy": "_DaytonaDinD"
+    }
+  ],
+  "rewardkit": {
+    "reward": 1.0,
+    "score": 100
+  },
+  "harbor_phase_timings": {
+    "environment_setup": {
+      "started_at": "2026-10-10T18:50:01.568160Z",
+      "finished_at": "2026-10-10T18:53:52.889031Z",
+      "duration_seconds": 231.320871
+    },
+    "agent_setup": {
+      "started_at": "2026-10-10T18:53:52.889092Z",
+      "finished_at": "2026-10-10T18:53:52.889141Z",
+      "duration_seconds": 4.9e-05
+    },
+    "agent_execution": {
+      "started_at": "2026-10-10T18:53:52.889215Z",
+      "finished_at": "2026-10-10T18:55:50.829998Z",
+      "duration_seconds": 117.940783
+    },
+    "verifier": {
+      "started_at": "2026-10-10T18:56:26.286690Z",
+      "finished_at": "2026-10-10T19:15:30.588378Z",
+      "duration_seconds": 1144.301688
+    }
+  },
+  "harbor_lock_digest": "e4972dcb2330ae3c3c6f700be03a804f03589ae0db2ad8e432d3d99347a0ea1a"
+}

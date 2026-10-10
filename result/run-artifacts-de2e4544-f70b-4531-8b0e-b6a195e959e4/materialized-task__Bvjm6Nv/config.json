@@ -1,0 +1,62 @@
+{
+    "task": {
+        "path": "/tmp/m1-run-de2e4544-f70b-4531-8b0e-b6a195e959e4-t0tgcm_c/package/materialized-task"
+    },
+    "trial_name": "materialized-task__Bvjm6Nv",
+    "trials_dir": "/tmp/m1-run-de2e4544-f70b-4531-8b0e-b6a195e959e4-t0tgcm_c/harbor-trials",
+    "agent": {
+        "name": "opencode",
+        "model_name": "openai/gpt-5.6-m1alias-gpt-6-astra",
+        "override_timeout_sec": 21600.0,
+        "override_setup_timeout_sec": 1800.0,
+        "extra_allowed_hosts": [
+            "llm-broker-prod-1062225351540.us-central1.run.app"
+        ],
+        "kwargs": {
+            "opencode_config": {
+                "permission": {
+                    "external_directory": "allow",
+                    "websearch": "allow"
+                },
+                "agent": {
+                    "title": {
+                        "disable": true
+                    }
+                },
+                "provider": {
+                    "openai": {
+                        "options": {
+                            "baseURL": "http://127.0.0.1:18183/v1",
+                            "headerTimeout": 600000
+                        },
+                        "models": {
+                            "gpt-5.6-m1alias-gpt-6-astra": {
+                                "limit": {
+                                    "context": 1050000,
+                                    "input": 922000,
+                                    "output": 128000
+                                },
+                                "reasoning": true,
+                                "tool_call": true
+                            }
+                        }
+                    }
+                }
+            },
+            "version": "1.18.31"
+        },
+        "env": {
+            "OPENCODE_ENABLE_EXA": "1",
+            "OPENCODE_WEBSEARCH_PROVIDER": "parallel"
+        }
+    },
+    "environment": {
+        "type": "daytona",
+        "kwargs": {
+            "auto_stop_interval_mins": 60
+        }
+    },
+    "verifier": {
+        "override_timeout_sec": 7200.0
+    }
+}

@@ -1,0 +1,121 @@
+aws_iam_role.workload["projector"]: Refreshing state... [id=cl-455472-projector]
+aws_iam_role.workload["ecs_execution"]: Refreshing state... [id=cl-455472-ecs_execution]
+aws_iam_role.workload["archiver"]: Refreshing state... [id=cl-455472-archiver]
+aws_cognito_user_pool.auth: Refreshing state... [id=us-east-1_012e0d434]
+aws_iam_role.workload["scheduler"]: Refreshing state... [id=cl-455472-scheduler]
+aws_vpc.main: Refreshing state... [id=vpc-cd21a630]
+aws_iam_role.workload["ecs_task"]: Refreshing state... [id=cl-455472-ecs_task]
+aws_iam_role.workload["relay"]: Refreshing state... [id=cl-455472-relay]
+aws_ecs_cluster.api: Refreshing state... [id=arn:aws:ecs:us-east-1:000000000000:cluster/cl-455472-api]
+aws_s3_bucket.audit: Refreshing state... [id=cl-455472-audit]
+aws_cloudwatch_log_group.workload["relay"]: Refreshing state... [id=/clearledger/cl-455472/outbox-relay]
+aws_cloudwatch_log_group.workload["api"]: Refreshing state... [id=/clearledger/cl-455472/api]
+aws_cloudwatch_log_group.workload["archiver"]: Refreshing state... [id=/clearledger/cl-455472/audit-archiver]
+aws_cloudwatch_log_group.workload["projector"]: Refreshing state... [id=/clearledger/cl-455472/projector]
+aws_kms_key.store["audit"]: Refreshing state... [id=bff2849b-7737-4c5f-b811-d25a4f16696e]
+aws_kms_key.store["database"]: Refreshing state... [id=833a9655-bd95-4a97-889c-0e68ca2cfd5d]
+aws_kms_key.store["projection"]: Refreshing state... [id=f4bf3d21-5f87-4075-9b5e-52e5d367fea1]
+aws_cognito_resource_server.auth: Refreshing state... [id=us-east-1_012e0d434|clearledger]
+aws_kms_key.store["messaging"]: Refreshing state... [id=48a211ed-81d4-47b5-a86b-4854d4e6b4e1]
+aws_subnet.private[1]: Refreshing state... [id=subnet-25fc8f6a]
+aws_security_group.rds: Refreshing state... [id=sg-d66b0f3971b52cb3c]
+aws_subnet.public[1]: Refreshing state... [id=subnet-8b4941c3]
+aws_subnet.public[0]: Refreshing state... [id=subnet-2f6f4c14]
+aws_security_group.alb: Refreshing state... [id=sg-fafb9670aba2f199d]
+aws_lb_target_group.api: Refreshing state... [id=arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/cl-455472-api/36383865d4aa42fa]
+aws_security_group.valkey: Refreshing state... [id=sg-ee1e35d02f72693a1]
+aws_internet_gateway.main: Refreshing state... [id=igw-4f098c4c]
+aws_s3_bucket_policy.audit: Refreshing state... [id=cl-455472-audit]
+aws_s3_bucket_public_access_block.audit: Refreshing state... [id=cl-455472-audit]
+aws_s3_bucket_versioning.audit: Refreshing state... [id=cl-455472-audit]
+aws_subnet.private[0]: Refreshing state... [id=subnet-ab9c7641]
+aws_cognito_user_pool_client.auth["admin"]: Refreshing state... [id=8b566714c2a4446a8ea7a44f32]
+aws_route_table.private: Refreshing state... [id=rtb-c3f9321a]
+aws_cognito_user_pool_client.auth["read"]: Refreshing state... [id=07be3cef8dd546cdb6fc460673]
+aws_kms_alias.store["audit"]: Refreshing state... [id=alias/cl-455472-audit]
+aws_kms_alias.store["projection"]: Refreshing state... [id=alias/cl-455472-projection]
+aws_kms_alias.store["messaging"]: Refreshing state... [id=alias/cl-455472-messaging]
+aws_cognito_user_pool_client.auth["write"]: Refreshing state... [id=4c4f43e0d24d41858b40aaa488]
+aws_dynamodb_table.projection: Refreshing state... [id=cl-455472-projection]
+aws_kms_alias.store["database"]: Refreshing state... [id=alias/cl-455472-database]
+aws_sqs_queue.dlq: Refreshing state... [id=http://aws:4566/000000000000/cl-455472-dlq]
+aws_s3_bucket_server_side_encryption_configuration.audit: Refreshing state... [id=cl-455472-audit]
+aws_security_group.ecs: Refreshing state... [id=sg-7156593e5d0e40ba9]
+aws_lb.api: Refreshing state... [id=arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/cl-455472-api/5d3a7c37274b4c20]
+aws_route_table.public: Refreshing state... [id=rtb-2fc3eb1f]
+aws_elasticache_subnet_group.cache: Refreshing state... [id=cl-455472-cache]
+aws_db_subnet_group.ledger: Refreshing state... [id=cl-455472-database]
+aws_route_table_association.private[0]: Refreshing state... [id=rtbassoc-bc921622]
+aws_route_table_association.private[1]: Refreshing state... [id=rtbassoc-b639d2ee]
+aws_sqs_queue.events: Refreshing state... [id=http://aws:4566/000000000000/cl-455472-events]
+aws_sqs_queue_policy.dlq: Refreshing state... [id=http://aws:4566/000000000000/cl-455472-dlq]
+aws_route_table_association.public[1]: Refreshing state... [id=rtbassoc-3d0097ad]
+aws_route_table_association.public[0]: Refreshing state... [id=rtbassoc-565ae8e2]
+aws_lb_listener.api: Refreshing state... [id=arn:aws:elasticloadbalancing:us-east-1:000000000000:listener/app/cl-455472-api/5d3a7c37274b4c20/06b3f16f4f8e4c86]
+aws_db_instance.ledger: Refreshing state... [id=db-843E8BD9A8D844EBB4755CBE]
+aws_elasticache_replication_group.cache: Refreshing state... [id=cl-455472-cache]
+aws_sqs_queue_policy.events: Refreshing state... [id=http://aws:4566/000000000000/cl-455472-events]
+aws_iam_role_policy.workload["archiver"]: Refreshing state... [id=cl-455472-archiver:cl-455472-archiver-canonical]
+aws_iam_role_policy.workload["projector"]: Refreshing state... [id=cl-455472-projector:cl-455472-projector-canonical]
+aws_iam_role_policy.workload["scheduler"]: Refreshing state... [id=cl-455472-scheduler:cl-455472-scheduler-canonical]
+aws_iam_role_policy.workload["ecs_execution"]: Refreshing state... [id=cl-455472-ecs_execution:cl-455472-ecs_execution-canonical]
+aws_iam_role_policy.workload["relay"]: Refreshing state... [id=cl-455472-relay:cl-455472-relay-canonical]
+aws_iam_role_policy.workload["ecs_task"]: Refreshing state... [id=cl-455472-ecs_task:cl-455472-ecs_task-canonical]
+aws_ecs_task_definition.api: Refreshing state... [id=cl-455472-api]
+aws_ecs_service.api: Refreshing state... [id=arn:aws:ecs:us-east-1:000000000000:service/cl-455472-api/cl-455472-api]
+aws_lambda_function.worker["relay"]: Refreshing state... [id=cl-455472-relay]
+aws_lambda_function.worker["archiver"]: Refreshing state... [id=cl-455472-archiver]
+aws_lambda_function.worker["projector"]: Refreshing state... [id=cl-455472-projector]
+aws_scheduler_schedule.worker["relay"]: Refreshing state... [id=default/cl-455472-relay]
+aws_lambda_event_source_mapping.projector: Refreshing state... [id=f71e43a0-cecd-4f00-982d-bf66fbf057dc]
+aws_scheduler_schedule.worker["archiver"]: Refreshing state... [id=default/cl-455472-archiver]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  ~ update in-place
+
+Terraform will perform the following actions:
+
+  # aws_ecs_task_definition.api will be updated in-place
+  ~ resource "aws_ecs_task_definition" "api" {
+        id                       = "cl-455472-api"
+        tags                     = {}
+      ~ tags_all                 = {
+          + "ClearLedgerDeployment" = "cl-455472"
+        }
+        # (17 unchanged attributes hidden)
+    }
+
+  # aws_elasticache_replication_group.cache will be updated in-place
+  ~ resource "aws_elasticache_replication_group" "cache" {
+        id                             = "cl-455472-cache"
+      ~ security_group_ids             = [
+          + "sg-ee1e35d02f72693a1",
+        ]
+        tags                           = {}
+        # (36 unchanged attributes hidden)
+
+        # (1 unchanged block hidden)
+    }
+
+  # aws_lambda_event_source_mapping.projector will be updated in-place
+  ~ resource "aws_lambda_event_source_mapping" "projector" {
+        id                                 = "f71e43a0-cecd-4f00-982d-bf66fbf057dc"
+        tags                               = {}
+      ~ tags_all                           = {
+          + "ClearLedgerDeployment" = "cl-455472"
+        }
+        # (24 unchanged attributes hidden)
+    }
+
+Plan: 0 to add, 3 to change, 0 to destroy.
+
+Warning: Argument is deprecated
+
+  with aws_dynamodb_table.projection,
+  on main.tf line 221, in resource "aws_dynamodb_table" "projection":
+ 221: resource "aws_dynamodb_table" "projection" {
+
+hash_key is deprecated. Use key_schema instead.
+
+(and 3 more similar warnings elsewhere)
