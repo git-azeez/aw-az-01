@@ -70,12 +70,16 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 cur.execute(
                     """
                     UPDATE clearledger.outbox
-                    SET published_at = NULL, archived_at = NULL
+                    SET published_at = NULL,
+                        archived_at = NULL,
+                        attempts = 2,
+                        last_error = 'Simulated transient SQS timeout'
                     WHERE settlement_id = %s AND aggregate_version = %s
                     """,
                     (sample_sid, sample_meta["expected_version"]),
                 )
                 cur.execute("SET LOCAL session_replication_role = 'origin'")
+                cur.execute("ALTER TABLE clearledger.outbox DISABLE TRIGGER USER")
             conn.commit()
 
         # Corrupt S3 audit archive for s3_loss_sid in-place (while archived_at remains NOT NULL in PostgreSQL),
@@ -290,9 +294,32 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         iam.attach_role_policy(RoleName=proj_role_name, PolicyArn=drifted_managed_pol["Arn"])
 
         rds_sg_id = before_manifest["network"]["security_group_ids"]["rds"]
+        valkey_sg_id = before_manifest["network"]["security_group_ids"]["valkey"]
         try:
+            ec2.authorize_security_group_ingress(
+                GroupId=rds_sg_id,
+                IpPermissions=[
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 5432,
+                        "ToPort": 5432,
+                        "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+                    }
+                ],
+            )
             ec2.authorize_security_group_egress(
                 GroupId=rds_sg_id,
+                IpPermissions=[
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 443,
+                        "ToPort": 443,
+                        "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+                    }
+                ],
+            )
+            ec2.authorize_security_group_egress(
+                GroupId=valkey_sg_id,
                 IpPermissions=[
                     {
                         "IpProtocol": "tcp",
@@ -554,8 +581,27 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             f"Expected deploy.sh to delete detached out-of-band prefix-scoped customer-managed IAM policy {prefix}-drifted-projector-policy, found {remaining_drifted_pols}"
         )
         rds_sg_after = ec2.describe_security_groups(GroupIds=[rds_sg_id])["SecurityGroups"][0]
-        assert not (rds_sg_after.get("IpPermissionsEgress") or []), (
-            f"Expected deploy.sh to revoke out-of-band egress rules on rds security group {rds_sg_id}, found {rds_sg_after.get('IpPermissionsEgress')}"
+        valkey_sg_after = ec2.describe_security_groups(GroupIds=[valkey_sg_id])["SecurityGroups"][0]
+        rds_public_ingress = [
+            r
+            for r in (rds_sg_after.get("IpPermissions") or [])
+            if any(c.get("CidrIp") in ("0.0.0.0/0", "::/0") for c in r.get("IpRanges", []))
+            or any(c.get("CidrIpv6") in ("0.0.0.0/0", "::/0") for c in r.get("Ipv6Ranges", []))
+        ]
+        assert not rds_public_ingress, (
+            f"Expected deploy.sh to revoke out-of-band public ingress rules on rds security group {rds_sg_id}, found {rds_public_ingress}"
+        )
+        rds_explicit_egress = [
+            r for r in (rds_sg_after.get("IpPermissionsEgress") or []) if str(r.get("IpProtocol")) != "-1"
+        ]
+        assert not rds_explicit_egress, (
+            f"Expected deploy.sh to revoke out-of-band egress rules on rds security group {rds_sg_id}, found {rds_explicit_egress}"
+        )
+        valkey_explicit_egress = [
+            r for r in (valkey_sg_after.get("IpPermissionsEgress") or []) if str(r.get("IpProtocol")) != "-1"
+        ]
+        assert not valkey_explicit_egress, (
+            f"Expected deploy.sh to revoke out-of-band egress rules on valkey security group {valkey_sg_id}, found {valkey_explicit_egress}"
         )
 
         with pg_connect(after_manifest, ctx.config) as conn:
@@ -566,6 +612,20 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 unpub_count = cur.fetchone()[0]
                 cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE archived_at IS NULL")
                 unarch_count = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE last_error IS NOT NULL")
+                err_count = cur.fetchone()[0]
+                cur.execute(
+                    """
+                    SELECT t.tgname, c.relname, t.tgenabled::text
+                    FROM pg_trigger t
+                    JOIN pg_class c ON c.oid = t.tgrelid
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'clearledger'
+                      AND NOT t.tgisinternal
+                      AND t.tgenabled != 'O'
+                    """
+                )
+                disabled_triggers = cur.fetchall()
                 cur.execute("SELECT seq, event_id::text, payload FROM clearledger.outbox")
                 pg_outbox_map = {
                     ev_id: (int(seq), (json.loads(pay) if isinstance(pay, str) else pay))
@@ -574,6 +634,10 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         assert after_count == before_count, f"Settlement count changed after re-apply: {before_count} -> {after_count}"
         assert unpub_count == 0, f"deploy.sh left {unpub_count} unpublished outbox rows after re-apply"
         assert unarch_count == 0, f"deploy.sh left {unarch_count} unarchived outbox rows after re-apply"
+        assert err_count == 0, f"deploy.sh left {err_count} outbox rows with non-null last_error after re-apply"
+        assert not disabled_triggers, (
+            f"Expected deploy.sh to re-enable all user triggers in schema clearledger, found disabled triggers: {disabled_triggers}"
+        )
 
         all_bucket_objs = s3.list_objects_v2(Bucket=after_manifest["audit"]["bucket_name"]).get("Contents", [])
         stray_keys = [o["Key"] for o in all_bucket_objs if not o["Key"].startswith("ledger-audit/")]

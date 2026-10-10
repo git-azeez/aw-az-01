@@ -8,15 +8,17 @@
 - Create four distinct dedicated security groups (`aws_security_group`, four distinct security group IDs) enforcing least-privilege ingress and egress:
   - `alb`:
     - **Ingress**: TCP port `80` (`from_port = 80`, `to_port = 80`, `protocol = "tcp"`) from `0.0.0.0/0`.
-    - **Egress**: restricted strictly to TCP port `8080` (`from_port = 8080`, `to_port = 8080`, `protocol = "tcp"`) targeting the `ecs` security group or VPC CIDR (must **not** allow `0.0.0.0/0`, `::/0`, or `protocol = "-1"` on egress).
+    - **Egress**: TCP port `8080` (`from_port = 8080`, `to_port = 8080`, `protocol = "tcp"`) targeting the `ecs` security group or VPC CIDR (must not have explicit TCP/UDP egress rules allowing `0.0.0.0/0` or `::/0`).
   - `ecs`:
     - **Ingress**: restricted strictly to TCP port `8080` (`from_port = 8080`, `to_port = 8080`, `protocol = "tcp"`) from the `alb` security group ID (never `0.0.0.0/0`, `::/0`, or any CIDR block).
     - **Egress**: outbound traffic to the AWS control plane and data stores.
   - `rds`:
-    - **Ingress**: restricted strictly to TCP port `5432` (`from_port = 5432`, `to_port = 5432`, `protocol = "tcp"`) from the `ecs` security group or VPC CIDR (never `0.0.0.0/0`, `::/0`, or `protocol = "-1"`).
-    - **Egress**: no outbound egress rules (`egress = []`; passive data stores do not initiate outbound connections, and any out-of-band egress rules on `rds` must be revoked during `deploy.sh` convergence).
+    - **Ingress**: restricted strictly to TCP port `5432` (`from_port = 5432`, `to_port = 5432`, `protocol = "tcp"`) from the `ecs` security group or VPC CIDR (never `0.0.0.0/0` or `::/0`).
+    - **Egress**: no explicit outbound TCP/UDP egress rules (`egress = []`; passive data stores do not initiate outbound connections).
   - `valkey`:
-    - **Ingress**: restricted strictly to TCP port `6379` (`from_port = 6379`, `to_port = 6379`, `protocol = "tcp"`) from the `ecs` security group or VPC CIDR (never `0.0.0.0/0`, `::/0`, or `protocol = "-1"`).
-    - **Egress**: no outbound egress rules (`egress = []`; passive data stores do not initiate outbound connections, and any out-of-band egress rules on `valkey` must be revoked during `deploy.sh` convergence).
+    - **Ingress**: restricted strictly to TCP port `6379` (`from_port = 6379`, `to_port = 6379`, `protocol = "tcp"`) from the `ecs` security group or VPC CIDR (never `0.0.0.0/0` or `::/0`).
+    - **Egress**: no explicit outbound TCP/UDP egress rules (`egress = []`; passive data stores do not initiate outbound connections).
+- During `deploy.sh` convergence, revoke any out-of-band public (`0.0.0.0/0` or `::/0`) ingress rules added to `ecs`, `rds`, or `valkey` and any out-of-band egress rules added to `rds` or `valkey`.
 - Tag the VPC, subnets, internet gateway, route tables, and security groups with `ClearLedgerDeployment = <resource_prefix>`.
+
 

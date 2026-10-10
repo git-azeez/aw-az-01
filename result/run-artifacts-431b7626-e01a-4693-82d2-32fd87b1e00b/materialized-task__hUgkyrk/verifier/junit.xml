@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="19" time="570.358" timestamp="2026-10-10T06:03:44.698684+00:00" hostname="890e36ec2749"><testcase classname="test_declared" name="test_iac_discipline" time="120.220" /><testcase classname="test_declared" name="test_declared_compute_and_ingress" time="0.002" /><testcase classname="test_declared" name="test_declared_data_and_async" time="6.172" /><testcase classname="test_declared" name="test_declared_security" time="0.009" /><testcase classname="test_live" name="test_live_compute_and_ingress" time="0.012"><failure message="AssertionError: Live alb security group (sg-82511bbb70634d7b4) must restrict egress to ecs security group on port 8080, not 0.0.0.0/0 or ::/0: {'IpProtocol': '-1', 'UserIdGroupPairs': [], 'IpRanges': [{'CidrIp': '0.0.0.0/0'}], 'Ipv6Ranges': [], 'PrefixListIds': []}&#10;assert ('0.0.0.0/0' not in ['0.0.0.0/0'])">ctx = VerifierContext(config={'resource_prefix': 'cl-7b68f1', 'region': 'us-east-1', 'aws_endpoint_url': 'http://aws:4566', ...00000000:function:cl-7b68f1-projector', 'function_name': 'cl-7b68f1-projector'}}}, committed_settlements={}, tokens={})
+
+    def test_live_compute_and_ingress(ctx: VerifierContext) -&gt; None:
+        """Scored block: Live ingress and compute (5 points) — live.compute_ingress."""
+        def _check() -&gt; str:
+            m = ctx.manifest
+            ec2 = boto_client("ec2", ctx.config)
+            elbv2 = boto_client("elbv2", ctx.config)
+            ecs = boto_client("ecs", ctx.config)
+    
+            vpcs = ec2.describe_vpcs(VpcIds=[m["network"]["vpc_id"]])["Vpcs"]
+            assert len(vpcs) == 1 and vpcs[0]["State"] == "available"
+    
+            subnet_ids = m["network"]["public_subnet_ids"] + m["network"]["private_subnet_ids"]
+            subnets = ec2.describe_subnets(SubnetIds=subnet_ids)["Subnets"]
+            assert len(subnets) == 4
+            azs = {s["AvailabilityZone"] for s in subnets}
+            assert {"us-east-1a", "us-east-1b"}.issubset(azs)
+    
+            sg_ids = m["network"]["security_group_ids"]
+            assert len({sg_ids["alb"], sg_ids["ecs"], sg_ids["rds"], sg_ids["valkey"]}) == 4, (
+                f"Expected 4 distinct security group IDs for alb, ecs, rds, valkey; got {sg_ids}"
+            )
+            live_sgs = {
+                sg["GroupId"]: sg
+                for sg in ec2.describe_security_groups(GroupIds=list(sg_ids.values())).get("SecurityGroups", [])
+            }
+            for sg_key, sg_id in sg_ids.items():
+                assert sg_id in live_sgs, f"Live security group {sg_key} ({sg_id}) not found in EC2"
+                assert live_sgs[sg_id].get("VpcId") == m["network"]["vpc_id"], (
+                    f"Live security group {sg_key} ({sg_id}) VpcId does not match manifest VPC"
+                )
+                expected_in_port = {"alb": 80, "ecs": 8080, "rds": 5432, "valkey": 6379}[sg_key]
+                for perm in live_sgs[sg_id].get("IpPermissions", []) or []:
+                    assert int(perm.get("FromPort", 0)) == expected_in_port and int(perm.get("ToPort", 0)) == expected_in_port, (
+                        f"Live {sg_key} security group ({sg_id}) ingress port must be {expected_in_port}, got {perm}"
+                    )
+                    if sg_key in {"ecs", "rds", "valkey"}:
+                        v4_cidrs = [r.get("CidrIp") for r in perm.get("IpRanges", []) or []]
+                        v6_cidrs = [r.get("CidrIpv6") for r in perm.get("Ipv6Ranges", []) or []]
+                        assert "0.0.0.0/0" not in v4_cidrs and "::/0" not in v6_cidrs, (
+                            f"Live {sg_key} security group ({sg_id}) exposes ingress to 0.0.0.0/0 or ::/0"
+                        )
+                egress_perms = live_sgs[sg_id].get("IpPermissionsEgress", []) or []
+                if sg_key in {"rds", "valkey"}:
+                    assert not egress_perms, (
+                        f"Live {sg_key} security group ({sg_id}) must have no outbound egress rules, got {egress_perms}"
+                    )
+                elif sg_key == "alb":
+                    for eperm in egress_perms:
+                        ev4 = [r.get("CidrIp") for r in eperm.get("IpRanges", []) or []]
+                        ev6 = [r.get("CidrIpv6") for r in eperm.get("Ipv6Ranges", []) or []]
+                        assert "0.0.0.0/0" not in ev4 and "::/0" not in ev6, (
+                            f"Live alb security group ({sg_id}) must restrict egress to ecs security group on port 8080, not 0.0.0.0/0 or ::/0: {eperm}"
+                        )
+    
+            lbs = elbv2.describe_load_balancers(LoadBalancerArns=[m["ingress"]["alb_arn"]])["LoadBalancers"]
+            assert len(lbs) == 1
+            lb = lbs[0]
+            assert lb["Type"] == "application"
+            assert lb["Scheme"] == "internet-facing"
+    
+            listeners = elbv2.describe_listeners(LoadBalancerArn=m["ingress"]["alb_arn"])["Listeners"]
+            assert any(int(l["Port"]) == 80 and l["Protocol"] == "HTTP" for l in listeners)
+    
+            tgs = elbv2.describe_target_groups(TargetGroupArns=[m["ingress"]["target_group_arn"]])["TargetGroups"]
+            assert len(tgs) == 1
+            assert int(tgs[0]["Port"]) == 8080
+            assert tgs[0]["HealthCheckPath"] == "/health/ready"
+    
+            td_live = ecs.describe_task_definition(
+                taskDefinition=m["compute"]["task_definition_arn"]
+            )["taskDefinition"]
+            assert td_live.get("executionRoleArn") == m["iam"]["ecs_execution_role_arn"], (
+                f"Live ECS task definition executionRoleArn ({td_live.get('executionRoleArn')}) does not match manifest"
+            )
+            assert td_live.get("taskRoleArn") == m["iam"]["ecs_task_role_arn"], (
+                f"Live ECS task definition taskRoleArn ({td_live.get('taskRoleArn')}) does not match manifest"
+            )
+            assert str(td_live.get("networkMode", "")).lower() == "awsvpc"
+            live_cdefs = td_live.get("containerDefinitions") or []
+            assert len(live_cdefs) == 1
+            live_log_cfg = live_cdefs[0].get("logConfiguration") or {}
+            if live_log_cfg:
+                assert live_log_cfg.get("logDriver") == "awslogs", (
+                    f"Live ECS container definition must use logDriver='awslogs', got {live_log_cfg}"
+                )
+                assert (live_log_cfg.get("options") or {}).get("awslogs-group") == m["logs"]["api_log_group"], (
+                    f"Live ECS container awslogs-group must match {m['logs']['api_log_group']}"
+                )
+    
+            clusters_desc = ecs.describe_clusters(
+                clusters=[m["compute"]["cluster_name"]],
+                include=["SETTINGS"],
+            ).get("clusters", [])
+            if clusters_desc and clusters_desc[0].get("settings"):
+                assert any(
+                    s.get("name") == "containerInsights" and s.get("value") == "enabled"
+                    for s in clusters_desc[0]["settings"]
+                ), f"Live ECS cluster settings must enable containerInsights, got {clusters_desc[0].get('settings')}"
+    
+            def _ecs_converged() -&gt; tuple[dict[str, Any], list[str]] | None:
+                svcs = ecs.describe_services(
+                    cluster=m["compute"]["cluster_name"],
+                    services=[m["compute"]["service_name"]],
+                ).get("services", [])
+                assert len(svcs) == 1, f"Expected 1 ECS service, found {len(svcs)}"
+                svc_obj = svcs[0]
+                assert int(svc_obj.get("desiredCount", 0)) &gt;= 2, (
+                    f"Expected ECS desiredCount &gt;= 2, got {svc_obj.get('desiredCount')}"
+                )
+                t_arns = ecs.list_tasks(
+                    cluster=m["compute"]["cluster_name"],
+                    serviceName=m["compute"]["service_name"],
+                    desiredStatus="RUNNING",
+                ).get("taskArns", [])
+                if len(t_arns) &lt; 2:
+                    return None
+                t_list = ecs.describe_tasks(cluster=m["compute"]["cluster_name"], tasks=t_arns).get("tasks", [])
+                running_tasks = [t for t in t_list if t.get("lastStatus") == "RUNNING"]
+                if len(running_tasks) &lt; 2 or int(svc_obj.get("runningCount", 0)) &lt; 2:
+                    return None
+                return svc_obj, t_arns
+    
+            svc, task_arns = wait_until(
+                _ecs_converged,
+                timeout_sec=60.0,
+                interval_sec=1.5,
+                description="ECS service convergence to &gt;=2 running tasks",
+            )
+            svc_subnets = set(
+                (svc.get("networkConfiguration") or {}).get("awsvpcConfiguration", {}).get("subnets") or []
+            )
+            if svc_subnets:
+                assert svc_subnets == set(m["network"]["private_subnet_ids"]), (
+                    f"Expected live ECS service subnets to match private_subnet_ids {m['network']['private_subnet_ids']}, found {svc_subnets}"
+                )
+    
+            instances_seen = set()
+            service_url = resolve_service_url(m["service_url"], ctx.config)
+            with httpx.Client(timeout=5.0) as client:
+                for _ in range(8):
+                    resp = client.get(f"{service_url}/health/ready")
+                    assert resp.status_code == 200
+                    body = resp.json()
+                    assert body["status"] == "UP"
+                    assert body["checks"]["postgres"] == "UP"
+                    assert body["checks"]["dynamodb"] == "UP"
+                    assert body["checks"]["sqs"] == "UP"
+                    assert body["checks"]["valkey"] == "UP"
+                    inst = resp.headers.get("X-ClearLedger-Instance") or body.get("instance")
+                    if inst:
+                        instances_seen.add(inst)
+            assert len(instances_seen) &gt;= 1
+    
+            return f"ALB and {len(task_arns)} running ECS tasks with verified role bindings across subnets"
+    
+&gt;       _run_block(ctx, "live.compute_ingress", _check)
+
+/tests/suite/test_live.py:177: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/tests/suite/test_live.py:15: in _run_block
+    detail = fn()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _check() -&gt; str:
+        m = ctx.manifest
+        ec2 = boto_client("ec2", ctx.config)
+        elbv2 = boto_client("elbv2", ctx.config)
+        ecs = boto_client("ecs", ctx.config)
+    
+        vpcs = ec2.describe_vpcs(VpcIds=[m["network"]["vpc_id"]])["Vpcs"]
+        assert len(vpcs) == 1 and vpcs[0]["State"] == "available"
+    
+        subnet_ids = m["network"]["public_subnet_ids"] + m["network"]["private_subnet_ids"]
+        subnets = ec2.describe_subnets(SubnetIds=subnet_ids)["Subnets"]
+        assert len(subnets) == 4
+        azs = {s["AvailabilityZone"] for s in subnets}
+        assert {"us-east-1a", "us-east-1b"}.issubset(azs)
+    
+        sg_ids = m["network"]["security_group_ids"]
+        assert len({sg_ids["alb"], sg_ids["ecs"], sg_ids["rds"], sg_ids["valkey"]}) == 4, (
+            f"Expected 4 distinct security group IDs for alb, ecs, rds, valkey; got {sg_ids}"
+        )
+        live_sgs = {
+            sg["GroupId"]: sg
+            for sg in ec2.describe_security_groups(GroupIds=list(sg_ids.values())).get("SecurityGroups", [])
+        }
+        for sg_key, sg_id in sg_ids.items():
+            assert sg_id in live_sgs, f"Live security group {sg_key} ({sg_id}) not found in EC2"
+            assert live_sgs[sg_id].get("VpcId") == m["network"]["vpc_id"], (
+                f"Live security group {sg_key} ({sg_id}) VpcId does not match manifest VPC"
+            )
+            expected_in_port = {"alb": 80, "ecs": 8080, "rds": 5432, "valkey": 6379}[sg_key]
+            for perm in live_sgs[sg_id].get("IpPermissions", []) or []:
+                assert int(perm.get("FromPort", 0)) == expected_in_port and int(perm.get("ToPort", 0)) == expected_in_port, (
+                    f"Live {sg_key} security group ({sg_id}) ingress port must be {expected_in_port}, got {perm}"
+                )
+                if sg_key in {"ecs", "rds", "valkey"}:
+                    v4_cidrs = [r.get("CidrIp") for r in perm.get("IpRanges", []) or []]
+                    v6_cidrs = [r.get("CidrIpv6") for r in perm.get("Ipv6Ranges", []) or []]
+                    assert "0.0.0.0/0" not in v4_cidrs and "::/0" not in v6_cidrs, (
+                        f"Live {sg_key} security group ({sg_id}) exposes ingress to 0.0.0.0/0 or ::/0"
+                    )
+            egress_perms = live_sgs[sg_id].get("IpPermissionsEgress", []) or []
+            if sg_key in {"rds", "valkey"}:
+                assert not egress_perms, (
+                    f"Live {sg_key} security group ({sg_id}) must have no outbound egress rules, got {egress_perms}"
+                )
+            elif sg_key == "alb":
+                for eperm in egress_perms:
+                    ev4 = [r.get("CidrIp") for r in eperm.get("IpRanges", []) or []]
+                    ev6 = [r.get("CidrIpv6") for r in eperm.get("Ipv6Ranges", []) or []]
+&gt;                   assert "0.0.0.0/0" not in ev4 and "::/0" not in ev6, (
+                        f"Live alb security group ({sg_id}) must restrict egress to ecs security group on port 8080, not 0.0.0.0/0 or ::/0: {eperm}"
+                    )
+E                   AssertionError: Live alb security group (sg-82511bbb70634d7b4) must restrict egress to ecs security group on port 8080, not 0.0.0.0/0 or ::/0: {'IpProtocol': '-1', 'UserIdGroupPairs': [], 'IpRanges': [{'CidrIp': '0.0.0.0/0'}], 'Ipv6Ranges': [], 'PrefixListIds': []}
+E                   assert ('0.0.0.0/0' not in ['0.0.0.0/0'])
+
+/tests/suite/test_live.py:72: AssertionError</failure></testcase><testcase classname="test_live" name="test_live_data_and_event_graph" time="0.105" /><testcase classname="test_live" name="test_live_security" time="0.050" /><testcase classname="test_behavior" name="test_settlement_lifecycle_workflow" time="11.881" /><testcase classname="test_behavior" name="test_projection_and_valkey_cache" time="0.924" /><testcase classname="test_behavior" name="test_idempotency_and_optimistic_concurrency" time="1.185" /><testcase classname="test_behavior" name="test_backlog_accumulation_and_drain" time="5.398" /><testcase classname="test_behavior" name="test_duplicate_delivery_and_dlq_isolation" time="17.232" /><testcase classname="test_behavior" name="test_outbox_recovery_after_sqs_queue_deletion" time="149.396" /><testcase classname="test_behavior" name="test_projection_rebuild_from_event_log" time="2.149" /><testcase classname="test_behavior" name="test_ecs_task_failure_replacement" time="5.212" /><testcase classname="test_behavior" name="test_rds_reboot_recovery" time="1.630" /><testcase classname="test_behavior" name="test_authorization_audit_and_observability" time="0.474" /><testcase classname="test_lifecycle" name="test_reapply_idempotence" time="79.058" /><testcase classname="test_lifecycle" name="test_destroy_clean" time="169.042" /></testsuite></testsuites>

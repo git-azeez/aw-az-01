@@ -1,0 +1,7 @@
+{
+  "/workspace/submission": {
+    "infra/.terraform.tfstate.lock.info": "600",
+    "infra/.terraform/clearledger": "700",
+    "infra/.terraform/clearledger/deploy.tfvars.json": "600"
+  }
+}

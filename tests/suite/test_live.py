@@ -7,7 +7,14 @@ from typing import Any
 import httpx
 
 from .conftest import VerifierContext
-from .helpers import boto_client, pg_connect, resolve_service_url, verify_iam_roles_and_policies, wait_until
+from .helpers import (
+    boto_client,
+    pg_connect,
+    policy_explicitly_denies,
+    resolve_service_url,
+    verify_iam_roles_and_policies,
+    wait_until,
+)
 
 
 def _run_block(ctx: VerifierContext, block_id: str, fn) -> None:
@@ -60,10 +67,13 @@ def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
                     assert "0.0.0.0/0" not in v4_cidrs and "::/0" not in v6_cidrs, (
                         f"Live {sg_key} security group ({sg_id}) exposes ingress to 0.0.0.0/0 or ::/0"
                     )
-            egress_perms = live_sgs[sg_id].get("IpPermissionsEgress", []) or []
+            egress_perms = [
+                ep for ep in (live_sgs[sg_id].get("IpPermissionsEgress", []) or [])
+                if str(ep.get("IpProtocol", "")) != "-1"
+            ]
             if sg_key in {"rds", "valkey"}:
                 assert not egress_perms, (
-                    f"Live {sg_key} security group ({sg_id}) must have no outbound egress rules, got {egress_perms}"
+                    f"Live {sg_key} security group ({sg_id}) must have no explicit TCP/UDP outbound egress rules, got {egress_perms}"
                 )
             elif sg_key == "alb":
                 for eperm in egress_perms:
@@ -261,6 +271,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                     orphan_eid = str(uuid.uuid4())
                     probe_ts = "2026-01-01T00:00:00Z"
                     probe_ts_v2 = "2026-01-01T00:01:00Z"
+                    probe_ts_v3 = "2026-01-01T00:02:00Z"
+                    probe_ts_v4 = "2026-01-01T00:03:00Z"
 
                     def _make_event_payload(
                         eid: str,
@@ -276,22 +288,23 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         debit: str | None = "BANK-A",
                         credit: str | None = "BANK-B",
                         ref: str | None = "REF-PROBE",
-                        memo: str | None = None,
+                        memo: str | None = "__default__",
                         occurred_at: str = probe_ts,
                         extra_top: dict[str, Any] | None = None,
                         extra_data: dict[str, Any] | None = None,
                     ) -> str:
                         eff_status = status or ("INITIATED" if ver == 1 else "CLEARED")
-                        eff_stage = stage or ("INIT" if ver == 1 else "CLR-1")
+                        eff_stage = stage or (f"INITIATED@{debit or 'BANK-A'}" if ver == 1 else "CLR-1")
                         eff_kind = kind or ("settlementInitiated" if ver == 1 else "ledgerEntryRecorded")
                         eff_entry_id = entry_id if ver > 1 else None
+                        eff_memo = ("Settlement initiated" if ver == 1 else None) if memo == "__default__" else memo
                         data_obj: dict[str, Any] = {
                             "kind": eff_kind,
                             "accountId": "ACCT-PROBE",
                             "entryId": eff_entry_id,
                             "status": eff_status,
                             "clearingStage": eff_stage,
-                            "memo": memo,
+                            "memo": eff_memo,
                         }
                         if ref is not None:
                             data_obj["reference"] = ref
@@ -322,8 +335,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
-                            current_status, current_stage, version, entry_count
-                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-SAME', 'BANK-SAME', 'INITIATED', 'INIT', 1, 0)
+                            current_status, current_stage, last_memo, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-SAME', 'BANK-SAME', 'INITIATED', 'INITIATED@BANK-SAME', 'Settlement initiated', 1, 0)
                         """,
                         (str(uuid.uuid4()),),
                     )
@@ -332,8 +345,18 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
-                            current_status, current_stage, version, entry_count
-                        ) VALUES (%s, '   ', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INIT', 1, 0)
+                            current_status, current_stage, last_memo, version, entry_count
+                        ) VALUES (%s, '   ', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INITIATED@BANK-A', 'Settlement initiated', 1, 0)
+                        """,
+                        (str(uuid.uuid4()),),
+                    )
+                    _assert_pg_rejects(
+                        "settlements.canonical trimmed strings (col = btrim(col) without leading/trailing whitespace)",
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, last_memo, version, entry_count
+                        ) VALUES (%s, ' ACCT-PROBE ', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INITIATED@BANK-A', 'Settlement initiated', 1, 0)
                         """,
                         (str(uuid.uuid4()),),
                     )
@@ -343,7 +366,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
                             current_status, current_stage, last_memo, version, entry_count
-                        ) VALUES (%s, %s, 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INIT', %s, 1, 0)
+                        ) VALUES (%s, %s, 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INITIATED@BANK-A', %s, 1, 0)
                         """,
                         (str(uuid.uuid4()), "A" * 70, "M" * 300),
                     )
@@ -352,8 +375,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
-                            current_status, current_stage, version, entry_count, created_at, updated_at
-                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INIT', 1, 0,
+                            current_status, current_stage, last_memo, version, entry_count, created_at, updated_at
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INITIATED@BANK-A', 'Settlement initiated', 1, 0,
                                   '2026-01-02T00:00:00Z'::timestamptz, '2026-01-01T00:00:00Z'::timestamptz)
                         """,
                         (str(uuid.uuid4()),),
@@ -363,9 +386,31 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
-                            current_status, current_stage, version, entry_count, created_at, updated_at
-                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INIT', 1, 0,
+                            current_status, current_stage, last_memo, version, entry_count, created_at, updated_at
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INITIATED@BANK-A', 'Settlement initiated', 1, 0,
                                   '2026-01-01T00:00:00Z'::timestamptz, '2026-01-01T00:01:00Z'::timestamptz)
+                        """,
+                        (str(uuid.uuid4()),),
+                    )
+                    _assert_pg_rejects(
+                        "settlements.version = 1 requires current_stage = 'INITIATED@' || debit_party",
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, last_memo, version, entry_count, created_at, updated_at
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'CUSTOM-INIT-STAGE', 'Settlement initiated', 1, 0,
+                                  '2026-01-01T00:00:00Z'::timestamptz, '2026-01-01T00:00:00Z'::timestamptz)
+                        """,
+                        (str(uuid.uuid4()),),
+                    )
+                    _assert_pg_rejects(
+                        "settlements.version = 1 requires last_memo = 'Settlement initiated'",
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, last_memo, version, entry_count, created_at, updated_at
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INITIATED@BANK-A', 'Wrong initial memo', 1, 0,
+                                  '2026-01-01T00:00:00Z'::timestamptz, '2026-01-01T00:00:00Z'::timestamptz)
                         """,
                         (str(uuid.uuid4()),),
                     )
@@ -374,8 +419,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
-                            current_status, current_stage, version, entry_count
-                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INIT', 0, 0)
+                            current_status, current_stage, last_memo, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INITIATED@BANK-A', 'Settlement initiated', 0, 0)
                         """,
                         (str(uuid.uuid4()),),
                     )
@@ -394,8 +439,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
-                            current_status, current_stage, version, entry_count
-                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'BOGUS_STATUS', 'INIT', 1, 0)
+                            current_status, current_stage, last_memo, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'BOGUS_STATUS', 'INITIATED@BANK-A', 'Settlement initiated', 1, 0)
                         """,
                         (str(uuid.uuid4()),),
                     )
@@ -404,8 +449,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
-                            current_status, current_stage, version, entry_count
-                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'VALIDATED', 'INIT', 1, 0)
+                            current_status, current_stage, last_memo, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'VALIDATED', 'INITIATED@BANK-A', 'Settlement initiated', 1, 0)
                         """,
                         (str(uuid.uuid4()),),
                     )
@@ -424,14 +469,50 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
-                            current_status, current_stage, version, entry_count, created_at, updated_at
-                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INIT', 1, 0,
+                            current_status, current_stage, last_memo, version, entry_count, created_at, updated_at
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INITIATED@BANK-A', 'Settlement initiated', 1, 0,
                                   '2026-01-01T00:00:00Z'::timestamptz, '2026-01-01T00:00:00Z'::timestamptz)
                         """,
                         (probe_sid,),
                     )
+                    _assert_pg_rejects(
+                        "settlements trigger: append-only immutability forbids DELETE",
+                        """
+                        DELETE FROM clearledger.settlements WHERE settlement_id = %s
+                        """,
+                        (probe_sid,),
+                    )
+                    _assert_pg_rejects(
+                        "events.canonical trimmed correlation_id and idempotency_key (col = btrim(col))",
+                        """
+                        INSERT INTO clearledger.events (
+                            event_id, settlement_id, aggregate_version, event_type,
+                            correlation_id, idempotency_key, occurred_at, payload
+                        ) VALUES (%s, %s, 1, 'SettlementInitiated', ' corr-probe ', 'idem-probe-1', %s::timestamptz, %s::jsonb)
+                        """,
+                        (
+                            probe_eid,
+                            probe_sid,
+                            probe_ts,
+                            _make_event_payload(
+                                probe_eid,
+                                probe_sid,
+                                1,
+                                "SettlementInitiated",
+                                corr=" corr-probe ",
+                                idem="idem-probe-1",
+                            ),
+                        ),
+                    )
                     valid_evt_1 = _make_event_payload(
-                        probe_eid, probe_sid, 1, "SettlementInitiated", status="INITIATED", stage="INIT", idem="idem-probe-1"
+                        probe_eid,
+                        probe_sid,
+                        1,
+                        "SettlementInitiated",
+                        status="INITIATED",
+                        stage="INITIATED@BANK-A",
+                        memo="Settlement initiated",
+                        idem="idem-probe-1",
                     )
                     cur.execute(
                         """
@@ -447,8 +528,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
-                            current_status, current_stage, last_entry_id, version, entry_count, created_at, updated_at
-                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INIT', NULL, 1, 0,
+                            current_status, current_stage, last_entry_id, last_memo, version, entry_count, created_at, updated_at
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INITIATED@BANK-A', NULL, 'Settlement initiated', 1, 0,
                                   '2026-01-01T00:00:00Z'::timestamptz, '2026-01-01T00:00:00Z'::timestamptz)
                         """,
                         (settled_probe_sid,),
@@ -476,7 +557,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             current_stage = 'VAL',
                             last_entry_id = %s,
                             version = 2,
-                            entry_count = 1
+                            entry_count = 1,
+                            updated_at = '2026-01-01T00:01:00Z'::timestamptz
                         WHERE settlement_id = %s
                         """,
                         (str(uuid.uuid4()), probe_sid),
@@ -489,7 +571,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             current_stage = 'VAL',
                             last_entry_id = %s,
                             version = 3,
-                            entry_count = 2
+                            entry_count = 2,
+                            updated_at = '2026-01-01T00:01:00Z'::timestamptz
                         WHERE settlement_id = %s
                         """,
                         (str(uuid.uuid4()), probe_sid),
@@ -502,6 +585,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         SET current_status = 'CLEARED',
                             current_stage = 'CLR-1',
                             last_entry_id = %s,
+                            last_memo = NULL,
                             version = 2,
                             entry_count = 1,
                             updated_at = '2026-01-01T00:01:00Z'::timestamptz
@@ -517,6 +601,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         status="CLEARED",
                         stage="CLR-1",
                         entry_id=probe_entry_2,
+                        memo=None,
                         idem="idem-probe-2-ok",
                         occurred_at=probe_ts_v2,
                     )
@@ -531,7 +616,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                     )
 
                     _assert_pg_rejects(
-                        "settlements trigger: NEW.updated_at >= OLD.updated_at",
+                        "settlements trigger: NEW.updated_at > OLD.updated_at (strictly increasing)",
                         """
                         UPDATE clearledger.settlements
                         SET current_status = 'SETTLED',
@@ -539,7 +624,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             last_entry_id = %s,
                             version = 3,
                             entry_count = 2,
-                            updated_at = '2026-01-01T00:00:30Z'::timestamptz
+                            updated_at = '2026-01-01T00:01:00Z'::timestamptz
                         WHERE settlement_id = %s
                         """,
                         (str(uuid.uuid4()), probe_sid),
@@ -552,7 +637,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             current_stage = 'STL-SAME-ENTRY',
                             last_entry_id = %s,
                             version = 3,
-                            entry_count = 2
+                            entry_count = 2,
+                            updated_at = '2026-01-01T00:02:00Z'::timestamptz
                         WHERE settlement_id = %s
                         """,
                         (probe_entry_2, probe_sid),
@@ -571,10 +657,10 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                 last_entry_id = %s,
                                 version = 3,
                                 entry_count = 2,
-                                updated_at = '2026-01-01T00:01:00Z'::timestamptz
+                                updated_at = %s::timestamptz
                             WHERE settlement_id = %s
                             """,
-                            (probe_entry_3, probe_sid),
+                            (probe_entry_3, probe_ts_v3, probe_sid),
                         )
                         cur.execute(
                             """
@@ -586,7 +672,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             (
                                 probe_eid_3,
                                 probe_sid,
-                                probe_ts_v2,
+                                probe_ts_v3,
                                 _make_event_payload(
                                     probe_eid_3,
                                     probe_sid,
@@ -595,8 +681,9 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                     status="CLEARED",
                                     stage="CLR-2",
                                     entry_id=probe_entry_3,
+                                    memo=None,
                                     idem="idem-probe-3-ok",
-                                    occurred_at=probe_ts_v2,
+                                    occurred_at=probe_ts_v3,
                                 ),
                             ),
                         )
@@ -608,10 +695,10 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                 last_entry_id = %s,
                                 version = 4,
                                 entry_count = 3,
-                                updated_at = '2026-01-01T00:01:00Z'::timestamptz
+                                updated_at = %s::timestamptz
                             WHERE settlement_id = %s
                             """,
-                            (probe_entry_2, probe_sid),
+                            (probe_entry_2, probe_ts_v4, probe_sid),
                         )
                         dup_entry_eid = str(uuid.uuid4())
                         _assert_pg_rejects(
@@ -625,7 +712,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             (
                                 dup_entry_eid,
                                 probe_sid,
-                                probe_ts_v2,
+                                probe_ts_v4,
                                 _make_event_payload(
                                     dup_entry_eid,
                                     probe_sid,
@@ -634,8 +721,9 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                     status="SETTLED",
                                     stage="STL-DUP",
                                     entry_id=probe_entry_2,
+                                    memo=None,
                                     idem="idem-probe-dup-entry",
-                                    occurred_at=probe_ts_v2,
+                                    occurred_at=probe_ts_v4,
                                 ),
                             ),
                         )
@@ -655,10 +743,10 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                 last_memo = 'Expected parent memo',
                                 version = 3,
                                 entry_count = 2,
-                                updated_at = '2026-01-01T00:01:00Z'::timestamptz
+                                updated_at = %s::timestamptz
                             WHERE settlement_id = %s
                             """,
-                            (hdr_entry_3, probe_sid),
+                            (hdr_entry_3, probe_ts_v3, probe_sid),
                         )
                         hdr_mismatch_eid = str(uuid.uuid4())
                         _assert_pg_rejects(
@@ -672,7 +760,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             (
                                 hdr_mismatch_eid,
                                 probe_sid,
-                                probe_ts_v2,
+                                probe_ts_v3,
                                 _make_event_payload(
                                     hdr_mismatch_eid,
                                     probe_sid,
@@ -684,7 +772,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                     debit="BANK-TAMPERED",
                                     memo="Expected parent memo",
                                     idem="idem-probe-hdr-mismatch",
-                                    occurred_at=probe_ts_v2,
+                                    occurred_at=probe_ts_v3,
                                 ),
                             ),
                         )
@@ -700,7 +788,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             (
                                 missing_ref_eid,
                                 probe_sid,
-                                probe_ts_v2,
+                                probe_ts_v3,
                                 _make_event_payload(
                                     missing_ref_eid,
                                     probe_sid,
@@ -712,7 +800,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                     ref=None,
                                     memo="Expected parent memo",
                                     idem="idem-probe-no-ref",
-                                    occurred_at=probe_ts_v2,
+                                    occurred_at=probe_ts_v3,
                                 ),
                             ),
                         )
@@ -728,7 +816,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             (
                                 memo_mismatch_eid,
                                 probe_sid,
-                                probe_ts_v2,
+                                probe_ts_v3,
                                 _make_event_payload(
                                     memo_mismatch_eid,
                                     probe_sid,
@@ -739,7 +827,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                     entry_id=hdr_entry_3,
                                     memo="Tampered event memo",
                                     idem="idem-probe-memo-mismatch",
-                                    occurred_at=probe_ts_v2,
+                                    occurred_at=probe_ts_v3,
                                 ),
                             ),
                         )
@@ -755,7 +843,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             (
                                 dup_idem_eid,
                                 probe_sid,
-                                probe_ts_v2,
+                                probe_ts_v3,
                                 _make_event_payload(
                                     dup_idem_eid,
                                     probe_sid,
@@ -766,7 +854,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                     entry_id=hdr_entry_3,
                                     memo="Expected parent memo",
                                     idem="idem-probe-1",
-                                    occurred_at=probe_ts_v2,
+                                    occurred_at=probe_ts_v3,
                                 ),
                             ),
                         )
@@ -793,7 +881,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                     entry_id=hdr_entry_3,
                                     memo="Expected parent memo",
                                     idem="idem-probe-ts-mismatch",
-                                    occurred_at=probe_ts_v2,
+                                    occurred_at=probe_ts_v3,
                                 ),
                             ),
                         )
@@ -836,7 +924,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             (
                                 extra_top_eid,
                                 probe_sid,
-                                probe_ts_v2,
+                                probe_ts_v3,
                                 _make_event_payload(
                                     extra_top_eid,
                                     probe_sid,
@@ -847,7 +935,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                     entry_id=hdr_entry_3,
                                     memo="Expected parent memo",
                                     idem="idem-probe-extra-top",
-                                    occurred_at=probe_ts_v2,
+                                    occurred_at=probe_ts_v3,
                                     extra_top={"unexpectedField": "forbidden"},
                                 ),
                             ),
@@ -864,7 +952,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             (
                                 extra_data_eid,
                                 probe_sid,
-                                probe_ts_v2,
+                                probe_ts_v3,
                                 _make_event_payload(
                                     extra_data_eid,
                                     probe_sid,
@@ -875,7 +963,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                     entry_id=hdr_entry_3,
                                     memo="Expected parent memo",
                                     idem="idem-probe-extra-data",
-                                    occurred_at=probe_ts_v2,
+                                    occurred_at=probe_ts_v3,
                                     extra_data={"unexpectedDataField": "forbidden"},
                                 ),
                             ),
@@ -892,7 +980,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             current_stage = 'REGRESSED-RSV',
                             last_entry_id = %s,
                             version = 3,
-                            entry_count = 2
+                            entry_count = 2,
+                            updated_at = '2026-01-01T00:02:00Z'::timestamptz
                         WHERE settlement_id = %s
                         """,
                         (str(uuid.uuid4()), probe_sid),
@@ -905,7 +994,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             current_stage = 'REGRESSED',
                             last_entry_id = %s,
                             version = 3,
-                            entry_count = 2
+                            entry_count = 2,
+                            updated_at = '2026-01-01T00:00:02Z'::timestamptz
                         WHERE settlement_id = %s
                         """,
                         (str(uuid.uuid4()), settled_probe_sid),
@@ -917,7 +1007,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             current_stage = 'DISP-1',
                             last_entry_id = %s,
                             version = 3,
-                            entry_count = 2
+                            entry_count = 2,
+                            updated_at = '2026-01-01T00:00:02Z'::timestamptz
                         WHERE settlement_id = %s
                         """,
                         (str(uuid.uuid4()), settled_probe_sid),
@@ -930,7 +1021,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             current_stage = 'REGRESSED-FROM-DISP',
                             last_entry_id = %s,
                             version = 4,
-                            entry_count = 3
+                            entry_count = 3,
+                            updated_at = '2026-01-01T00:00:03Z'::timestamptz
                         WHERE settlement_id = %s
                         """,
                         (str(uuid.uuid4()), settled_probe_sid),
@@ -942,7 +1034,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             current_stage = 'RECON-2',
                             last_entry_id = %s,
                             version = 4,
-                            entry_count = 3
+                            entry_count = 3,
+                            updated_at = '2026-01-01T00:00:03Z'::timestamptz
                         WHERE settlement_id = %s
                         """,
                         (str(uuid.uuid4()), settled_probe_sid),
@@ -955,7 +1048,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             current_stage = 'REGRESSED-DISP',
                             last_entry_id = %s,
                             version = 5,
-                            entry_count = 4
+                            entry_count = 4,
+                            updated_at = '2026-01-01T00:00:04Z'::timestamptz
                         WHERE settlement_id = %s
                         """,
                         (str(uuid.uuid4()), settled_probe_sid),
@@ -968,7 +1062,8 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                             current_stage = 'RECON-REPEAT',
                             last_entry_id = %s,
                             version = 5,
-                            entry_count = 4
+                            entry_count = 4,
+                            updated_at = '2026-01-01T00:00:04Z'::timestamptz
                         WHERE settlement_id = %s
                         """,
                         (str(uuid.uuid4()), settled_probe_sid),
@@ -1278,6 +1373,24 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         (probe_eid, probe_sid, valid_evt_1),
                     )
                     _assert_pg_rejects(
+                        "outbox.last_error requires attempts >= 1 and canonical trimmed non-empty text",
+                        """
+                        INSERT INTO clearledger.outbox (
+                            event_id, settlement_id, aggregate_version, correlation_id, payload, published_at, attempts, last_error
+                        ) VALUES (%s, %s, 1, 'corr-probe', %s::jsonb, NULL, 0, 'error without attempt')
+                        """,
+                        (probe_eid, probe_sid, valid_evt_1),
+                    )
+                    _assert_pg_rejects(
+                        "outbox.last_error requires canonical trimmed text (last_error = btrim(last_error))",
+                        """
+                        INSERT INTO clearledger.outbox (
+                            event_id, settlement_id, aggregate_version, correlation_id, payload, published_at, attempts, last_error
+                        ) VALUES (%s, %s, 1, 'corr-probe', %s::jsonb, NULL, 1, '  untrimmed error  ')
+                        """,
+                        (probe_eid, probe_sid, valid_evt_1),
+                    )
+                    _assert_pg_rejects(
                         "outbox.published_at >= created_at check",
                         """
                         INSERT INTO clearledger.outbox (
@@ -1394,10 +1507,19 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
-                            current_status, current_stage, version, entry_count
-                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', '  BANK-SAME  ', 'BANK-SAME', 'INITIATED', 'INIT', 1, 0)
+                            current_status, current_stage, last_memo, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', '  BANK-SAME  ', 'BANK-SAME', 'INITIATED', 'INITIATED@BANK-SAME', 'Settlement initiated', 1, 0)
                         """,
                         (str(uuid.uuid4()),),
+                    )
+                    _assert_pg_rejects(
+                        "idempotency_keys.canonical trimmed idempotency_key (idempotency_key = btrim(idempotency_key))",
+                        """
+                        INSERT INTO clearledger.idempotency_keys (
+                            scope, idempotency_key, request_hash, status_code, response_body
+                        ) VALUES (%s, ' idem-probe-1 ', %s, 201, %s::jsonb)
+                        """,
+                        (f"create:{probe_sid}", valid_idem_hash, valid_create_body),
                     )
                     _assert_pg_rejects(
                         "idempotency_keys.scope format check (create:<uuid> or entry:<uuid>)",
@@ -1531,6 +1653,15 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         INSERT INTO clearledger.idempotency_keys (
                             scope, idempotency_key, request_hash, status_code, response_body
                         ) VALUES (%s, 'idem-probe-1', %s, 201, %s::jsonb)
+                        """,
+                        (f"create:{probe_sid}", valid_idem_hash, valid_create_body),
+                    )
+                    _assert_pg_rejects(
+                        "idempotency_keys: unique response_body->>'eventId' across idempotency_keys",
+                        """
+                        INSERT INTO clearledger.idempotency_keys (
+                            scope, idempotency_key, request_hash, status_code, response_body
+                        ) VALUES (%s, 'idem-probe-dup-eventid', %s, 201, %s::jsonb)
                         """,
                         (f"create:{probe_sid}", valid_idem_hash, valid_create_body),
                     )
@@ -1677,6 +1808,7 @@ def test_live_security(ctx: VerifierContext) -> None:
     """Scored block: Live security graph (5 points) — live.security."""
     def _check() -> str:
         m = ctx.manifest
+        prefix = ctx.config["resource_prefix"]
         iam = boto_client("iam", ctx.config)
         kms = boto_client("kms", ctx.config)
         cognito = boto_client("cognito-idp", ctx.config)
@@ -1694,13 +1826,31 @@ def test_live_security(ctx: VerifierContext) -> None:
             )
         log_group_arns = {name: str(lg.get("arn") or "") for name, lg in found_groups.items()}
 
+        expected_role_tag_map = {
+            "ecs_execution_role_arn": "ecs_execution",
+            "ecs_task_role_arn": "ecs_task",
+            "projector_role_arn": "projector",
+            "relay_role_arn": "relay",
+            "archiver_role_arn": "archiver",
+            "scheduler_role_arn": "scheduler",
+        }
         role_trust_docs: dict[str, Any] = {}
         role_policy_docs: dict[str, list[dict[str, Any]]] = {}
-        for arn in m["iam"].values():
+        for role_key, arn in m["iam"].items():
             rname = arn.split("/")[-1]
             role = iam.get_role(RoleName=rname)["Role"]
             assert role["Arn"] == arn
             role_trust_docs[arn] = role.get("AssumeRolePolicyDocument")
+
+            role_tags_list = role.get("Tags") or iam.list_role_tags(RoleName=rname).get("Tags", [])
+            role_tags = {t.get("Key"): t.get("Value") for t in role_tags_list}
+            assert role_tags.get("ClearLedgerDeployment") == prefix, (
+                f"Live IAM role {rname} must have tag ClearLedgerDeployment={prefix}, found {role_tags}"
+            )
+            expected_role_tag = expected_role_tag_map[role_key]
+            assert role_tags.get("ClearLedgerRole") == expected_role_tag, (
+                f"Live IAM role {rname} must have tag ClearLedgerRole={expected_role_tag}, found {role_tags}"
+            )
 
             docs: list[dict[str, Any]] = []
             for pol_name in iam.list_role_policies(RoleName=rname).get("PolicyNames", []):
@@ -1725,6 +1875,14 @@ def test_live_security(ctx: VerifierContext) -> None:
             log_group_arns=log_group_arns,
             label="Live IAM",
         )
+
+        for role_key, arn in m["iam"].items():
+            rdocs = role_policy_docs[arn]
+            for kms_label, kms_arn in m["kms"].items():
+                for destructive_kms_act in ("kms:DisableKey", "kms:ScheduleKeyDeletion"):
+                    assert policy_explicitly_denies(rdocs, destructive_kms_act, kms_arn), (
+                        f"Live IAM role {role_key} ({arn}) must explicitly deny (Effect=Deny) {destructive_kms_act} on {kms_label} ({kms_arn})"
+                    )
 
         # Also verify via live IAM policy simulation when supported by the endpoint
         sim_checks = [
@@ -1785,9 +1943,16 @@ def test_live_security(ctx: VerifierContext) -> None:
             assert rot.get("KeyRotationEnabled") is True, (
                 f"Live KMS key {k_arn} must have KeyRotationEnabled=True, got {rot}"
             )
+            key_tags_resp = kms.list_resource_tags(KeyId=k_arn).get("Tags", [])
+            key_tags = {t.get("TagKey"): t.get("TagValue") for t in key_tags_resp}
+            assert key_tags.get("ClearLedgerDeployment") == prefix, (
+                f"Live KMS key {k_arn} must have tag ClearLedgerDeployment={prefix}, found {key_tags}"
+            )
+            assert key_tags.get("ClearLedgerKeyUsage") == role_label, (
+                f"Live KMS key {k_arn} must have tag ClearLedgerKeyUsage={role_label}, found {key_tags}"
+            )
             live_key_ids_by_role[role_label] = str(meta["KeyId"])
 
-        prefix = ctx.config["resource_prefix"]
         aliases = {
             str(a.get("AliasName", "")): str(a.get("TargetKeyId", ""))
             for a in kms.list_aliases().get("Aliases", [])

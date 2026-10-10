@@ -10,5 +10,5 @@ Provision four separate customer-managed KMS keys (`aws_kms_key`) and four KMS a
 Each of the four KMS keys must be configured with:
 - `enable_key_rotation = true`
 - `deletion_window_in_days = 10` (must be `10..30` days)
-- Tag `ClearLedgerDeployment = <resource_prefix>`
+- Tags `ClearLedgerDeployment = <resource_prefix>` and `ClearLedgerKeyUsage = <database|messaging|projection|audit>` (matching its respective role: `database`, `messaging`, `projection`, or `audit`)
 

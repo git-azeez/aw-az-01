@@ -3,7 +3,8 @@ resource "aws_kms_key" "database" {
   deletion_window_in_days = 10
   enable_key_rotation     = true
   tags = merge(local.common_tags, {
-    Name = "${local.prefix}-database-kms"
+    Name                = "${local.prefix}-database-kms"
+    ClearLedgerKeyUsage = "database"
   })
 }
 
@@ -17,7 +18,8 @@ resource "aws_kms_key" "messaging" {
   deletion_window_in_days = 10
   enable_key_rotation     = true
   tags = merge(local.common_tags, {
-    Name = "${local.prefix}-messaging-kms"
+    Name                = "${local.prefix}-messaging-kms"
+    ClearLedgerKeyUsage = "messaging"
   })
 }
 
@@ -31,7 +33,8 @@ resource "aws_kms_key" "projection" {
   deletion_window_in_days = 10
   enable_key_rotation     = true
   tags = merge(local.common_tags, {
-    Name = "${local.prefix}-projection-kms"
+    Name                = "${local.prefix}-projection-kms"
+    ClearLedgerKeyUsage = "projection"
   })
 }
 
@@ -45,7 +48,8 @@ resource "aws_kms_key" "audit" {
   deletion_window_in_days = 10
   enable_key_rotation     = true
   tags = merge(local.common_tags, {
-    Name = "${local.prefix}-audit-kms"
+    Name                = "${local.prefix}-audit-kms"
+    ClearLedgerKeyUsage = "audit"
   })
 }
 
@@ -176,7 +180,9 @@ data "aws_iam_policy_document" "scheduler_assume" {
 resource "aws_iam_role" "ecs_execution" {
   name               = "${local.prefix}-ecs-execution-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
-  tags               = local.common_tags
+  tags = merge(local.common_tags, {
+    ClearLedgerRole = "ecs_execution"
+  })
 }
 
 resource "aws_iam_role_policy" "ecs_execution" {
@@ -216,6 +222,8 @@ resource "aws_iam_role_policy" "ecs_execution" {
           "s3:ListBucket",
           "kms:Decrypt",
           "kms:GenerateDataKey",
+          "kms:DisableKey",
+          "kms:ScheduleKeyDeletion",
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
@@ -245,7 +253,9 @@ resource "aws_iam_role_policy" "ecs_execution" {
 resource "aws_iam_role" "ecs_task" {
   name               = "${local.prefix}-ecs-task-role"
   assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
-  tags               = local.common_tags
+  tags = merge(local.common_tags, {
+    ClearLedgerRole = "ecs_task"
+  })
 }
 
 resource "aws_iam_role_policy" "ecs_task" {
@@ -322,6 +332,20 @@ resource "aws_iam_role_policy" "ecs_task" {
         Resource = aws_sqs_queue.dlq.arn
       },
       {
+        Sid    = "DenyKmsDestructiveActions"
+        Effect = "Deny"
+        Action = [
+          "kms:DisableKey",
+          "kms:ScheduleKeyDeletion"
+        ]
+        Resource = [
+          aws_kms_key.database.arn,
+          aws_kms_key.messaging.arn,
+          aws_kms_key.projection.arn,
+          aws_kms_key.audit.arn
+        ]
+      },
+      {
         Sid    = "DenyProjectionMutationsAndS3AndOtherKmsLogs"
         Effect = "Deny"
         Action = [
@@ -360,7 +384,9 @@ resource "aws_iam_role_policy" "ecs_task" {
 resource "aws_iam_role" "projector" {
   name               = "${local.prefix}-projector-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
-  tags               = local.common_tags
+  tags = merge(local.common_tags, {
+    ClearLedgerRole = "projector"
+  })
 }
 
 resource "aws_iam_role_policy" "projector" {
@@ -442,6 +468,20 @@ resource "aws_iam_role_policy" "projector" {
         Resource = aws_sqs_queue.dlq.arn
       },
       {
+        Sid    = "DenyKmsDestructiveActions"
+        Effect = "Deny"
+        Action = [
+          "kms:DisableKey",
+          "kms:ScheduleKeyDeletion"
+        ]
+        Resource = [
+          aws_kms_key.database.arn,
+          aws_kms_key.messaging.arn,
+          aws_kms_key.projection.arn,
+          aws_kms_key.audit.arn
+        ]
+      },
+      {
         Sid    = "DenyProjectorDeletesS3AndOtherKmsLogs"
         Effect = "Deny"
         Action = [
@@ -478,7 +518,9 @@ resource "aws_iam_role_policy" "projector" {
 resource "aws_iam_role" "relay" {
   name               = "${local.prefix}-relay-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
-  tags               = local.common_tags
+  tags = merge(local.common_tags, {
+    ClearLedgerRole = "relay"
+  })
 }
 
 resource "aws_iam_role_policy" "relay" {
@@ -542,6 +584,20 @@ resource "aws_iam_role_policy" "relay" {
         Resource = aws_sqs_queue.dlq.arn
       },
       {
+        Sid    = "DenyKmsDestructiveActions"
+        Effect = "Deny"
+        Action = [
+          "kms:DisableKey",
+          "kms:ScheduleKeyDeletion"
+        ]
+        Resource = [
+          aws_kms_key.database.arn,
+          aws_kms_key.messaging.arn,
+          aws_kms_key.projection.arn,
+          aws_kms_key.audit.arn
+        ]
+      },
+      {
         Sid    = "DenyRelayDynamoS3AndOtherKmsLogs"
         Effect = "Deny"
         Action = [
@@ -581,7 +637,9 @@ resource "aws_iam_role_policy" "relay" {
 resource "aws_iam_role" "archiver" {
   name               = "${local.prefix}-archiver-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
-  tags               = local.common_tags
+  tags = merge(local.common_tags, {
+    ClearLedgerRole = "archiver"
+  })
 }
 
 resource "aws_iam_role_policy" "archiver" {
@@ -636,6 +694,20 @@ resource "aws_iam_role_policy" "archiver" {
         ]
       },
       {
+        Sid    = "DenyKmsDestructiveActions"
+        Effect = "Deny"
+        Action = [
+          "kms:DisableKey",
+          "kms:ScheduleKeyDeletion"
+        ]
+        Resource = [
+          aws_kms_key.database.arn,
+          aws_kms_key.messaging.arn,
+          aws_kms_key.projection.arn,
+          aws_kms_key.audit.arn
+        ]
+      },
+      {
         Sid    = "DenyArchiverObjectDeletesSqsDynamoAndOtherKmsLogs"
         Effect = "Deny"
         Action = [
@@ -678,7 +750,9 @@ resource "aws_iam_role_policy" "archiver" {
 resource "aws_iam_role" "scheduler" {
   name               = "${local.prefix}-scheduler-role"
   assume_role_policy = data.aws_iam_policy_document.scheduler_assume.json
-  tags               = local.common_tags
+  tags = merge(local.common_tags, {
+    ClearLedgerRole = "scheduler"
+  })
 }
 
 resource "aws_iam_role_policy" "scheduler" {
@@ -715,6 +789,8 @@ resource "aws_iam_role_policy" "scheduler" {
           "s3:ListBucket",
           "kms:Decrypt",
           "kms:GenerateDataKey",
+          "kms:DisableKey",
+          "kms:ScheduleKeyDeletion",
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]

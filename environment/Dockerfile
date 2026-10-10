@@ -90,6 +90,7 @@ RUN python3 -m venv --system-site-packages /opt/venv && \
       pytest==8.3.5 \
       pyyaml==6.0.2 \
       redis==5.2.1 \
+      requests==2.32.3 \
       "litellm<1.92" \
       mini-swe-agent && \
     ln -sf /opt/venv/bin/aws /usr/local/bin/aws && \

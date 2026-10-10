@@ -92,11 +92,16 @@ CREATE TABLE IF NOT EXISTS clearledger.settlements (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_settlements_nonempty_fields CHECK (
         char_length(btrim(account_id)) BETWEEN 3 AND 64
+        AND account_id = btrim(account_id)
         AND char_length(btrim(reference)) BETWEEN 3 AND 64
+        AND reference = btrim(reference)
         AND char_length(btrim(debit_party)) BETWEEN 2 AND 64
+        AND debit_party = btrim(debit_party)
         AND char_length(btrim(credit_party)) BETWEEN 2 AND 64
+        AND credit_party = btrim(credit_party)
         AND char_length(btrim(current_stage)) BETWEEN 2 AND 64
-        AND (last_memo IS NULL OR char_length(btrim(last_memo)) BETWEEN 1 AND 256)
+        AND current_stage = btrim(current_stage)
+        AND (last_memo IS NULL OR (char_length(btrim(last_memo)) BETWEEN 1 AND 256 AND last_memo = btrim(last_memo)))
         AND updated_at >= created_at
     ),
     CONSTRAINT chk_settlements_distinct_parties CHECK (btrim(debit_party) <> btrim(credit_party)),
@@ -107,12 +112,19 @@ CREATE TABLE IF NOT EXISTS clearledger.settlements (
             version = 1
             AND entry_count = 0
             AND current_status = 'INITIATED'
+            AND current_stage = ('INITIATED@' || debit_party)
             AND last_entry_id IS NULL
+            AND last_memo = 'Settlement initiated'
             AND updated_at = created_at
-            AND (last_memo IS NULL OR char_length(btrim(last_memo)) BETWEEN 1 AND 256)
         )
         OR
-        (version > 1 AND entry_count = version - 1 AND current_status <> 'INITIATED' AND last_entry_id IS NOT NULL)
+        (
+            version > 1
+            AND entry_count = version - 1
+            AND current_status <> 'INITIATED'
+            AND last_entry_id IS NOT NULL
+            AND updated_at > created_at
+        )
     ),
     CONSTRAINT chk_settlements_status_enum CHECK (
         current_status IN (
@@ -142,7 +154,9 @@ CREATE TABLE IF NOT EXISTS clearledger.events (
     UNIQUE (settlement_id, idempotency_key),
     CONSTRAINT chk_events_nonempty_fields CHECK (
         char_length(btrim(correlation_id)) BETWEEN 4 AND 128
+        AND correlation_id = btrim(correlation_id)
         AND char_length(btrim(idempotency_key)) BETWEEN 8 AND 128
+        AND idempotency_key = btrim(idempotency_key)
     ),
     CONSTRAINT chk_events_version_positive CHECK (aggregate_version >= 1),
     CONSTRAINT chk_events_type_version CHECK (
@@ -167,21 +181,31 @@ CREATE TABLE IF NOT EXISTS clearledger.events (
             AND jsonb_typeof(payload->'data') = 'object'
             AND ((payload->'data') - ARRAY['kind','accountId','reference','debitParty','creditParty','entryId','status','clearingStage','memo']) = '{}'::jsonb
             AND char_length(btrim(COALESCE(payload #>> '{data,accountId}', ''))) BETWEEN 3 AND 64
+            AND (payload #>> '{data,accountId}') = btrim(COALESCE(payload #>> '{data,accountId}', ''))
             AND char_length(btrim(COALESCE(payload #>> '{data,clearingStage}', ''))) BETWEEN 2 AND 64
+            AND (payload #>> '{data,clearingStage}') = btrim(COALESCE(payload #>> '{data,clearingStage}', ''))
             AND char_length(btrim(COALESCE(payload #>> '{data,reference}', ''))) BETWEEN 3 AND 64
+            AND (payload #>> '{data,reference}') = btrim(COALESCE(payload #>> '{data,reference}', ''))
             AND char_length(btrim(COALESCE(payload #>> '{data,debitParty}', ''))) BETWEEN 2 AND 64
+            AND (payload #>> '{data,debitParty}') = btrim(COALESCE(payload #>> '{data,debitParty}', ''))
             AND char_length(btrim(COALESCE(payload #>> '{data,creditParty}', ''))) BETWEEN 2 AND 64
+            AND (payload #>> '{data,creditParty}') = btrim(COALESCE(payload #>> '{data,creditParty}', ''))
             AND btrim(COALESCE(payload #>> '{data,debitParty}', '')) <> btrim(COALESCE(payload #>> '{data,creditParty}', ''))
             AND (
                 payload->'data'->'memo' IS NULL
                 OR jsonb_typeof(payload->'data'->'memo') = 'null'
-                OR char_length(btrim(COALESCE(payload #>> '{data,memo}', ''))) BETWEEN 1 AND 256
+                OR (
+                    char_length(btrim(COALESCE(payload #>> '{data,memo}', ''))) BETWEEN 1 AND 256
+                    AND (payload #>> '{data,memo}') = btrim(COALESCE(payload #>> '{data,memo}', ''))
+                )
             )
             AND (
                 (
                     event_type = 'SettlementInitiated'
                     AND payload #>> '{data,kind}' = 'settlementInitiated'
                     AND payload #>> '{data,status}' = 'INITIATED'
+                    AND (payload #>> '{data,clearingStage}') = ('INITIATED@' || (payload #>> '{data,debitParty}'))
+                    AND (payload #>> '{data,memo}') = 'Settlement initiated'
                     AND (payload->'data'->'entryId' IS NULL OR jsonb_typeof(payload->'data'->'entryId') = 'null')
                 )
                 OR
@@ -211,11 +235,25 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
     UNIQUE (settlement_id, aggregate_version),
     FOREIGN KEY (settlement_id, aggregate_version)
         REFERENCES clearledger.events(settlement_id, aggregate_version) ON DELETE CASCADE,
-    CONSTRAINT chk_outbox_nonempty_corr CHECK (char_length(btrim(correlation_id)) BETWEEN 4 AND 128),
+    CONSTRAINT chk_outbox_nonempty_corr CHECK (
+        char_length(btrim(correlation_id)) BETWEEN 4 AND 128
+        AND correlation_id = btrim(correlation_id)
+    ),
     CONSTRAINT chk_outbox_version_positive CHECK (aggregate_version >= 1),
     CONSTRAINT chk_outbox_attempts_nonnegative CHECK (attempts >= 0),
+    CONSTRAINT chk_outbox_attempts_zero_state CHECK (
+        attempts > 0 OR (published_at IS NULL AND last_error IS NULL)
+    ),
     CONSTRAINT chk_outbox_published_attempts CHECK (
         published_at IS NULL OR (attempts >= 1 AND last_error IS NULL AND published_at >= created_at)
+    ),
+    CONSTRAINT chk_outbox_last_error_state CHECK (
+        last_error IS NULL OR (
+            published_at IS NULL
+            AND attempts >= 1
+            AND char_length(btrim(last_error)) > 0
+            AND last_error = btrim(last_error)
+        )
     ),
     CONSTRAINT chk_outbox_archived_requires_published CHECK (
         archived_at IS NULL OR (published_at IS NOT NULL AND archived_at >= published_at)
@@ -232,19 +270,28 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
             AND (payload->>'aggregateVersion')::integer = aggregate_version
             AND payload->>'correlationId' = correlation_id
             AND char_length(btrim(COALESCE(payload->>'idempotencyKey', ''))) BETWEEN 8 AND 128
+            AND (payload->>'idempotencyKey') = btrim(COALESCE(payload->>'idempotencyKey', ''))
             AND btrim(COALESCE(payload->>'occurredAt', '')) <> ''
             AND jsonb_typeof(payload->'data') = 'object'
             AND ((payload->'data') - ARRAY['kind','accountId','reference','debitParty','creditParty','entryId','status','clearingStage','memo']) = '{}'::jsonb
             AND char_length(btrim(COALESCE(payload #>> '{data,accountId}', ''))) BETWEEN 3 AND 64
+            AND (payload #>> '{data,accountId}') = btrim(COALESCE(payload #>> '{data,accountId}', ''))
             AND char_length(btrim(COALESCE(payload #>> '{data,clearingStage}', ''))) BETWEEN 2 AND 64
+            AND (payload #>> '{data,clearingStage}') = btrim(COALESCE(payload #>> '{data,clearingStage}', ''))
             AND char_length(btrim(COALESCE(payload #>> '{data,reference}', ''))) BETWEEN 3 AND 64
+            AND (payload #>> '{data,reference}') = btrim(COALESCE(payload #>> '{data,reference}', ''))
             AND char_length(btrim(COALESCE(payload #>> '{data,debitParty}', ''))) BETWEEN 2 AND 64
+            AND (payload #>> '{data,debitParty}') = btrim(COALESCE(payload #>> '{data,debitParty}', ''))
             AND char_length(btrim(COALESCE(payload #>> '{data,creditParty}', ''))) BETWEEN 2 AND 64
+            AND (payload #>> '{data,creditParty}') = btrim(COALESCE(payload #>> '{data,creditParty}', ''))
             AND btrim(COALESCE(payload #>> '{data,debitParty}', '')) <> btrim(COALESCE(payload #>> '{data,creditParty}', ''))
             AND (
                 payload->'data'->'memo' IS NULL
                 OR jsonb_typeof(payload->'data'->'memo') = 'null'
-                OR char_length(btrim(COALESCE(payload #>> '{data,memo}', ''))) BETWEEN 1 AND 256
+                OR (
+                    char_length(btrim(COALESCE(payload #>> '{data,memo}', ''))) BETWEEN 1 AND 256
+                    AND (payload #>> '{data,memo}') = btrim(COALESCE(payload #>> '{data,memo}', ''))
+                )
             )
             AND (
                 (
@@ -252,6 +299,8 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
                     AND payload->>'eventType' = 'SettlementInitiated'
                     AND payload #>> '{data,kind}' = 'settlementInitiated'
                     AND payload #>> '{data,status}' = 'INITIATED'
+                    AND (payload #>> '{data,clearingStage}') = ('INITIATED@' || (payload #>> '{data,debitParty}'))
+                    AND (payload #>> '{data,memo}') = 'Settlement initiated'
                     AND (payload->'data'->'entryId' IS NULL OR jsonb_typeof(payload->'data'->'entryId') = 'null')
                 )
                 OR
@@ -280,6 +329,7 @@ CREATE TABLE IF NOT EXISTS clearledger.idempotency_keys (
             scope ~ '^(create|entry):[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
             AND request_hash ~ '^[0-9a-f]{64}$'
             AND char_length(btrim(idempotency_key)) BETWEEN 8 AND 128
+            AND idempotency_key = btrim(idempotency_key)
             AND jsonb_typeof(response_body) = 'object'
             AND (response_body - ARRAY['settlementId','eventId','version','accepted','idempotentReplay']) = '{}'::jsonb
             AND response_body->>'settlementId' = split_part(scope, ':', 2)
@@ -297,6 +347,12 @@ CREATE TABLE IF NOT EXISTS clearledger.idempotency_keys (
         ) IS TRUE
     )
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clearledger_idempotency_unique_event_id
+    ON clearledger.idempotency_keys ((response_body->>'eventId'));
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clearledger_idempotency_unique_settlement_version
+    ON clearledger.idempotency_keys ((response_body->>'settlementId'), ((response_body->>'version')::integer));
 
 CREATE OR REPLACE FUNCTION clearledger.fn_guard_idempotency_keys()
 RETURNS trigger
@@ -334,6 +390,19 @@ BEGIN
         ) THEN
             RAISE EXCEPTION 'Idempotency eventId % not found in clearledger.outbox', NEW.response_body->>'eventId'
                 USING ERRCODE = '23503';
+        END IF;
+
+        IF EXISTS (
+            SELECT 1
+              FROM clearledger.idempotency_keys
+             WHERE (response_body->>'eventId') = (NEW.response_body->>'eventId')
+                OR (
+                    (response_body->>'settlementId') = (NEW.response_body->>'settlementId')
+                    AND (response_body->>'version')::integer = (NEW.response_body->>'version')::integer
+                )
+        ) THEN
+            RAISE EXCEPTION 'Duplicate eventId or (settlementId, version) in clearledger.idempotency_keys'
+                USING ERRCODE = '23505';
         END IF;
 
         RETURN NEW;
@@ -386,8 +455,8 @@ BEGIN
             USING ERRCODE = '23514';
     END IF;
 
-    IF NEW.updated_at < OLD.updated_at THEN
-        RAISE EXCEPTION 'Settlement updated_at cannot regress backward'
+    IF NEW.updated_at <= OLD.updated_at THEN
+        RAISE EXCEPTION 'Settlement updated_at must strictly increase beyond OLD.updated_at'
             USING ERRCODE = '23514';
     END IF;
 
@@ -423,6 +492,22 @@ CREATE TRIGGER trg_clearledger_settlements_before_update
     BEFORE UPDATE ON clearledger.settlements
     FOR EACH ROW
     EXECUTE FUNCTION clearledger.fn_guard_settlements_update();
+
+CREATE OR REPLACE FUNCTION clearledger.fn_guard_settlements_delete()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'clearledger.settlements is an append-only aggregate root (DELETE is forbidden)'
+        USING ERRCODE = '23514';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_clearledger_settlements_before_delete ON clearledger.settlements;
+CREATE TRIGGER trg_clearledger_settlements_before_delete
+    BEFORE DELETE ON clearledger.settlements
+    FOR EACH ROW
+    EXECUTE FUNCTION clearledger.fn_guard_settlements_delete();
 
 CREATE OR REPLACE FUNCTION clearledger.fn_guard_events_insert()
 RETURNS trigger
@@ -498,8 +583,8 @@ BEGIN
          WHERE settlement_id = NEW.settlement_id
            AND aggregate_version = NEW.aggregate_version - 1;
 
-        IF NEW.occurred_at < v_prev_occurred THEN
-            RAISE EXCEPTION 'Event occurred_at (%) cannot regress before previous event occurred_at (%)', NEW.occurred_at, v_prev_occurred
+        IF NEW.occurred_at <= v_prev_occurred THEN
+            RAISE EXCEPTION 'Event occurred_at (%) must strictly increase beyond previous event occurred_at (%)', NEW.occurred_at, v_prev_occurred
                 USING ERRCODE = '23514';
         END IF;
 
@@ -644,6 +729,11 @@ CREATE TRIGGER trg_clearledger_outbox_guard
     BEFORE INSERT OR UPDATE OR DELETE ON clearledger.outbox
     FOR EACH ROW
     EXECUTE FUNCTION clearledger.fn_guard_outbox_mutation();
+
+ALTER TABLE clearledger.settlements ENABLE TRIGGER ALL;
+ALTER TABLE clearledger.events ENABLE TRIGGER ALL;
+ALTER TABLE clearledger.outbox ENABLE TRIGGER ALL;
+ALTER TABLE clearledger.idempotency_keys ENABLE TRIGGER ALL;
 
 CREATE INDEX IF NOT EXISTS idx_clearledger_outbox_unpublished
     ON clearledger.outbox (seq)
@@ -880,7 +970,7 @@ for role_arn in (m.get("iam") or {}).values():
                     pass
 
 sg_ids = (m.get("network") or {}).get("security_group_ids") or {}
-for sg_key in ("alb", "rds", "valkey"):
+for sg_key in ("alb", "ecs", "rds", "valkey"):
     sg_id = sg_ids.get(sg_key)
     if not sg_id:
         continue
@@ -888,15 +978,25 @@ for sg_key in ("alb", "rds", "valkey"):
         rules = ec2.describe_security_group_rules(
             Filters=[{"Name": "group-id", "Values": [sg_id]}]
         ).get("SecurityGroupRules", [])
-        revoke_rule_ids = []
+        revoke_egress_ids = []
+        revoke_ingress_ids = []
         for r in rules:
-            if not r.get("IsEgress"):
-                continue
-            if sg_key in ("rds", "valkey") or r.get("CidrIpv4") == "0.0.0.0/0" or r.get("CidrIpv6") == "::/0":
-                if r.get("SecurityGroupRuleId"):
-                    revoke_rule_ids.append(r["SecurityGroupRuleId"])
-        if revoke_rule_ids:
-            ec2.revoke_security_group_egress(GroupId=sg_id, SecurityGroupRuleIds=revoke_rule_ids)
+            if r.get("IsEgress"):
+                if sg_key in ("rds", "valkey") or (
+                    sg_key == "alb" and (r.get("CidrIpv4") == "0.0.0.0/0" or r.get("CidrIpv6") == "::/0")
+                ):
+                    if r.get("SecurityGroupRuleId"):
+                        revoke_egress_ids.append(r["SecurityGroupRuleId"])
+            else:
+                if sg_key in ("ecs", "rds", "valkey") and (
+                    r.get("CidrIpv4") == "0.0.0.0/0" or r.get("CidrIpv6") == "::/0"
+                ):
+                    if r.get("SecurityGroupRuleId"):
+                        revoke_ingress_ids.append(r["SecurityGroupRuleId"])
+        if revoke_egress_ids:
+            ec2.revoke_security_group_egress(GroupId=sg_id, SecurityGroupRuleIds=revoke_egress_ids)
+        if revoke_ingress_ids:
+            ec2.revoke_security_group_ingress(GroupId=sg_id, SecurityGroupRuleIds=revoke_ingress_ids)
     except Exception:
         pass
     try:
@@ -905,11 +1005,20 @@ for sg_key in ("alb", "rds", "valkey"):
             for perm in sg_obj.get("IpPermissionsEgress") or []:
                 v4 = [rng.get("CidrIp") for rng in perm.get("IpRanges") or []]
                 v6 = [rng.get("CidrIpv6") for rng in perm.get("Ipv6Ranges") or []]
-                if sg_key in ("rds", "valkey") or "0.0.0.0/0" in v4 or "::/0" in v6:
+                if sg_key in ("rds", "valkey") or (sg_key == "alb" and ("0.0.0.0/0" in v4 or "::/0" in v6)):
                     try:
                         ec2.revoke_security_group_egress(GroupId=sg_id, IpPermissions=[perm])
                     except Exception:
                         pass
+            if sg_key in ("ecs", "rds", "valkey"):
+                for perm in sg_obj.get("IpPermissions") or []:
+                    v4 = [rng.get("CidrIp") for rng in perm.get("IpRanges") or []]
+                    v6 = [rng.get("CidrIpv6") for rng in perm.get("Ipv6Ranges") or []]
+                    if "0.0.0.0/0" in v4 or "::/0" in v6:
+                        try:
+                            ec2.revoke_security_group_ingress(GroupId=sg_id, IpPermissions=[perm])
+                        except Exception:
+                            pass
     except Exception:
         pass
 

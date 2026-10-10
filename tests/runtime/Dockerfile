@@ -89,7 +89,8 @@ RUN python3 -m venv --system-site-packages /opt/venv && \
       psycopg2-binary==2.9.10 \
       pytest==8.3.5 \
       pyyaml==6.0.2 \
-      redis==5.2.1 && \
+      redis==5.2.1 \
+      requests==2.32.3 && \
     ln -sf /opt/venv/bin/aws /usr/local/bin/aws && \
     sed -i 's|PATH="/usr/local/bin:|PATH="/opt/venv/bin:/usr/local/bin:|g; s|PATH="/usr/local/sbin:|PATH="/opt/venv/bin:/usr/local/sbin:|g' /etc/profile && \
     printf '%s\n' \

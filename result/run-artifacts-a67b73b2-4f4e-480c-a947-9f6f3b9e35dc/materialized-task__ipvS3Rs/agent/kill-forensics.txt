@@ -1,0 +1,35 @@
+== date
+Sat Oct 10 06:00:10 UTC 2026
+== cgroup
+-- memory.events
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0
+-- memory.max
+max
+-- memory.peak
+1772072960
+-- memory.current
+764772352
+-- pids.events
+max 0
+== meminfo (host-wide, NOT the sandbox budget)
+MemTotal:       197843336 kB
+MemAvailable:   150567540 kB
+SwapTotal:       8388604 kB
+SwapFree:        4244588 kB
+4
+== pressure
+some avg10=0.00 avg60=0.00 avg300=0.00 total=383527973406
+full avg10=0.00 avg60=0.00 avg300=0.00 total=265242291265
+== top rss kB
+85280 MainThread
+58828 MainThread
+1728 sh
+1516 sort
+1372 sleep
+976 sh
+692 docker-init
