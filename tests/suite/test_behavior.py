@@ -1043,11 +1043,17 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                     with conn.cursor() as cur:
                         cur.execute("SELECT event_id::text, seq FROM clearledger.outbox")
                         eid_to_seq = {r[0]: int(r[1]) for r in cur.fetchall()}
-                # Drop the last line completely from S3 (while archived_at remains NOT NULL in PostgreSQL)
+                # Drop the last line and an interior line (orig_lines[1]) completely from S3
+                # so valid_subset has a valid SHA-256 digest and ascending seqs [seq_0, seq_2]
+                # but an interior outbox.seq gap at seq_1 (while archived_at remains NOT NULL in PostgreSQL)
                 _dropped_line = orig_lines.pop()
                 forged_line = orig_lines.pop()
-                valid_subset = orig_lines[:2]
-                tampered_subset = orig_lines[2:]
+                if len(orig_lines) >= 4:
+                    valid_subset = [orig_lines[0], orig_lines[2]]
+                    tampered_subset = orig_lines[3:]
+                else:
+                    valid_subset = orig_lines[:2]
+                    tampered_subset = orig_lines[2:]
                 valid_raw = ("\n".join(valid_subset) + "\n").encode("utf-8")
                 valid_s1 = eid_to_seq[json.loads(valid_subset[0])["eventId"]]
                 valid_s2 = eid_to_seq[json.loads(valid_subset[-1])["eventId"]]
@@ -1222,8 +1228,9 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 sv_ev1_corr, sv_ev1_pay_raw = cur.fetchone()
                 sv_ev1_pay = json.loads(sv_ev1_pay_raw) if isinstance(sv_ev1_pay_raw, str) else sv_ev1_pay_raw
 
-        # Verify 1-to-1 S3 audit archive integrity, canonical key format, SHA-256 digest, and seq order against clearledger.outbox
+        # Verify 1-to-1 S3 audit archive integrity, canonical key format, SHA-256 digest, and contiguous non-overlapping seq order against clearledger.outbox
         s3_records_by_eid: dict[str, dict] = {}
+        batch_intervals: list[tuple[int, int, str]] = []
         total_s3_lines = 0
         key_pattern = re.compile(rf"^{re.escape(str(m['audit']['prefix']))}batch-(\d{{8}})-(\d{{8}})-([0-9a-f]{{16}})\.ndjson$")
         for obj in s3.list_objects_v2(Bucket=m["audit"]["bucket_name"]).get("Contents", []):
@@ -1233,6 +1240,7 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 f"Expected S3 audit batch key {key} to match canonical format batch-<first_seq:08d>-<last_seq:08d>-<16_char_sha256_hex>.ndjson"
             )
             first_seq_str, last_seq_str, key_digest = key_match.groups()
+            first_seq_int, last_seq_int = int(first_seq_str), int(last_seq_str)
             raw_bytes = s3.get_object(Bucket=m["audit"]["bucket_name"], Key=key)["Body"].read()
             actual_digest = hashlib.sha256(raw_bytes).hexdigest()[:16]
             assert actual_digest == key_digest, (
@@ -1260,8 +1268,22 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             assert batch_seqs == sorted(batch_seqs), (
                 f"Expected S3 audit batch {key} records to be ordered by ascending clearledger.outbox.seq, got {batch_seqs}"
             )
-            assert batch_seqs[0] == int(first_seq_str) and batch_seqs[-1] == int(last_seq_str), (
+            assert batch_seqs[0] == first_seq_int and batch_seqs[-1] == last_seq_int, (
                 f"Expected S3 audit batch {key} sequence bounds ({first_seq_str}..{last_seq_str}) to match outbox.seq range ({batch_seqs[0]}..{batch_seqs[-1]})"
+            )
+            expected_range_seqs = sorted(
+                s for s, _ in pg_outbox_map.values() if first_seq_int <= s <= last_seq_int
+            )
+            assert batch_seqs == expected_range_seqs, (
+                f"Expected S3 audit batch {key} to contain a contiguous, gap-free slice of clearledger.outbox.seq "
+                f"across [{first_seq_int}, {last_seq_int}], expected {expected_range_seqs}, got {batch_seqs}"
+            )
+            batch_intervals.append((first_seq_int, last_seq_int, key))
+        batch_intervals.sort()
+        for prev_b, curr_b in zip(batch_intervals, batch_intervals[1:]):
+            assert prev_b[1] < curr_b[0], (
+                f"Expected S3 audit batches to have strictly disjoint, non-overlapping [first_seq, last_seq] intervals, "
+                f"found overlap between {prev_b[2]} and {curr_b[2]}"
             )
         assert total_s3_lines == len(pg_outbox_map) and set(s3_records_by_eid.keys()) == set(pg_outbox_map.keys()), (
             f"Expected S3 audit archive under {m['audit']['prefix']} to match clearledger.outbox 1-to-1 "
@@ -1278,6 +1300,18 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             f"Expected deploy.sh to purge all noncurrent S3 object versions (IsLatest=false) from audit bucket, "
             f"found {len(noncurrent_vers)}: {[(v.get('Key'), v.get('VersionId')) for v in noncurrent_vers[:5]]}"
         )
+
+        # Verify active Valkey cache convergence before issuing GET requests that would lazily populate cache
+        for check_sid in (corrupted_sid, same_ver_sid, cache_drift_sid, sid):
+            rkey = f"clearledger:settlement:{check_sid}"
+            raw_cached = rclient.get(rkey)
+            assert raw_cached is not None, (
+                f"Expected deploy.sh to actively populate Valkey key {rkey} during convergence, found None"
+            )
+            ttl_val = int(rclient.ttl(rkey))
+            assert 0 < ttl_val <= 90, (
+                f"Expected Valkey key {rkey} populated by deploy.sh to have TTL in (0, 90], got {ttl_val}"
+            )
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             def _recovered() -> bool:
@@ -1394,6 +1428,10 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                 headers={"Authorization": f"Bearer {tokens['read']}"},
             )
             assert r_cache_drift.status_code == 200
+            assert r_cache_drift.headers.get("X-ClearLedger-Source") == "cache", (
+                f"Expected GET /v1/settlements/{cache_drift_sid} immediately after deploy.sh to hit populated Valkey cache "
+                f"(X-ClearLedger-Source: cache), got {r_cache_drift.headers.get('X-ClearLedger-Source')}"
+            )
             cd_body = r_cache_drift.json()
             expected_cd_last_entry = cache_drift_meta["spec"]["entries"][-1]
             assert (

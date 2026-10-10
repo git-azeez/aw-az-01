@@ -1,0 +1,15 @@
+{
+  "/workspace/submission": {
+    ".lifecycle.lock": "600",
+    "infra/.terraform": "700",
+    "infra/.terraform/providers": "700",
+    "infra/.terraform/providers/registry.terraform.io": "700",
+    "infra/.terraform/providers/registry.terraform.io/hashicorp": "700",
+    "infra/.terraform/providers/registry.terraform.io/hashicorp/aws": "700",
+    "infra/.terraform/providers/registry.terraform.io/hashicorp/aws/6.51.0": "700",
+    "infra/.terraform/terraform.tfstate": "600",
+    "infra/terraform.tfstate": "600",
+    "infra/terraform.tfstate.backup": "600",
+    "manifest.json": "600"
+  }
+}

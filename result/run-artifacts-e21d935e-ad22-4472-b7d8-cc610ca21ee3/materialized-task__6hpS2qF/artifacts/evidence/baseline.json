@@ -1,0 +1,31 @@
+{
+  "vpcs": [
+    "vpc-default-us-east-1"
+  ],
+  "subnets": [
+    "subnet-default-us-east-1-a",
+    "subnet-default-us-east-1-b",
+    "subnet-default-us-east-1-c"
+  ],
+  "roles": [],
+  "policies": [],
+  "sqs": [],
+  "ddb": [],
+  "s3": [],
+  "schedules": [],
+  "logs": [
+    "/aws/elasticache/cluster/cl-994f11-cache/engine-log",
+    "/aws/lambda/cl-994f11-audit-archiver",
+    "/aws/lambda/cl-994f11-outbox-relay",
+    "/aws/lambda/cl-994f11-projector",
+    "/aws/rds/instance/cl-994f11-database/error",
+    "/ecs/cl-994f11-api"
+  ],
+  "lambda": [],
+  "rds": [],
+  "cache": [],
+  "alb": [],
+  "cognito": [],
+  "kms_aliases": [],
+  "kms_keys": []
+}

@@ -447,10 +447,24 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
-                            current_status, current_stage, last_entry_id, version, entry_count
-                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'SETTLED', 'STL-1', %s, 2, 1)
+                            current_status, current_stage, last_entry_id, version, entry_count, created_at, updated_at
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'INITIATED', 'INIT', NULL, 1, 0,
+                                  '2026-01-01T00:00:00Z'::timestamptz, '2026-01-01T00:00:00Z'::timestamptz)
                         """,
-                        (settled_probe_sid, str(uuid.uuid4())),
+                        (settled_probe_sid,),
+                    )
+                    cur.execute(
+                        """
+                        UPDATE clearledger.settlements
+                        SET current_status = 'SETTLED',
+                            current_stage = 'STL-1',
+                            last_entry_id = %s,
+                            version = 2,
+                            entry_count = 1,
+                            updated_at = '2026-01-01T00:00:01Z'::timestamptz
+                        WHERE settlement_id = %s
+                        """,
+                        (str(uuid.uuid4()), settled_probe_sid),
                     )
 
                     _assert_pg_rejects(

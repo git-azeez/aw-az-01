@@ -1,0 +1,25 @@
+{
+    "task": {
+        "path": "/tmp/m1-run-60c19d29-f0a1-48fa-b390-8ef1f64b9fe5-gl9x6xnj/package/materialized-task"
+    },
+    "trial_name": "materialized-task__6N3Z5xL",
+    "trials_dir": "/tmp/m1-run-60c19d29-f0a1-48fa-b390-8ef1f64b9fe5-gl9x6xnj/harbor-trials",
+    "agent": {
+        "name": "oracle",
+        "model_name": "anthropic/claude-haiku-4-5-20251001",
+        "override_timeout_sec": 21600.0,
+        "override_setup_timeout_sec": 1800.0,
+        "extra_allowed_hosts": [
+            "llm-broker-prod-1062225351540.us-central1.run.app"
+        ]
+    },
+    "environment": {
+        "type": "daytona",
+        "kwargs": {
+            "auto_stop_interval_mins": 60
+        }
+    },
+    "verifier": {
+        "override_timeout_sec": 7200.0
+    }
+}

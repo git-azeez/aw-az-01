@@ -1123,42 +1123,36 @@ with psycopg.connect(pg_conninfo) as conn:
                         InvocationType="RequestResponse",
                         Payload=json.dumps({"Records": records}).encode("utf-8"),
                     )
-                rclient.delete(f"clearledger:settlement:{sid}")
-            else:
-                rkey = f"clearledger:settlement:{sid}"
-                cached_raw = rclient.get(rkey)
-                if cached_raw:
-                    try:
-                        ttl_val = int(rclient.ttl(rkey))
-                        cached_obj = json.loads(cached_raw)
-                        if (
-                            not (0 < ttl_val <= 90)
-                            or cached_obj.get("settlementId") != sid
-                            or int(cached_obj.get("version", -1)) != pg_ver
-                            or int(cached_obj.get("entryCount", -1)) != pg_ec
-                            or cached_obj.get("status") != status
-                            or cached_obj.get("clearingStage") != stage
-                            or cached_obj.get("accountId") != acct
-                            or cached_obj.get("reference") != ref
-                            or cached_obj.get("debitParty") != debit
-                            or cached_obj.get("creditParty") != credit
-                            or cached_obj.get("lastEntryId") != pg_last_entry
-                            or cached_obj.get("lastMemo") != expected_ddb_last_memo
-                            or not same_ts(cached_obj.get("updatedAt"), expected_updated_at)
-                        ):
-                            rclient.delete(rkey)
-                    except Exception:
-                        rclient.delete(rkey)
+
+            expected_cache_obj = {
+                "settlementId": sid,
+                "accountId": acct,
+                "reference": ref,
+                "debitParty": debit,
+                "creditParty": credit,
+                "status": status,
+                "clearingStage": stage,
+                "version": int(pg_ver),
+                "entryCount": int(pg_ec),
+                "updatedAt": expected_updated_at,
+            }
+            if pg_last_entry is not None:
+                expected_cache_obj["lastEntryId"] = pg_last_entry
+            if expected_ddb_last_memo is not None:
+                expected_cache_obj["lastMemo"] = expected_ddb_last_memo
+            rclient.set(f"clearledger:settlement:{sid}", json.dumps(expected_cache_obj), ex=90)
 
         # 5. Reconcile S3 audit archive objects and versions 1-to-1 against clearledger.outbox
         cur.execute("SELECT seq, event_id::text, archived_at, payload FROM clearledger.outbox ORDER BY seq ASC")
         pg_outbox = {}
         for seq, ev_id, arch_at, payload in cur.fetchall():
             pay_obj = json.loads(payload) if isinstance(payload, str) else payload
-            pg_outbox[ev_id] = (seq, arch_at, pay_obj)
+            pg_outbox[ev_id] = (int(seq), arch_at, pay_obj)
+        all_pg_seqs = sorted(seq for seq, _, _ in pg_outbox.values())
 
         all_s3_objs = s3.list_objects_v2(Bucket=audit_bucket).get("Contents", [])
         seen_s3_event_ids: set[str] = set()
+        seen_seq_intervals: list[tuple[int, int]] = []
         valid_live_keys: set[str] = set()
         for obj in sorted(all_s3_objs, key=lambda o: o["Key"]):
             key = obj["Key"]
@@ -1191,13 +1185,21 @@ with psycopg.connect(pg_conninfo) as conn:
                     batch_seqs.append(int(row_seq))
                 if batch_seqs != sorted(batch_seqs):
                     raise ValueError("S3 audit batch records are not in ascending outbox.seq order")
+                first_b_seq = batch_seqs[0]
+                last_b_seq = batch_seqs[-1]
+                expected_range_seqs = [s for s in all_pg_seqs if first_b_seq <= s <= last_b_seq]
+                if batch_seqs != expected_range_seqs:
+                    raise ValueError("S3 audit batch has interior outbox.seq gap")
+                if any(not (last_b_seq < s0 or first_b_seq > s1) for s0, s1 in seen_seq_intervals):
+                    raise ValueError("S3 audit batch has overlapping [first_seq, last_seq] range")
                 digest_hex = hashlib.sha256(raw_bytes).hexdigest()[:16]
                 expected_key = (
-                    f"{audit_prefix}batch-{batch_seqs[0]:08d}-{batch_seqs[-1]:08d}-{digest_hex}.ndjson"
+                    f"{audit_prefix}batch-{first_b_seq:08d}-{last_b_seq:08d}-{digest_hex}.ndjson"
                 )
                 if key != expected_key:
                     raise ValueError(f"S3 audit batch key {key} does not match canonical {expected_key}")
                 seen_s3_event_ids.update(batch_ids)
+                seen_seq_intervals.append((first_b_seq, last_b_seq))
                 valid_live_keys.add(key)
             except Exception:
                 purge_s3_key_all_versions(audit_bucket, key)

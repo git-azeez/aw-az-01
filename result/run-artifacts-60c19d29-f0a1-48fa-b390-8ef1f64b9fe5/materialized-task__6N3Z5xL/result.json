@@ -1,0 +1,124 @@
+{
+    "id": "7225cbf7-27cf-4732-8c98-510e9e1359e6",
+    "task_name": "devcloud/clearledger-settlement",
+    "trial_name": "materialized-task__6N3Z5xL",
+    "trial_uri": "file:///tmp/m1-run-60c19d29-f0a1-48fa-b390-8ef1f64b9fe5-gl9x6xnj/harbor-trials/materialized-task__6N3Z5xL",
+    "task_id": {
+        "path": "/tmp/m1-run-60c19d29-f0a1-48fa-b390-8ef1f64b9fe5-gl9x6xnj/package/materialized-task"
+    },
+    "source": null,
+    "task_checksum": "448a2c3693c91f6d6b8e156769793e3471114ecbc0b3a8d560663bc10034e661",
+    "config": {
+        "task": {
+            "path": "/tmp/m1-run-60c19d29-f0a1-48fa-b390-8ef1f64b9fe5-gl9x6xnj/package/materialized-task",
+            "git_url": null,
+            "git_commit_id": null,
+            "name": null,
+            "ref": null,
+            "overwrite": false,
+            "download_dir": null,
+            "source": null
+        },
+        "trial_name": "materialized-task__6N3Z5xL",
+        "trials_dir": "/tmp/m1-run-60c19d29-f0a1-48fa-b390-8ef1f64b9fe5-gl9x6xnj/harbor-trials",
+        "install_only": false,
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": null,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": "oracle",
+            "import_path": null,
+            "model_name": "anthropic/claude-haiku-4-5-20251001",
+            "n_concurrent": null,
+            "concurrency_group": null,
+            "skills": [],
+            "override_timeout_sec": 21600.0,
+            "override_setup_timeout_sec": 1800.0,
+            "max_timeout_sec": null,
+            "resume_trajectory": false,
+            "load_trajectory": null,
+            "extra_allowed_hosts": [
+                "llm-broker-prod-1062225351540.us-central1.run.app"
+            ],
+            "kwargs": {},
+            "mcp_servers": []
+        },
+        "user_agent": null,
+        "environment": {
+            "type": "daytona",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "stream": false,
+            "cpu_enforcement_policy": "auto",
+            "memory_enforcement_policy": "auto",
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "override_tpu": null,
+            "mounts": null,
+            "extra_docker_compose": [],
+            "kwargs": {
+                "auto_stop_interval_mins": 60
+            },
+            "extra_allowed_hosts": []
+        },
+        "verifier": {
+            "override_timeout_sec": 7200.0,
+            "max_timeout_sec": null,
+            "disable": false
+        },
+        "artifacts": [],
+        "extra_instruction_paths": [],
+        "extra_instructions": [],
+        "job_id": null,
+        "source_trial": null
+    },
+    "agent_info": {
+        "name": "oracle",
+        "version": "1.0.0",
+        "model_info": {
+            "name": "claude-haiku-4-5-20251001",
+            "provider": "anthropic"
+        }
+    },
+    "agent_result": {
+        "n_input_tokens": null,
+        "n_cache_tokens": null,
+        "n_output_tokens": null,
+        "cost_usd": null,
+        "model_usage": null,
+        "rollout_details": null,
+        "metadata": null
+    },
+    "verifier_result": {
+        "rewards": {
+            "reward": 1.0,
+            "score": 100
+        }
+    },
+    "verifier_environment_mode": "separate",
+    "exception_info": null,
+    "started_at": "2026-10-09T18:45:05.736130Z",
+    "finished_at": "2026-10-09T19:10:23.168915Z",
+    "environment_setup": {
+        "started_at": "2026-10-09T18:45:05.825533Z",
+        "finished_at": "2026-10-09T18:50:39.538553Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-10-09T18:50:39.538634Z",
+        "finished_at": "2026-10-09T18:50:39.538713Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-10-09T18:50:39.538803Z",
+        "finished_at": "2026-10-09T18:52:45.573289Z"
+    },
+    "verifier": {
+        "started_at": "2026-10-09T18:54:01.725830Z",
+        "finished_at": "2026-10-09T19:10:23.168833Z"
+    },
+    "step_results": null
+}

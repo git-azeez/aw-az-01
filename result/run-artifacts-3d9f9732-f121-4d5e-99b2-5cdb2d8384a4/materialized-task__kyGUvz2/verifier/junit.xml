@@ -1,0 +1,1236 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="19" failures="0" skipped="0" tests="19" time="111.573" timestamp="2026-10-09T19:26:29.342680+00:00" hostname="d527ed21e4f7"><testcase classname="test_declared" name="test_iac_discipline" time="111.273"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_declared" name="test_declared_compute_and_ingress" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_declared" name="test_declared_data_and_async" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_declared" name="test_declared_security" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_live" name="test_live_compute_and_ingress" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_live" name="test_live_data_and_event_graph" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_live" name="test_live_security" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_settlement_lifecycle_workflow" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_projection_and_valkey_cache" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_idempotency_and_optimistic_concurrency" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_backlog_accumulation_and_drain" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_duplicate_delivery_and_dlq_isolation" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_outbox_recovery_after_sqs_queue_deletion" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_projection_rebuild_from_event_log" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_ecs_task_failure_replacement" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_rds_reboot_recovery" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_authorization_audit_and_observability" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_lifecycle" name="test_reapply_idempotence" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_lifecycle" name="test_destroy_clean" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  d1c0e3)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)&#10;  [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)&#10;  [19:28:20] sg: 3 unrestricted egress rule(s) revoked&#10;  [19:28:20] == 4/7 PostgreSQL schema&#10;  psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger &quot;trg_settlements_guard&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger &quot;trg_events_guard&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger &quot;trg_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger &quot;trg_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  [19:28:20] schema applied&#10;  [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)&#10;  [19:28:20] reconcile: round 1&#10;  &#10;  STDERR:&#10;  Traceback (most recent call last):&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 614, in &lt;module&gt;&#10;      sys.exit(main())&#10;               ^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 599, in main&#10;      drain_outbox(ctx)&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 242, in drain_outbox&#10;      pending = ctx.scalar(sql)&#10;                ^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 67, in scalar&#10;      conn = self.pg()&#10;             ^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/reconcile.py&quot;, line 61, in pg&#10;      conn = pg_connect(self.cfg, self.pg_host, self.pg_port)&#10;             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^&#10;    File &quot;/workspace/submission/lib/common.py&quot;, line 57, in pg_connect&#10;      import psycopg2&#10;  ModuleNotFoundError: No module named 'psycopg2'&#10;  [19:28:20] ERROR: data-plane reconciliation failed&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         d1c0e3)
+E         [19:28:20] sg: revoking unrestricted egress -1 on rds (sg-97f9b12fb96a6ec8c)
+E         [19:28:20] sg: revoking unrestricted egress -1 on valkey (sg-8392f465bad0bd958)
+E         [19:28:20] sg: 3 unrestricted egress rule(s) revoked
+E         [19:28:20] == 4/7 PostgreSQL schema
+E         psql:/workspace/submission/lib/schema.sql:588: NOTICE:  trigger "trg_settlements_guard" for relation "clearledger.settlements" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:592: NOTICE:  trigger "trg_events_guard" for relation "clearledger.events" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:596: NOTICE:  trigger "trg_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         psql:/workspace/submission/lib/schema.sql:600: NOTICE:  trigger "trg_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         [19:28:20] schema applied
+E         [19:28:20] == 5/7 data-plane reconciliation (outbox -&gt; SQS -&gt; DynamoDB/Valkey, S3 audit archive)
+E         [19:28:20] reconcile: round 1
+E         
+E         STDERR:
+E         Traceback (most recent call last):
+E           File "/workspace/submission/lib/reconcile.py", line 614, in &lt;module&gt;
+E             sys.exit(main())
+E                      ^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 599, in main
+E             drain_outbox(ctx)
+E           File "/workspace/submission/lib/reconcile.py", line 242, in drain_outbox
+E             pending = ctx.scalar(sql)
+E                       ^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 67, in scalar
+E             conn = self.pg()
+E                    ^^^^^^^^^
+E           File "/workspace/submission/lib/reconcile.py", line 61, in pg
+E             conn = pg_connect(self.cfg, self.pg_host, self.pg_port)
+E                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           File "/workspace/submission/lib/common.py", line 57, in pg_connect
+E             import psycopg2
+E         ModuleNotFoundError: No module named 'psycopg2'
+E         [19:28:20] ERROR: data-plane reconciliation failed
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase></testsuite></testsuites>

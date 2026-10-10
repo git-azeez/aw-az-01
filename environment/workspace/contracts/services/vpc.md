@@ -14,9 +14,9 @@
     - **Egress**: outbound traffic to the AWS control plane and data stores.
   - `rds`:
     - **Ingress**: restricted strictly to TCP port `5432` (`from_port = 5432`, `to_port = 5432`, `protocol = "tcp"`) from the `ecs` security group or VPC CIDR (never `0.0.0.0/0`, `::/0`, or `protocol = "-1"`).
-    - **Egress**: restricted to the VPC (must **not** allow `0.0.0.0/0` or `::/0` on egress).
+    - **Egress**: no outbound egress rules (`egress = []`; passive data stores do not initiate outbound connections, and any out-of-band egress rules on `rds` must be revoked during `deploy.sh` convergence).
   - `valkey`:
     - **Ingress**: restricted strictly to TCP port `6379` (`from_port = 6379`, `to_port = 6379`, `protocol = "tcp"`) from the `ecs` security group or VPC CIDR (never `0.0.0.0/0`, `::/0`, or `protocol = "-1"`).
-    - **Egress**: restricted to the VPC (must **not** allow `0.0.0.0/0` or `::/0` on egress).
+    - **Egress**: no outbound egress rules (`egress = []`; passive data stores do not initiate outbound connections, and any out-of-band egress rules on `valkey` must be revoked during `deploy.sh` convergence).
 - Tag the VPC, subnets, internet gateway, route tables, and security groups with `ClearLedgerDeployment = <resource_prefix>`.
 

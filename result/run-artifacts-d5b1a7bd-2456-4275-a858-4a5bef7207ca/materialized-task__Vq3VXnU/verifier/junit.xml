@@ -1,0 +1,1845 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="19" time="700.131" timestamp="2026-10-09T19:28:04.469652+00:00" hostname="10c699a4f824"><testcase classname="test_declared" name="test_iac_discipline" time="125.170" /><testcase classname="test_declared" name="test_declared_compute_and_ingress" time="0.001"><failure message="AssertionError: rds security group must have no outbound egress rules (egress = []), got [{'cidr_blocks': ['10.42.0.0/16'], 'description': 'Intra-VPC only', 'from_port': 0, 'ipv6_cidr_blocks': [], 'prefix_list_ids': [], 'protocol': 'tcp', 'security_groups': [], 'self': False, 'to_port': 65535}]&#10;assert not [{'cidr_blocks': ['10.42.0.0/16'], 'description': 'Intra-VPC only', 'from_port': 0, 'ipv6_cidr_blocks': [], ...}]">ctx = VerifierContext(config={'resource_prefix': 'cl-2ecc21', 'region': 'us-east-1', 'aws_endpoint_url': 'http://aws:4566', ...00000000:function:cl-2ecc21-projector', 'function_name': 'cl-2ecc21-projector'}}}, committed_settlements={}, tokens={})
+
+    def test_declared_compute_and_ingress(ctx: VerifierContext) -&gt; None:
+        """Scored block: Declared compute and ingress (2 points) — declared.compute_ingress."""
+        def _check() -&gt; str:
+            state = load_tfstate()
+            items = _collect_resources(state)
+            manifest = ctx.manifest
+    
+            vpcs = _by_type(items, "aws_vpc")
+            assert len(vpcs) == 1, f"Expected 1 aws_vpc, found {len(vpcs)}"
+            vpc = vpcs[0]
+            assert vpc.get("enable_dns_support") is True
+            assert vpc.get("enable_dns_hostnames") is True
+            assert vpc["id"] == manifest["network"]["vpc_id"]
+    
+            subnets = _by_type(items, "aws_subnet")
+            pub = [s for s in subnets if s.get("map_public_ip_on_launch") is True]
+            priv = [s for s in subnets if not s.get("map_public_ip_on_launch")]
+            assert len(pub) &gt;= 2 and len({s.get("availability_zone") for s in pub}) &gt;= 2
+            assert len(priv) &gt;= 2 and len({s.get("availability_zone") for s in priv}) &gt;= 2
+            pub_ids = set(manifest["network"]["public_subnet_ids"])
+            priv_ids = set(manifest["network"]["private_subnet_ids"])
+            assert pub_ids == {s["id"] for s in pub}, "Manifest public_subnet_ids must match public subnets (map_public_ip_on_launch=true)"
+            assert priv_ids == {s["id"] for s in priv}, "Manifest private_subnet_ids must match private subnets (map_public_ip_on_launch=false)"
+    
+            igws = _by_type(items, "aws_internet_gateway")
+            assert len(igws) == 1 and igws[0].get("vpc_id") == vpc["id"]
+            igw_id = igws[0]["id"]
+    
+            rts = {rt["id"]: rt for rt in _by_type(items, "aws_route_table")}
+            standalone_routes = _by_type(items, "aws_route")
+            rt_assocs = _by_type(items, "aws_route_table_association")
+            subnet_to_rt = {a.get("subnet_id"): a.get("route_table_id") for a in rt_assocs if a.get("subnet_id")}
+            assert (pub_ids | priv_ids).issubset(set(subnet_to_rt.keys())), (
+                f"All public and private subnets must have explicit aws_route_table_association; missing {(pub_ids | priv_ids) - set(subnet_to_rt.keys())}"
+            )
+    
+            def _rt_has_igw_default_route(rt_id: str) -&gt; bool:
+                rt_obj = rts.get(rt_id) or {}
+                for r in rt_obj.get("route") or []:
+                    if r.get("cidr_block") == "0.0.0.0/0" and r.get("gateway_id") == igw_id:
+                        return True
+                for sr in standalone_routes:
+                    if sr.get("route_table_id") == rt_id and sr.get("destination_cidr_block") == "0.0.0.0/0" and sr.get("gateway_id") == igw_id:
+                        return True
+                return False
+    
+            for psid in pub_ids:
+                assert _rt_has_igw_default_route(str(subnet_to_rt[psid])), (
+                    f"Public subnet {psid} route table must have 0.0.0.0/0 route to aws_internet_gateway {igw_id}"
+                )
+            for prsid in priv_ids:
+                assert not _rt_has_igw_default_route(str(subnet_to_rt[prsid])), (
+                    f"Private subnet {prsid} route table must NOT route 0.0.0.0/0 to the Internet Gateway"
+                )
+    
+            sgs = {s["id"]: s for s in _by_type(items, "aws_security_group")}
+            sg_ids = manifest["network"]["security_group_ids"]
+            assert len({sg_ids["alb"], sg_ids["ecs"], sg_ids["rds"], sg_ids["valkey"]}) == 4, (
+                f"Expected 4 distinct security groups for alb, ecs, rds, valkey; got {sg_ids}"
+            )
+            for key in ("alb", "ecs", "rds", "valkey"):
+                assert sg_ids[key] in sgs, f"Security group {key} ({sg_ids[key]}) not in state"
+                assert sgs[sg_ids[key]].get("vpc_id") == manifest["network"]["vpc_id"]
+    
+            sg_rules = _by_type(items, "aws_security_group_rule")
+            vpc_sg_rules = _by_type(items, "aws_vpc_security_group_ingress_rule")
+            vpc_egress_rules = _by_type(items, "aws_vpc_security_group_egress_rule")
+            for restricted_key in ("ecs", "rds", "valkey"):
+                sg_id = sg_ids[restricted_key]
+                sg = sgs[sg_id]
+                for rule in sg.get("ingress", []) or []:
+                    cidrs = rule.get("cidr_blocks") or []
+                    v6_cidrs = rule.get("ipv6_cidr_blocks") or []
+                    assert "0.0.0.0/0" not in cidrs and "::/0" not in v6_cidrs, (
+                        f"{restricted_key} security group exposes ingress to 0.0.0.0/0 or ::/0"
+                    )
+                    if restricted_key == "ecs":
+                        assert not cidrs and not v6_cidrs, (
+                            f"ecs security group ingress must restrict port 8080 to the alb security group, not CIDR blocks {cidrs}"
+                        )
+                        ref_sgs = set(rule.get("security_groups") or [])
+                        if ref_sgs:
+                            assert sg_ids["alb"] in ref_sgs, (
+                                f"ecs security group ingress must allow traffic from alb security group {sg_ids['alb']}"
+                            )
+                for srule in sg_rules:
+                    if srule.get("security_group_id") == sg_id and srule.get("type") == "ingress":
+                        cidrs = srule.get("cidr_blocks") or []
+                        v6_cidrs = srule.get("ipv6_cidr_blocks") or []
+                        assert "0.0.0.0/0" not in cidrs and "::/0" not in v6_cidrs, (
+                            f"{restricted_key} security group rule exposes ingress to 0.0.0.0/0 or ::/0"
+                        )
+                        if restricted_key == "ecs":
+                            assert not cidrs and not v6_cidrs, (
+                                "ecs security group ingress rule must reference the alb security group, not CIDR blocks"
+                            )
+                            assert srule.get("source_security_group_id") == sg_ids["alb"], (
+                                f"ecs security group ingress rule must reference alb security group {sg_ids['alb']}"
+                            )
+                for vrule in vpc_sg_rules:
+                    if vrule.get("security_group_id") == sg_id:
+                        assert vrule.get("cidr_ipv4") != "0.0.0.0/0" and vrule.get("cidr_ipv6") != "::/0", (
+                            f"{restricted_key} VPC security group ingress rule exposes ingress to 0.0.0.0/0 or ::/0"
+                        )
+                        if restricted_key == "ecs":
+                            assert not vrule.get("cidr_ipv4") and not vrule.get("cidr_ipv6"), (
+                                "ecs VPC security group ingress rule must reference the alb security group, not CIDR blocks"
+                            )
+                            assert vrule.get("referenced_security_group_id") == sg_ids["alb"], (
+                                f"ecs VPC security group ingress rule must reference alb security group {sg_ids['alb']}"
+                            )
+    
+            # Verify least-privilege egress on alb, rds, and valkey security groups
+            for egress_restricted_key in ("alb", "rds", "valkey"):
+                sg_id = sg_ids[egress_restricted_key]
+                sg = sgs[sg_id]
+                declared_egress = sg.get("egress", []) or []
+                if egress_restricted_key in {"rds", "valkey"}:
+                    assert not declared_egress, (
+                        f"{egress_restricted_key} security group must have no outbound egress rules (egress = []), got {declared_egress}"
+                    )
+                for erule in declared_egress:
+                    cidrs = erule.get("cidr_blocks") or []
+                    v6_cidrs = erule.get("ipv6_cidr_blocks") or []
+                    assert "0.0.0.0/0" not in cidrs and "::/0" not in v6_cidrs, (
+                        f"{egress_restricted_key} security group must not allow unrestricted egress to 0.0.0.0/0 or ::/0"
+                    )
+                    if egress_restricted_key == "alb":
+                        assert str(erule.get("protocol", "")).lower() == "tcp" and int(erule.get("from_port", 0)) == 8080 and int(erule.get("to_port", 0)) == 8080, (
+                            f"alb security group egress must be restricted to TCP port 8080, got {erule}"
+                        )
+                for srule in sg_rules:
+                    if srule.get("security_group_id") == sg_id and srule.get("type") == "egress":
+                        assert egress_restricted_key not in {"rds", "valkey"}, (
+                            f"{egress_restricted_key} security group must not have outbound egress rules, got {srule}"
+                        )
+                        cidrs = srule.get("cidr_blocks") or []
+                        v6_cidrs = srule.get("ipv6_cidr_blocks") or []
+                        assert "0.0.0.0/0" not in cidrs and "::/0" not in v6_cidrs, (
+                            f"{egress_restricted_key} security group rule must not allow unrestricted egress to 0.0.0.0/0 or ::/0"
+                        )
+                        if egress_restricted_key == "alb":
+                            assert str(srule.get("protocol", "")).lower() == "tcp" and int(srule.get("from_port", 0)) == 8080 and int(srule.get("to_port", 0)) == 8080, (
+                                f"alb security group egress rule must be restricted to TCP port 8080, got {srule}"
+                            )
+                for verule in vpc_egress_rules:
+                    if verule.get("security_group_id") == sg_id:
+                        assert egress_restricted_key not in {"rds", "valkey"}, (
+                            f"{egress_restricted_key} VPC security group must not have outbound egress rules, got {verule}"
+                        )
+                        assert verule.get("cidr_ipv4") != "0.0.0.0/0" and verule.get("cidr_ipv6") != "::/0", (
+                            f"{egress_restricted_key} VPC security group egress rule must not allow 0.0.0.0/0 or ::/0"
+                        )
+                        if egress_restricted_key == "alb":
+                            assert str(verule.get("ip_protocol", "")).lower() == "tcp" and int(verule.get("from_port", 0)) == 8080 and int(verule.get("to_port", 0)) == 8080, (
+                                f"alb VPC security group egress rule must be restricted to TCP port 8080, got {verule}"
+                            )
+    
+            lbs = _by_type(items, "aws_lb")
+            assert len(lbs) == 1
+            lb = lbs[0]
+            assert lb.get("load_balancer_type") == "application"
+            assert lb.get("internal") is False
+            assert set(lb.get("subnets") or []) == pub_ids
+    
+            tgs = _by_type(items, "aws_lb_target_group")
+            assert len(tgs) == 1
+            tg = tgs[0]
+            assert int(tg.get("port", 0)) == 8080
+            hc = (tg.get("health_check") or [{}])[0]
+            assert hc.get("path") == "/health/ready"
+    
+            listeners = _by_type(items, "aws_lb_listener")
+            assert len(listeners) == 1
+            assert int(listeners[0].get("port", 0)) == 80
+    
+            clusters = _by_type(items, "aws_ecs_cluster")
+            assert len(clusters) == 1
+            cluster_settings = clusters[0].get("setting") or []
+            assert any(
+                s.get("name") == "containerInsights" and s.get("value") == "enabled"
+                for s in cluster_settings
+                if isinstance(s, dict)
+            ), f"aws_ecs_cluster must enable containerInsights, got {cluster_settings}"
+    
+            services = _by_type(items, "aws_ecs_service")
+            assert len(services) == 1
+            svc = services[0]
+            assert int(svc.get("desired_count", 0)) &gt;= 2
+            assert svc.get("launch_type") == "FARGATE"
+            net_cfg = (svc.get("network_configuration") or [{}])[0]
+            assert set(net_cfg.get("subnets") or []) == priv_ids, (
+                f"aws_ecs_service network_configuration.subnets must equal private_subnet_ids {priv_ids}, got {net_cfg.get('subnets')}"
+            )
+            assert net_cfg.get("assign_public_ip") is False, (
+                f"aws_ecs_service network_configuration.assign_public_ip must be false, got {net_cfg.get('assign_public_ip')}"
+            )
+            assert sg_ids["ecs"] in (net_cfg.get("security_groups") or []), (
+                f"aws_ecs_service network_configuration.security_groups must include ecs security group {sg_ids['ecs']}"
+            )
+    
+            task_defs = _by_type(items, "aws_ecs_task_definition")
+            assert len(task_defs) == 1
+            td = task_defs[0]
+            assert "FARGATE" in (td.get("requires_compatibilities") or [])
+            assert td.get("network_mode") == "awsvpc"
+            assert td.get("execution_role_arn") == manifest["iam"]["ecs_execution_role_arn"], (
+                f"ECS task definition execution_role_arn ({td.get('execution_role_arn')}) does not match manifest"
+            )
+            assert td.get("task_role_arn") == manifest["iam"]["ecs_task_role_arn"], (
+                f"ECS task definition task_role_arn ({td.get('task_role_arn')}) does not match manifest"
+            )
+            cdefs = json.loads(td.get("container_definitions") or "[]")
+            assert len(cdefs) == 1
+            cdef = cdefs[0]
+            assert cdef["image"] == ctx.config["api_image"]
+            log_cfg = cdef.get("logConfiguration") or {}
+            assert log_cfg.get("logDriver") == "awslogs", (
+                f"ECS api container must configure logConfiguration.logDriver='awslogs', got {log_cfg}"
+            )
+            log_opts = log_cfg.get("options") or {}
+            assert log_opts.get("awslogs-group") == manifest["logs"]["api_log_group"], (
+                f"ECS api container awslogs-group must equal {manifest['logs']['api_log_group']}, got {log_opts}"
+            )
+            env_map = {e["name"]: e["value"] for e in cdef.get("environment", [])}
+            for req_env in (
+                "DATABASE_URL",
+                "SQS_QUEUE_URL",
+                "PROJECTION_TABLE",
+                "VALKEY_URL",
+                "CACHE_TTL_SECONDS",
+                "AUTH_ISSUER",
+                "AUTH_JWKS_URL",
+                "AUTH_AUDIENCES",
+                "CLOUDWATCH_LOG_GROUP",
+            ):
+                assert env_map.get(req_env), f"Missing {req_env} in ECS container definition"
+            assert env_map.get("CACHE_TTL_SECONDS") == "90", (
+                f"Expected CACHE_TTL_SECONDS=90, got {env_map.get('CACHE_TTL_SECONDS')}"
+            )
+            declared_audiences = {
+                part.strip() for part in (env_map.get("AUTH_AUDIENCES") or "").split(",") if part.strip()
+            }
+            expected_audiences = {
+                manifest["auth"]["clients"]["read"]["client_id"],
+                manifest["auth"]["clients"]["write"]["client_id"],
+                manifest["auth"]["clients"]["admin"]["client_id"],
+            }
+            assert expected_audiences.issubset(declared_audiences), (
+                f"ECS container AUTH_AUDIENCES ({declared_audiences}) missing Cognito client IDs {expected_audiences}"
+            )
+    
+            return "VPC, route tables, ALB/ECS/RDS/Valkey security groups, and ECS Fargate declarations verified"
+    
+&gt;       _run_block(ctx, "declared.compute_ingress", _check)
+
+/tests/suite/test_declared.py:383: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/tests/suite/test_declared.py:40: in _run_block
+    detail = fn()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _check() -&gt; str:
+        state = load_tfstate()
+        items = _collect_resources(state)
+        manifest = ctx.manifest
+    
+        vpcs = _by_type(items, "aws_vpc")
+        assert len(vpcs) == 1, f"Expected 1 aws_vpc, found {len(vpcs)}"
+        vpc = vpcs[0]
+        assert vpc.get("enable_dns_support") is True
+        assert vpc.get("enable_dns_hostnames") is True
+        assert vpc["id"] == manifest["network"]["vpc_id"]
+    
+        subnets = _by_type(items, "aws_subnet")
+        pub = [s for s in subnets if s.get("map_public_ip_on_launch") is True]
+        priv = [s for s in subnets if not s.get("map_public_ip_on_launch")]
+        assert len(pub) &gt;= 2 and len({s.get("availability_zone") for s in pub}) &gt;= 2
+        assert len(priv) &gt;= 2 and len({s.get("availability_zone") for s in priv}) &gt;= 2
+        pub_ids = set(manifest["network"]["public_subnet_ids"])
+        priv_ids = set(manifest["network"]["private_subnet_ids"])
+        assert pub_ids == {s["id"] for s in pub}, "Manifest public_subnet_ids must match public subnets (map_public_ip_on_launch=true)"
+        assert priv_ids == {s["id"] for s in priv}, "Manifest private_subnet_ids must match private subnets (map_public_ip_on_launch=false)"
+    
+        igws = _by_type(items, "aws_internet_gateway")
+        assert len(igws) == 1 and igws[0].get("vpc_id") == vpc["id"]
+        igw_id = igws[0]["id"]
+    
+        rts = {rt["id"]: rt for rt in _by_type(items, "aws_route_table")}
+        standalone_routes = _by_type(items, "aws_route")
+        rt_assocs = _by_type(items, "aws_route_table_association")
+        subnet_to_rt = {a.get("subnet_id"): a.get("route_table_id") for a in rt_assocs if a.get("subnet_id")}
+        assert (pub_ids | priv_ids).issubset(set(subnet_to_rt.keys())), (
+            f"All public and private subnets must have explicit aws_route_table_association; missing {(pub_ids | priv_ids) - set(subnet_to_rt.keys())}"
+        )
+    
+        def _rt_has_igw_default_route(rt_id: str) -&gt; bool:
+            rt_obj = rts.get(rt_id) or {}
+            for r in rt_obj.get("route") or []:
+                if r.get("cidr_block") == "0.0.0.0/0" and r.get("gateway_id") == igw_id:
+                    return True
+            for sr in standalone_routes:
+                if sr.get("route_table_id") == rt_id and sr.get("destination_cidr_block") == "0.0.0.0/0" and sr.get("gateway_id") == igw_id:
+                    return True
+            return False
+    
+        for psid in pub_ids:
+            assert _rt_has_igw_default_route(str(subnet_to_rt[psid])), (
+                f"Public subnet {psid} route table must have 0.0.0.0/0 route to aws_internet_gateway {igw_id}"
+            )
+        for prsid in priv_ids:
+            assert not _rt_has_igw_default_route(str(subnet_to_rt[prsid])), (
+                f"Private subnet {prsid} route table must NOT route 0.0.0.0/0 to the Internet Gateway"
+            )
+    
+        sgs = {s["id"]: s for s in _by_type(items, "aws_security_group")}
+        sg_ids = manifest["network"]["security_group_ids"]
+        assert len({sg_ids["alb"], sg_ids["ecs"], sg_ids["rds"], sg_ids["valkey"]}) == 4, (
+            f"Expected 4 distinct security groups for alb, ecs, rds, valkey; got {sg_ids}"
+        )
+        for key in ("alb", "ecs", "rds", "valkey"):
+            assert sg_ids[key] in sgs, f"Security group {key} ({sg_ids[key]}) not in state"
+            assert sgs[sg_ids[key]].get("vpc_id") == manifest["network"]["vpc_id"]
+    
+        sg_rules = _by_type(items, "aws_security_group_rule")
+        vpc_sg_rules = _by_type(items, "aws_vpc_security_group_ingress_rule")
+        vpc_egress_rules = _by_type(items, "aws_vpc_security_group_egress_rule")
+        for restricted_key in ("ecs", "rds", "valkey"):
+            sg_id = sg_ids[restricted_key]
+            sg = sgs[sg_id]
+            for rule in sg.get("ingress", []) or []:
+                cidrs = rule.get("cidr_blocks") or []
+                v6_cidrs = rule.get("ipv6_cidr_blocks") or []
+                assert "0.0.0.0/0" not in cidrs and "::/0" not in v6_cidrs, (
+                    f"{restricted_key} security group exposes ingress to 0.0.0.0/0 or ::/0"
+                )
+                if restricted_key == "ecs":
+                    assert not cidrs and not v6_cidrs, (
+                        f"ecs security group ingress must restrict port 8080 to the alb security group, not CIDR blocks {cidrs}"
+                    )
+                    ref_sgs = set(rule.get("security_groups") or [])
+                    if ref_sgs:
+                        assert sg_ids["alb"] in ref_sgs, (
+                            f"ecs security group ingress must allow traffic from alb security group {sg_ids['alb']}"
+                        )
+            for srule in sg_rules:
+                if srule.get("security_group_id") == sg_id and srule.get("type") == "ingress":
+                    cidrs = srule.get("cidr_blocks") or []
+                    v6_cidrs = srule.get("ipv6_cidr_blocks") or []
+                    assert "0.0.0.0/0" not in cidrs and "::/0" not in v6_cidrs, (
+                        f"{restricted_key} security group rule exposes ingress to 0.0.0.0/0 or ::/0"
+                    )
+                    if restricted_key == "ecs":
+                        assert not cidrs and not v6_cidrs, (
+                            "ecs security group ingress rule must reference the alb security group, not CIDR blocks"
+                        )
+                        assert srule.get("source_security_group_id") == sg_ids["alb"], (
+                            f"ecs security group ingress rule must reference alb security group {sg_ids['alb']}"
+                        )
+            for vrule in vpc_sg_rules:
+                if vrule.get("security_group_id") == sg_id:
+                    assert vrule.get("cidr_ipv4") != "0.0.0.0/0" and vrule.get("cidr_ipv6") != "::/0", (
+                        f"{restricted_key} VPC security group ingress rule exposes ingress to 0.0.0.0/0 or ::/0"
+                    )
+                    if restricted_key == "ecs":
+                        assert not vrule.get("cidr_ipv4") and not vrule.get("cidr_ipv6"), (
+                            "ecs VPC security group ingress rule must reference the alb security group, not CIDR blocks"
+                        )
+                        assert vrule.get("referenced_security_group_id") == sg_ids["alb"], (
+                            f"ecs VPC security group ingress rule must reference alb security group {sg_ids['alb']}"
+                        )
+    
+        # Verify least-privilege egress on alb, rds, and valkey security groups
+        for egress_restricted_key in ("alb", "rds", "valkey"):
+            sg_id = sg_ids[egress_restricted_key]
+            sg = sgs[sg_id]
+            declared_egress = sg.get("egress", []) or []
+            if egress_restricted_key in {"rds", "valkey"}:
+&gt;               assert not declared_egress, (
+                    f"{egress_restricted_key} security group must have no outbound egress rules (egress = []), got {declared_egress}"
+                )
+E               AssertionError: rds security group must have no outbound egress rules (egress = []), got [{'cidr_blocks': ['10.42.0.0/16'], 'description': 'Intra-VPC only', 'from_port': 0, 'ipv6_cidr_blocks': [], 'prefix_list_ids': [], 'protocol': 'tcp', 'security_groups': [], 'self': False, 'to_port': 65535}]
+E               assert not [{'cidr_blocks': ['10.42.0.0/16'], 'description': 'Intra-VPC only', 'from_port': 0, 'ipv6_cidr_blocks': [], ...}]
+
+/tests/suite/test_declared.py:247: AssertionError</failure></testcase><testcase classname="test_declared" name="test_declared_data_and_async" time="8.907" /><testcase classname="test_declared" name="test_declared_security" time="0.010" /><testcase classname="test_live" name="test_live_compute_and_ingress" time="0.021"><failure message="AssertionError: Live rds security group (sg-0be71f1a4602f0009) must have no outbound egress rules, got [{'IpProtocol': 'tcp', 'FromPort': 0, 'ToPort': 65535, 'UserIdGroupPairs': [], 'IpRanges': [{'Description': 'Intra-VPC only', 'CidrIp': '10.42.0.0/16'}], 'Ipv6Ranges': [], 'PrefixListIds': []}]&#10;assert not [{'FromPort': 0, 'IpProtocol': 'tcp', 'IpRanges': [{'CidrIp': '10.42.0.0/16', 'Description': 'Intra-VPC only'}], 'Ipv6Ranges': [], ...}]">ctx = VerifierContext(config={'resource_prefix': 'cl-2ecc21', 'region': 'us-east-1', 'aws_endpoint_url': 'http://aws:4566', ...00000000:function:cl-2ecc21-projector', 'function_name': 'cl-2ecc21-projector'}}}, committed_settlements={}, tokens={})
+
+    def test_live_compute_and_ingress(ctx: VerifierContext) -&gt; None:
+        """Scored block: Live ingress and compute (5 points) — live.compute_ingress."""
+        def _check() -&gt; str:
+            m = ctx.manifest
+            ec2 = boto_client("ec2", ctx.config)
+            elbv2 = boto_client("elbv2", ctx.config)
+            ecs = boto_client("ecs", ctx.config)
+    
+            vpcs = ec2.describe_vpcs(VpcIds=[m["network"]["vpc_id"]])["Vpcs"]
+            assert len(vpcs) == 1 and vpcs[0]["State"] == "available"
+    
+            subnet_ids = m["network"]["public_subnet_ids"] + m["network"]["private_subnet_ids"]
+            subnets = ec2.describe_subnets(SubnetIds=subnet_ids)["Subnets"]
+            assert len(subnets) == 4
+            azs = {s["AvailabilityZone"] for s in subnets}
+            assert {"us-east-1a", "us-east-1b"}.issubset(azs)
+    
+            sg_ids = m["network"]["security_group_ids"]
+            assert len({sg_ids["alb"], sg_ids["ecs"], sg_ids["rds"], sg_ids["valkey"]}) == 4, (
+                f"Expected 4 distinct security group IDs for alb, ecs, rds, valkey; got {sg_ids}"
+            )
+            live_sgs = {
+                sg["GroupId"]: sg
+                for sg in ec2.describe_security_groups(GroupIds=list(sg_ids.values())).get("SecurityGroups", [])
+            }
+            for sg_key, sg_id in sg_ids.items():
+                assert sg_id in live_sgs, f"Live security group {sg_key} ({sg_id}) not found in EC2"
+                assert live_sgs[sg_id].get("VpcId") == m["network"]["vpc_id"], (
+                    f"Live security group {sg_key} ({sg_id}) VpcId does not match manifest VPC"
+                )
+                expected_in_port = {"alb": 80, "ecs": 8080, "rds": 5432, "valkey": 6379}[sg_key]
+                for perm in live_sgs[sg_id].get("IpPermissions", []) or []:
+                    assert int(perm.get("FromPort", 0)) == expected_in_port and int(perm.get("ToPort", 0)) == expected_in_port, (
+                        f"Live {sg_key} security group ({sg_id}) ingress port must be {expected_in_port}, got {perm}"
+                    )
+                    if sg_key in {"ecs", "rds", "valkey"}:
+                        v4_cidrs = [r.get("CidrIp") for r in perm.get("IpRanges", []) or []]
+                        v6_cidrs = [r.get("CidrIpv6") for r in perm.get("Ipv6Ranges", []) or []]
+                        assert "0.0.0.0/0" not in v4_cidrs and "::/0" not in v6_cidrs, (
+                            f"Live {sg_key} security group ({sg_id}) exposes ingress to 0.0.0.0/0 or ::/0"
+                        )
+                egress_perms = live_sgs[sg_id].get("IpPermissionsEgress", []) or []
+                if sg_key in {"rds", "valkey"}:
+                    assert not egress_perms, (
+                        f"Live {sg_key} security group ({sg_id}) must have no outbound egress rules, got {egress_perms}"
+                    )
+                elif sg_key == "alb":
+                    for eperm in egress_perms:
+                        ev4 = [r.get("CidrIp") for r in eperm.get("IpRanges", []) or []]
+                        ev6 = [r.get("CidrIpv6") for r in eperm.get("Ipv6Ranges", []) or []]
+                        assert "0.0.0.0/0" not in ev4 and "::/0" not in ev6, (
+                            f"Live alb security group ({sg_id}) must restrict egress to ecs security group on port 8080, not 0.0.0.0/0 or ::/0: {eperm}"
+                        )
+    
+            lbs = elbv2.describe_load_balancers(LoadBalancerArns=[m["ingress"]["alb_arn"]])["LoadBalancers"]
+            assert len(lbs) == 1
+            lb = lbs[0]
+            assert lb["Type"] == "application"
+            assert lb["Scheme"] == "internet-facing"
+    
+            listeners = elbv2.describe_listeners(LoadBalancerArn=m["ingress"]["alb_arn"])["Listeners"]
+            assert any(int(l["Port"]) == 80 and l["Protocol"] == "HTTP" for l in listeners)
+    
+            tgs = elbv2.describe_target_groups(TargetGroupArns=[m["ingress"]["target_group_arn"]])["TargetGroups"]
+            assert len(tgs) == 1
+            assert int(tgs[0]["Port"]) == 8080
+            assert tgs[0]["HealthCheckPath"] == "/health/ready"
+    
+            td_live = ecs.describe_task_definition(
+                taskDefinition=m["compute"]["task_definition_arn"]
+            )["taskDefinition"]
+            assert td_live.get("executionRoleArn") == m["iam"]["ecs_execution_role_arn"], (
+                f"Live ECS task definition executionRoleArn ({td_live.get('executionRoleArn')}) does not match manifest"
+            )
+            assert td_live.get("taskRoleArn") == m["iam"]["ecs_task_role_arn"], (
+                f"Live ECS task definition taskRoleArn ({td_live.get('taskRoleArn')}) does not match manifest"
+            )
+            assert str(td_live.get("networkMode", "")).lower() == "awsvpc"
+            live_cdefs = td_live.get("containerDefinitions") or []
+            assert len(live_cdefs) == 1
+            live_log_cfg = live_cdefs[0].get("logConfiguration") or {}
+            if live_log_cfg:
+                assert live_log_cfg.get("logDriver") == "awslogs", (
+                    f"Live ECS container definition must use logDriver='awslogs', got {live_log_cfg}"
+                )
+                assert (live_log_cfg.get("options") or {}).get("awslogs-group") == m["logs"]["api_log_group"], (
+                    f"Live ECS container awslogs-group must match {m['logs']['api_log_group']}"
+                )
+    
+            clusters_desc = ecs.describe_clusters(
+                clusters=[m["compute"]["cluster_name"]],
+                include=["SETTINGS"],
+            ).get("clusters", [])
+            if clusters_desc and clusters_desc[0].get("settings"):
+                assert any(
+                    s.get("name") == "containerInsights" and s.get("value") == "enabled"
+                    for s in clusters_desc[0]["settings"]
+                ), f"Live ECS cluster settings must enable containerInsights, got {clusters_desc[0].get('settings')}"
+    
+            def _ecs_converged() -&gt; tuple[dict[str, Any], list[str]] | None:
+                svcs = ecs.describe_services(
+                    cluster=m["compute"]["cluster_name"],
+                    services=[m["compute"]["service_name"]],
+                ).get("services", [])
+                assert len(svcs) == 1, f"Expected 1 ECS service, found {len(svcs)}"
+                svc_obj = svcs[0]
+                assert int(svc_obj.get("desiredCount", 0)) &gt;= 2, (
+                    f"Expected ECS desiredCount &gt;= 2, got {svc_obj.get('desiredCount')}"
+                )
+                t_arns = ecs.list_tasks(
+                    cluster=m["compute"]["cluster_name"],
+                    serviceName=m["compute"]["service_name"],
+                    desiredStatus="RUNNING",
+                ).get("taskArns", [])
+                if len(t_arns) &lt; 2:
+                    return None
+                t_list = ecs.describe_tasks(cluster=m["compute"]["cluster_name"], tasks=t_arns).get("tasks", [])
+                running_tasks = [t for t in t_list if t.get("lastStatus") == "RUNNING"]
+                if len(running_tasks) &lt; 2 or int(svc_obj.get("runningCount", 0)) &lt; 2:
+                    return None
+                return svc_obj, t_arns
+    
+            svc, task_arns = wait_until(
+                _ecs_converged,
+                timeout_sec=60.0,
+                interval_sec=1.5,
+                description="ECS service convergence to &gt;=2 running tasks",
+            )
+            svc_subnets = set(
+                (svc.get("networkConfiguration") or {}).get("awsvpcConfiguration", {}).get("subnets") or []
+            )
+            if svc_subnets:
+                assert svc_subnets == set(m["network"]["private_subnet_ids"]), (
+                    f"Expected live ECS service subnets to match private_subnet_ids {m['network']['private_subnet_ids']}, found {svc_subnets}"
+                )
+    
+            instances_seen = set()
+            service_url = resolve_service_url(m["service_url"], ctx.config)
+            with httpx.Client(timeout=5.0) as client:
+                for _ in range(8):
+                    resp = client.get(f"{service_url}/health/ready")
+                    assert resp.status_code == 200
+                    body = resp.json()
+                    assert body["status"] == "UP"
+                    assert body["checks"]["postgres"] == "UP"
+                    assert body["checks"]["dynamodb"] == "UP"
+                    assert body["checks"]["sqs"] == "UP"
+                    assert body["checks"]["valkey"] == "UP"
+                    inst = resp.headers.get("X-ClearLedger-Instance") or body.get("instance")
+                    if inst:
+                        instances_seen.add(inst)
+            assert len(instances_seen) &gt;= 1
+    
+            return f"ALB and {len(task_arns)} running ECS tasks with verified role bindings across subnets"
+    
+&gt;       _run_block(ctx, "live.compute_ingress", _check)
+
+/tests/suite/test_live.py:177: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/tests/suite/test_live.py:15: in _run_block
+    detail = fn()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _check() -&gt; str:
+        m = ctx.manifest
+        ec2 = boto_client("ec2", ctx.config)
+        elbv2 = boto_client("elbv2", ctx.config)
+        ecs = boto_client("ecs", ctx.config)
+    
+        vpcs = ec2.describe_vpcs(VpcIds=[m["network"]["vpc_id"]])["Vpcs"]
+        assert len(vpcs) == 1 and vpcs[0]["State"] == "available"
+    
+        subnet_ids = m["network"]["public_subnet_ids"] + m["network"]["private_subnet_ids"]
+        subnets = ec2.describe_subnets(SubnetIds=subnet_ids)["Subnets"]
+        assert len(subnets) == 4
+        azs = {s["AvailabilityZone"] for s in subnets}
+        assert {"us-east-1a", "us-east-1b"}.issubset(azs)
+    
+        sg_ids = m["network"]["security_group_ids"]
+        assert len({sg_ids["alb"], sg_ids["ecs"], sg_ids["rds"], sg_ids["valkey"]}) == 4, (
+            f"Expected 4 distinct security group IDs for alb, ecs, rds, valkey; got {sg_ids}"
+        )
+        live_sgs = {
+            sg["GroupId"]: sg
+            for sg in ec2.describe_security_groups(GroupIds=list(sg_ids.values())).get("SecurityGroups", [])
+        }
+        for sg_key, sg_id in sg_ids.items():
+            assert sg_id in live_sgs, f"Live security group {sg_key} ({sg_id}) not found in EC2"
+            assert live_sgs[sg_id].get("VpcId") == m["network"]["vpc_id"], (
+                f"Live security group {sg_key} ({sg_id}) VpcId does not match manifest VPC"
+            )
+            expected_in_port = {"alb": 80, "ecs": 8080, "rds": 5432, "valkey": 6379}[sg_key]
+            for perm in live_sgs[sg_id].get("IpPermissions", []) or []:
+                assert int(perm.get("FromPort", 0)) == expected_in_port and int(perm.get("ToPort", 0)) == expected_in_port, (
+                    f"Live {sg_key} security group ({sg_id}) ingress port must be {expected_in_port}, got {perm}"
+                )
+                if sg_key in {"ecs", "rds", "valkey"}:
+                    v4_cidrs = [r.get("CidrIp") for r in perm.get("IpRanges", []) or []]
+                    v6_cidrs = [r.get("CidrIpv6") for r in perm.get("Ipv6Ranges", []) or []]
+                    assert "0.0.0.0/0" not in v4_cidrs and "::/0" not in v6_cidrs, (
+                        f"Live {sg_key} security group ({sg_id}) exposes ingress to 0.0.0.0/0 or ::/0"
+                    )
+            egress_perms = live_sgs[sg_id].get("IpPermissionsEgress", []) or []
+            if sg_key in {"rds", "valkey"}:
+&gt;               assert not egress_perms, (
+                    f"Live {sg_key} security group ({sg_id}) must have no outbound egress rules, got {egress_perms}"
+E                   AssertionError: Live rds security group (sg-0be71f1a4602f0009) must have no outbound egress rules, got [{'IpProtocol': 'tcp', 'FromPort': 0, 'ToPort': 65535, 'UserIdGroupPairs': [], 'IpRanges': [{'Description': 'Intra-VPC only', 'CidrIp': '10.42.0.0/16'}], 'Ipv6Ranges': [], 'PrefixListIds': []}]
+E                   assert not [{'FromPort': 0, 'IpProtocol': 'tcp', 'IpRanges': [{'CidrIp': '10.42.0.0/16', 'Description': 'Intra-VPC only'}], 'Ipv6Ranges': [], ...}]
+
+/tests/suite/test_live.py:65: AssertionError</failure></testcase><testcase classname="test_live" name="test_live_data_and_event_graph" time="0.222" /><testcase classname="test_live" name="test_live_security" time="0.288" /><testcase classname="test_behavior" name="test_settlement_lifecycle_workflow" time="14.555" /><testcase classname="test_behavior" name="test_projection_and_valkey_cache" time="0.921" /><testcase classname="test_behavior" name="test_idempotency_and_optimistic_concurrency" time="1.340" /><testcase classname="test_behavior" name="test_backlog_accumulation_and_drain" time="5.832" /><testcase classname="test_behavior" name="test_duplicate_delivery_and_dlq_isolation" time="16.867" /><testcase classname="test_behavior" name="test_outbox_recovery_after_sqs_queue_deletion" time="147.206" /><testcase classname="test_behavior" name="test_projection_rebuild_from_event_log" time="2.230" /><testcase classname="test_behavior" name="test_ecs_task_failure_replacement" time="5.425" /><testcase classname="test_behavior" name="test_rds_reboot_recovery" time="2.005" /><testcase classname="test_behavior" name="test_authorization_audit_and_observability" time="0.736" /><testcase classname="test_lifecycle" name="test_reapply_idempotence" time="80.836"><failure message="AssertionError: Expected deploy.sh to revoke out-of-band egress rules on rds security group sg-0be71f1a4602f0009, found [{'IpProtocol': 'tcp', 'FromPort': 0, 'ToPort': 65535, 'UserIdGroupPairs': [], 'IpRanges': [{'Description': 'Intra-VPC only', 'CidrIp': '10.42.0.0/16'}], 'Ipv6Ranges': [], 'PrefixListIds': []}]&#10;assert not ([{'FromPort': 0, 'IpProtocol': 'tcp', 'IpRanges': [{'CidrIp': '10.42.0.0/16', 'Description': 'Intra-VPC only'}], 'Ipv6Ranges': [], ...}])&#10; +  where [{'FromPort': 0, 'IpProtocol': 'tcp', 'IpRanges': [{'CidrIp': '10.42.0.0/16', 'Description': 'Intra-VPC only'}], 'Ipv6Ranges': [], ...}] = &lt;built-in method get of dict object at 0x70d8b204f880&gt;('IpPermissionsEgress')&#10; +    where &lt;built-in method get of dict object at 0x70d8b204f880&gt; = {'Description': 'ClearLedger PostgreSQL - 5432 from ECS tasks only', 'GroupId': 'sg-0be71f1a4602f0009', 'GroupName': 'cl-2ecc21-rds', 'IpPermissions': [{'FromPort': 5432, 'IpProtocol': 'tcp', 'IpRanges': [], 'Ipv6Ranges': [], ...}], ...}.get">ctx = VerifierContext(config={'resource_prefix': 'cl-2ecc21', 'region': 'us-east-1', 'aws_endpoint_url': 'http://aws:4566', ...wnhpQeiL3TlfXdP9JHt1qv0_cBhefhbaLO2BwOOnYD1Au7zeQGQFVkN6uP1_l8qQxPG6vDSLxfsyV0XBQr4xpzYvjtMWlvqF95bdBfjjGV3u3XFkFjzQ'})
+
+    def test_reapply_idempotence(ctx: VerifierContext) -&gt; None:
+        """Scored block: Stable deployment (7 points) — lifecycle.reapply_idempotence."""
+        def _check() -&gt; str:
+            before_manifest = ctx.manifest
+            before_db_endpoint = before_manifest["database"]["endpoint"]
+            before_table_arn = before_manifest["projections"]["table_arn"]
+            before_bucket = before_manifest["audit"]["bucket_name"]
+            sqs = boto_client("sqs", ctx.config)
+            lam = boto_client("lambda", ctx.config)
+            scheduler = boto_client("scheduler", ctx.config)
+            logs = boto_client("logs", ctx.config)
+            ddb = boto_client("dynamodb", ctx.config)
+            s3 = boto_client("s3", ctx.config)
+            iam = boto_client("iam", ctx.config)
+            ec2 = boto_client("ec2", ctx.config)
+            rclient = valkey_connect(before_manifest, ctx.config)
+    
+            committed_items = list(ctx.committed_settlements.items())
+            sample_sid, sample_meta = committed_items[0]
+            ledger_sid, ledger_meta = committed_items[1]
+            s3_loss_sid, s3_loss_meta = committed_items[2]
+            same_ver_sid, same_ver_meta = committed_items[3]
+            cache_drift_sid, cache_drift_meta = committed_items[4]
+            orphan_sid = str(uuid.uuid4())
+            now_iso = datetime.now(timezone.utc).isoformat()
+    
+            with pg_connect(before_manifest, ctx.config) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM clearledger.settlements")
+                    before_count = cur.fetchone()[0]
+                    cur.execute("SET LOCAL session_replication_role = 'replica'")
+                    cur.execute(
+                        """
+                        UPDATE clearledger.outbox
+                        SET published_at = NULL, archived_at = NULL
+                        WHERE settlement_id = %s AND aggregate_version = %s
+                        """,
+                        (sample_sid, sample_meta["expected_version"]),
+                    )
+                    cur.execute("SET LOCAL session_replication_role = 'origin'")
+                conn.commit()
+    
+            # Corrupt S3 audit archive for s3_loss_sid in-place (while archived_at remains NOT NULL in PostgreSQL),
+            # drop one archived event completely while keeping a valid-digest subset batch, write an overlapping valid-digest
+            # single-event batch, and write a forged-digest batch key.
+            # Note: we do NOT delete sample_sid's existing S3 batch here, so if deploy.sh merely runs audit_archiver
+            # without deduplicating S3 batches against unarchived PostgreSQL rows, sample_sid will be duplicated in S3!
+            with pg_connect(before_manifest, ctx.config) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT event_id::text, seq FROM clearledger.outbox")
+                    eid_to_seq = {r[0]: int(r[1]) for r in cur.fetchall()}
+                    cur.execute(
+                        "SELECT payload FROM clearledger.events WHERE settlement_id = %s AND aggregate_version = 1",
+                        (same_ver_sid,),
+                    )
+                    sv_v1_row = cur.fetchone()
+                    expected_sv_v1_env = (
+                        json.loads(sv_v1_row[0]) if isinstance(sv_v1_row[0], str) else sv_v1_row[0]
+                    )
+    
+            for obj in s3.list_objects_v2(Bucket=before_bucket, Prefix="ledger-audit/").get("Contents", []):
+                body = s3.get_object(Bucket=before_bucket, Key=obj["Key"])["Body"].read().decode()
+                lines = [ln for ln in body.splitlines() if ln.strip()]
+                tampered = False
+                for idx, line in enumerate(lines):
+                    rec = json.loads(line)
+                    agg_id = rec.get("aggregateId")
+                    agg_ver = int(rec.get("aggregateVersion", 0))
+                    if agg_id == s3_loss_sid and agg_ver == s3_loss_meta["expected_version"]:
+                        rec.setdefault("data", {})["clearingStage"] = "TAMPERED_S3_REAPPLY_STAGE"
+                        lines[idx] = json.dumps(rec)
+                        tampered = True
+                if tampered:
+                    if len(lines) &gt;= 4:
+                        _dropped_line = lines.pop()
+                        forged_line = lines.pop()
+                        valid_subset = [ln for ln in lines[:2] if json.loads(ln).get("aggregateId") != sample_sid]
+                        if valid_subset:
+                            valid_raw = ("\n".join(valid_subset) + "\n").encode("utf-8")
+                            valid_s1 = eid_to_seq[json.loads(valid_subset[0])["eventId"]]
+                            valid_s2 = eid_to_seq[json.loads(valid_subset[-1])["eventId"]]
+                            valid_dig = hashlib.sha256(valid_raw).hexdigest()[:16]
+                            dup_raw = (valid_subset[0] + "\n").encode("utf-8")
+                            dup_dig = hashlib.sha256(dup_raw).hexdigest()[:16]
+                            s3.put_object(
+                                Bucket=before_bucket,
+                                Key=f"ledger-audit/batch-{valid_s1:08d}-{valid_s2:08d}-{valid_dig}.ndjson",
+                                Body=valid_raw,
+                                ContentType="application/x-ndjson",
+                            )
+                            s3.put_object(
+                                Bucket=before_bucket,
+                                Key=f"ledger-audit/batch-{valid_s1:08d}-{valid_s1:08d}-{dup_dig}.ndjson",
+                                Body=dup_raw,
+                                ContentType="application/x-ndjson",
+                            )
+                            if len(valid_subset) == 2 and valid_s1 &lt; valid_s2:
+                                rev_raw = ("\n".join(reversed(valid_subset)) + "\n").encode("utf-8")
+                                rev_dig = hashlib.sha256(rev_raw).hexdigest()[:16]
+                                s3.put_object(
+                                    Bucket=before_bucket,
+                                    Key=f"ledger-audit/batch-{valid_s1:08d}-{valid_s2:08d}-{rev_dig}.ndjson",
+                                    Body=rev_raw,
+                                    ContentType="application/x-ndjson",
+                                )
+                    else:
+                        forged_line = lines.pop() if len(lines) &gt;= 2 and json.loads(lines[-1]).get("aggregateId") != s3_loss_sid else lines[0]
+                    s3.put_object(
+                        Bucket=before_bucket,
+                        Key=obj["Key"],
+                        Body=("\n".join(lines) + "\n").encode("utf-8"),
+                        ContentType="application/x-ndjson",
+                    )
+                    s3.put_object(
+                        Bucket=before_bucket,
+                        Key="ledger-audit/batch-00000001-00000001-0000000000000000.ndjson",
+                        Body=(forged_line + "\n").encode("utf-8"),
+                        ContentType="application/x-ndjson",
+                    )
+                    break
+    
+            # Plant both a stray S3 object outside ledger-audit/ AND an orphan S3 batch inside ledger-audit/
+            s3.put_object(
+                Bucket=before_bucket,
+                Key="drifted-audit/stray-unscoped-batch.ndjson",
+                Body=b'{"stray":true}\n',
+                ContentType="application/x-ndjson",
+            )
+            orphan_s3_env = {
+                "schemaVersion": "1.0",
+                "eventId": str(uuid.uuid4()),
+                "eventType": "SettlementInitiated",
+                "aggregateType": "settlement",
+                "aggregateId": orphan_sid,
+                "aggregateVersion": 1,
+                "occurredAt": now_iso,
+                "correlationId": "corr-orphan-reapply",
+                "idempotencyKey": "idem-orphan-reapply",
+                "data": {
+                    "kind": "settlementInitiated",
+                    "accountId": "ACCT-ORPHAN",
+                    "reference": "REF-ORPHAN",
+                    "debitParty": "BANK-ORPHAN-A",
+                    "creditParty": "BANK-ORPHAN-B",
+                    "entryId": None,
+                    "status": "INITIATED",
+                    "clearingStage": "ORPHAN_S3_REAPPLY",
+                    "memo": None,
+                },
+            }
+            s3.put_object(
+                Bucket=before_bucket,
+                Key="ledger-audit/batch-99999902-99999902-orphan.ndjson",
+                Body=(json.dumps(orphan_s3_env) + "\n").encode("utf-8"),
+                ContentType="application/x-ndjson",
+            )
+    
+            # 1. Control-plane drift across SQS, DLQ, EventBridge Scheduler, CloudWatch Logs, Lambda worker environments,
+            #    out-of-band IAM role policies, and security group egress rules
+            sqs.set_queue_attributes(
+                QueueUrl=before_manifest["messaging"]["queue_url"],
+                Attributes={"VisibilityTimeout": "19"},
+            )
+            sqs.set_queue_attributes(
+                QueueUrl=before_manifest["messaging"]["dlq_url"],
+                Attributes={"MessageRetentionPeriod": "86400"},
+            )
+    
+            outbox_sched_name = before_manifest["schedules"]["outbox_schedule_name"]
+            sched_cur = scheduler.get_schedule(Name=outbox_sched_name)
+            scheduler.update_schedule(
+                Name=outbox_sched_name,
+                ScheduleExpression=sched_cur["ScheduleExpression"],
+                FlexibleTimeWindow=sched_cur["FlexibleTimeWindow"],
+                Target=sched_cur["Target"],
+                State="DISABLED",
+            )
+    
+            archive_sched_name = before_manifest["schedules"]["archive_schedule_name"]
+            arch_sched_cur = scheduler.get_schedule(Name=archive_sched_name)
+            scheduler.update_schedule(
+                Name=archive_sched_name,
+                ScheduleExpression="rate(30 minutes)",
+                FlexibleTimeWindow=arch_sched_cur["FlexibleTimeWindow"],
+                Target=arch_sched_cur["Target"],
+                State="DISABLED",
+            )
+    
+            logs.put_retention_policy(
+                logGroupName=before_manifest["logs"]["api_log_group"],
+                retentionInDays=7,
+            )
+    
+            relay_fn = before_manifest["workers"]["outbox_relay"]["function_name"]
+            relay_cfg = lam.get_function_configuration(FunctionName=relay_fn)
+            relay_env = dict((relay_cfg.get("Environment") or {}).get("Variables") or {})
+            relay_env["OUTBOX_BATCH_SIZE"] = "5"
+            lam.update_function_configuration(
+                FunctionName=relay_fn,
+                Environment={"Variables": relay_env},
+            )
+    
+            archiver_fn = before_manifest["workers"]["audit_archiver"]["function_name"]
+            archiver_cfg = lam.get_function_configuration(FunctionName=archiver_fn)
+            archiver_env = dict((archiver_cfg.get("Environment") or {}).get("Variables") or {})
+            archiver_env["AUDIT_PREFIX"] = "drifted-audit/"
+            lam.update_function_configuration(
+                FunctionName=archiver_fn,
+                Environment={"Variables": archiver_env},
+            )
+    
+            prefix = before_manifest["resource_prefix"]
+            task_role_name = before_manifest["iam"]["ecs_task_role_arn"].rsplit("/", 1)[-1]
+            iam.put_role_policy(
+                RoleName=task_role_name,
+                PolicyName="drifted-ops-s3-bypass",
+                PolicyDocument=json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Action": ["s3:*"],
+                                "Resource": "*",
+                            }
+                        ],
+                    }
+                ),
+            )
+            proj_role_name = before_manifest["iam"]["projector_role_arn"].rsplit("/", 1)[-1]
+            drifted_managed_pol = iam.create_policy(
+                PolicyName=f"{prefix}-drifted-projector-policy",
+                PolicyDocument=json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Action": ["dynamodb:*"],
+                                "Resource": "*",
+                            }
+                        ],
+                    }
+                ),
+            )["Policy"]
+            iam.attach_role_policy(RoleName=proj_role_name, PolicyArn=drifted_managed_pol["Arn"])
+    
+            rds_sg_id = before_manifest["network"]["security_group_ids"]["rds"]
+            try:
+                ec2.authorize_security_group_egress(
+                    GroupId=rds_sg_id,
+                    IpPermissions=[
+                        {
+                            "IpProtocol": "tcp",
+                            "FromPort": 443,
+                            "ToPort": 443,
+                            "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+                        }
+                    ],
+                )
+            except Exception:  # noqa: BLE001
+                pass
+    
+            # 2. Data-plane drift:
+            # - Inflated-version STATE corruption on sample_sid + poisoned Valkey cache
+            # - Missing EVENT#00000001 + in-place mutated EVENT#00000002 + phantom EVENT#00000099 on ledger_sid
+            # - Same-version / same-SK attribute (last_memo, last_entry_id, updated_at, occurred_at, entry_id, memo, GSI) + stray SK item on same_ver_sid
+            # - Valkey-only cache poison (lastEntryId/lastMemo/updatedAt with valid TTL=80s) on cache_drift_sid (whose DynamoDB items remain valid)
+            # - Orphan settlement partition in DynamoDB and Valkey absent from PostgreSQL
+            ddb.put_item(
+                TableName=before_manifest["projections"]["table_name"],
+                Item={
+                    "PK": {"S": f"SETTLEMENT#{sample_sid}"},
+                    "SK": {"S": "STATE"},
+                    "GSI1PK": {"S": f"ACCOUNT#{sample_meta['spec']['accountId']}"},
+                    "GSI1SK": {"S": f"UPDATED#{now_iso}#SETTLEMENT#{sample_sid}"},
+                    "settlement_id": {"S": sample_sid},
+                    "account_id": {"S": sample_meta["spec"]["accountId"]},
+                    "reference": {"S": sample_meta["spec"]["reference"]},
+                    "debit_party": {"S": sample_meta["spec"]["debitParty"]},
+                    "credit_party": {"S": sample_meta["spec"]["creditParty"]},
+                    "status": {"S": "DISPUTED"},
+                    "clearing_stage": {"S": "DRIFTED_INFLATED_STATE"},
+                    "version": {"N": "99"},
+                    "entry_count": {"N": "98"},
+                    "updated_at": {"S": now_iso},
+                },
+            )
+            ddb.delete_item(
+                TableName=before_manifest["projections"]["table_name"],
+                Key={"PK": {"S": f"SETTLEMENT#{ledger_sid}"}, "SK": {"S": "EVENT#00000001"}},
+            )
+            ddb.update_item(
+                TableName=before_manifest["projections"]["table_name"],
+                Key={"PK": {"S": f"SETTLEMENT#{ledger_sid}"}, "SK": {"S": "EVENT#00000002"}},
+                UpdateExpression="SET clearing_stage = :cs, #st = :st",
+                ExpressionAttributeNames={"#st": "status"},
+                ExpressionAttributeValues={
+                    ":cs": {"S": "DRIFTED_EVENT_STAGE"},
+                    ":st": {"S": "DISPUTED"},
+                },
+            )
+            ddb.put_item(
+                TableName=before_manifest["projections"]["table_name"],
+                Item={
+                    "PK": {"S": f"SETTLEMENT#{ledger_sid}"},
+                    "SK": {"S": "EVENT#00000099"},
+                    "event_id": {"S": str(uuid.uuid4())},
+                    "settlement_id": {"S": ledger_sid},
+                    "version": {"N": "99"},
+                    "event_type": {"S": "LedgerEntryRecorded"},
+                    "status": {"S": "DISPUTED"},
+                    "clearing_stage": {"S": "PHANTOM_EVENT_99"},
+                    "correlation_id": {"S": "corr-phantom-99"},
+                    "occurred_at": {"S": now_iso},
+                },
+            )
+            ddb.update_item(
+                TableName=before_manifest["projections"]["table_name"],
+                Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "STATE"}},
+                UpdateExpression="SET last_memo = :lm, last_entry_id = :leid, updated_at = :ua, GSI1PK = :gpk, GSI1SK = :gsk",
+                ExpressionAttributeValues={
+                    ":lm": {"S": "DRIFTED_SAME_VER_LAST_MEMO"},
+                    ":leid": {"S": "00000000-0000-0000-0000-000000000000"},
+                    ":ua": {"S": "1999-01-01T00:00:00Z"},
+                    ":gpk": {"S": "ACCOUNT#DRIFTED-GSI"},
+                    ":gsk": {"S": f"CORRUPTED#{same_ver_sid}"},
+                },
+            )
+            ddb.update_item(
+                TableName=before_manifest["projections"]["table_name"],
+                Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000001"}},
+                UpdateExpression="SET occurred_at = :oa, correlation_id = :cid, envelope = :env",
+                ExpressionAttributeValues={
+                    ":oa": {"S": "1999-01-01T00:00:00Z"},
+                    ":cid": {"S": "corr-drifted-same-ver"},
+                    ":env": {"S": json.dumps({"corruptedEnvelope": True, "aggregateId": same_ver_sid})},
+                },
+            )
+            ddb.update_item(
+                TableName=before_manifest["projections"]["table_name"],
+                Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000002"}},
+                UpdateExpression="SET memo = :m, entry_id = :eid",
+                ExpressionAttributeValues={
+                    ":m": {"S": "DRIFTED_SAME_VER_EVENT_MEMO"},
+                    ":eid": {"S": "00000000-0000-0000-0000-000000000000"},
+                },
+            )
+            ddb.put_item(
+                TableName=before_manifest["projections"]["table_name"],
+                Item={
+                    "PK": {"S": f"SETTLEMENT#{same_ver_sid}"},
+                    "SK": {"S": "META#STRAY"},
+                    "settlement_id": {"S": same_ver_sid},
+                    "note": {"S": "stray non-STATE/non-EVENT item in partition"},
+                },
+            )
+            ddb.put_item(
+                TableName=before_manifest["projections"]["table_name"],
+                Item={
+                    "PK": {"S": "AUDIT#STRAY-PARTITION"},
+                    "SK": {"S": "META#01"},
+                    "note": {"S": "stray non-SETTLEMENT partition item"},
+                },
+            )
+            ddb.put_item(
+                TableName=before_manifest["projections"]["table_name"],
+                Item={
+                    "PK": {"S": f"SETTLEMENT#{orphan_sid}"},
+                    "SK": {"S": "STATE"},
+                    "GSI1PK": {"S": "ACCOUNT#ACCT-ORPHAN"},
+                    "GSI1SK": {"S": f"UPDATED#{now_iso}#SETTLEMENT#{orphan_sid}"},
+                    "settlement_id": {"S": orphan_sid},
+                    "account_id": {"S": "ACCT-ORPHAN"},
+                    "reference": {"S": "REF-ORPHAN"},
+                    "debit_party": {"S": "BANK-ORPHAN-A"},
+                    "credit_party": {"S": "BANK-ORPHAN-B"},
+                    "status": {"S": "INITIATED"},
+                    "clearing_stage": {"S": "ORPHAN_STATE"},
+                    "version": {"N": "1"},
+                    "entry_count": {"N": "0"},
+                    "updated_at": {"S": now_iso},
+                },
+            )
+            rclient.set(
+                f"clearledger:settlement:{sample_sid}",
+                json.dumps(
+                    {
+                        "settlementId": sample_sid,
+                        "accountId": sample_meta["spec"]["accountId"],
+                        "reference": sample_meta["spec"]["reference"],
+                        "debitParty": sample_meta["spec"]["debitParty"],
+                        "creditParty": sample_meta["spec"]["creditParty"],
+                        "status": "DISPUTED",
+                        "clearingStage": "DRIFTED_CACHE_STAGE",
+                        "version": 99,
+                        "entryCount": 98,
+                        "updatedAt": now_iso,
+                    }
+                ),
+            )
+            rclient.set(
+                f"clearledger:settlement:{cache_drift_sid}",
+                json.dumps(
+                    {
+                        "settlementId": cache_drift_sid,
+                        "accountId": cache_drift_meta["spec"]["accountId"],
+                        "reference": cache_drift_meta["spec"]["reference"],
+                        "debitParty": cache_drift_meta["spec"]["debitParty"],
+                        "creditParty": cache_drift_meta["spec"]["creditParty"],
+                        "status": cache_drift_meta["last_status"],
+                        "clearingStage": cache_drift_meta["last_stage"],
+                        "lastEntryId": "00000000-0000-0000-0000-000000000000",
+                        "lastMemo": "DRIFTED_CACHE_ONLY_MEMO_POISON",
+                        "version": cache_drift_meta["expected_version"],
+                        "entryCount": cache_drift_meta["expected_version"] - 1,
+                        "updatedAt": "1999-01-01T00:00:00Z",
+                    }
+                ),
+                ex=80,
+            )
+            rclient.set(
+                f"clearledger:settlement:{orphan_sid}",
+                json.dumps(
+                    {
+                        "settlementId": orphan_sid,
+                        "accountId": "ACCT-ORPHAN",
+                        "reference": "REF-ORPHAN",
+                        "debitParty": "BANK-ORPHAN-A",
+                        "creditParty": "BANK-ORPHAN-B",
+                        "status": "INITIATED",
+                        "clearingStage": "ORPHAN_CACHE",
+                        "version": 1,
+                        "entryCount": 0,
+                        "updatedAt": now_iso,
+                    }
+                ),
+            )
+            rclient.set("clearledger:lock:stray-marker", "poison-lock-value", ex=300)
+    
+            proc = run_script(SUBMISSION_DIR / "deploy.sh", timeout_sec=720)
+            assert proc.returncode == 0, f"Second deploy.sh failed: {proc.stderr[-800:]}"
+    
+            after_manifest = ctx.refresh_manifest()
+            assert after_manifest["database"]["endpoint"] == before_db_endpoint
+            assert after_manifest["projections"]["table_arn"] == before_table_arn
+            assert after_manifest["audit"]["bucket_name"] == before_bucket
+    
+            q_attrs = sqs.get_queue_attributes(
+                QueueUrl=after_manifest["messaging"]["queue_url"],
+                AttributeNames=["All"],
+            )["Attributes"]
+            assert int(q_attrs.get("VisibilityTimeout", 0)) == 3, (
+                f"Expected deploy.sh to reconcile drifted SQS VisibilityTimeout back to 3, got {q_attrs.get('VisibilityTimeout')}"
+            )
+            dlq_attrs = sqs.get_queue_attributes(
+                QueueUrl=after_manifest["messaging"]["dlq_url"],
+                AttributeNames=["All"],
+            )["Attributes"]
+            assert int(dlq_attrs.get("MessageRetentionPeriod", 0)) == 1209600, (
+                f"Expected deploy.sh to reconcile drifted DLQ MessageRetentionPeriod back to 1209600, got {dlq_attrs.get('MessageRetentionPeriod')}"
+            )
+    
+            sched_after = scheduler.get_schedule(Name=after_manifest["schedules"]["outbox_schedule_name"])
+            assert sched_after.get("State") == "ENABLED", (
+                f"Expected deploy.sh to re-enable drifted EventBridge schedule, got {sched_after.get('State')}"
+            )
+            arch_sched_after = scheduler.get_schedule(Name=after_manifest["schedules"]["archive_schedule_name"])
+            assert arch_sched_after.get("State") == "ENABLED" and arch_sched_after.get("ScheduleExpression") == "rate(5 minutes)", (
+                f"Expected deploy.sh to restore drifted archive EventBridge schedule to ENABLED / rate(5 minutes), got {arch_sched_after}"
+            )
+    
+            api_lg_after = logs.describe_log_groups(
+                logGroupNamePrefix=after_manifest["logs"]["api_log_group"]
+            ).get("logGroups", [])
+            api_lg_match = [g for g in api_lg_after if g.get("logGroupName") == after_manifest["logs"]["api_log_group"]]
+            assert api_lg_match and int(api_lg_match[0].get("retentionInDays") or 0) &gt;= 14, (
+                f"Expected deploy.sh to restore drifted api_log_group retentionInDays &gt;= 14, got {api_lg_match}"
+            )
+    
+            relay_after = lam.get_function_configuration(
+                FunctionName=after_manifest["workers"]["outbox_relay"]["function_name"]
+            )
+            assert ((relay_after.get("Environment") or {}).get("Variables") or {}).get("OUTBOX_BATCH_SIZE") == "50", (
+                "Expected deploy.sh to restore drifted outbox_relay OUTBOX_BATCH_SIZE=50"
+            )
+            archiver_after = lam.get_function_configuration(
+                FunctionName=after_manifest["workers"]["audit_archiver"]["function_name"]
+            )
+            assert ((archiver_after.get("Environment") or {}).get("Variables") or {}).get("AUDIT_PREFIX") == "ledger-audit/", (
+                "Expected deploy.sh to restore drifted audit_archiver AUDIT_PREFIX=ledger-audit/"
+            )
+    
+            task_inline_after = iam.list_role_policies(RoleName=task_role_name).get("PolicyNames", [])
+            assert "drifted-ops-s3-bypass" not in task_inline_after, (
+                f"Expected deploy.sh to remove out-of-band inline IAM policy drifted-ops-s3-bypass from {task_role_name}, found {task_inline_after}"
+            )
+            proj_attached_after = [
+                p.get("PolicyName") for p in iam.list_attached_role_policies(RoleName=proj_role_name).get("AttachedPolicies", [])
+            ]
+            assert f"{prefix}-drifted-projector-policy" not in proj_attached_after, (
+                f"Expected deploy.sh to detach out-of-band customer-managed IAM policy {prefix}-drifted-projector-policy from {proj_role_name}, found {proj_attached_after}"
+            )
+            rds_sg_after = ec2.describe_security_groups(GroupIds=[rds_sg_id])["SecurityGroups"][0]
+            assert not (rds_sg_after.get("IpPermissionsEgress") or []), (
+                f"Expected deploy.sh to revoke out-of-band egress rules on rds security group {rds_sg_id}, found {rds_sg_after.get('IpPermissionsEgress')}"
+            )
+    
+            with pg_connect(after_manifest, ctx.config) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM clearledger.settlements")
+                    after_count = cur.fetchone()[0]
+                    cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE published_at IS NULL")
+                    unpub_count = cur.fetchone()[0]
+                    cur.execute("SELECT COUNT(*) FROM clearledger.outbox WHERE archived_at IS NULL")
+                    unarch_count = cur.fetchone()[0]
+                    cur.execute("SELECT seq, event_id::text, payload FROM clearledger.outbox")
+                    pg_outbox_map = {
+                        ev_id: (int(seq), (json.loads(pay) if isinstance(pay, str) else pay))
+                        for seq, ev_id, pay in cur.fetchall()
+                    }
+            assert after_count == before_count, f"Settlement count changed after re-apply: {before_count} -&gt; {after_count}"
+            assert unpub_count == 0, f"deploy.sh left {unpub_count} unpublished outbox rows after re-apply"
+            assert unarch_count == 0, f"deploy.sh left {unarch_count} unarchived outbox rows after re-apply"
+    
+            all_bucket_objs = s3.list_objects_v2(Bucket=after_manifest["audit"]["bucket_name"]).get("Contents", [])
+            stray_keys = [o["Key"] for o in all_bucket_objs if not o["Key"].startswith("ledger-audit/")]
+            assert not stray_keys, (
+                f"Expected deploy.sh to purge stray S3 objects outside ledger-audit/, found: {stray_keys}"
+            )
+    
+            s3_records_by_eid: dict[str, dict] = {}
+            total_s3_lines = 0
+            key_pattern = re.compile(r"^ledger-audit/batch-(\d{8})-(\d{8})-([0-9a-f]{16})\.ndjson$")
+            for obj in all_bucket_objs:
+                key = obj["Key"]
+                key_match = key_pattern.match(key)
+                assert key_match is not None, (
+                    f"Expected S3 audit batch key {key} to match canonical format ledger-audit/batch-&lt;first_seq:08d&gt;-&lt;last_seq:08d&gt;-&lt;16_char_sha256_hex&gt;.ndjson"
+                )
+                first_seq_str, last_seq_str, key_digest = key_match.groups()
+                raw_bytes = s3.get_object(Bucket=after_manifest["audit"]["bucket_name"], Key=key)["Body"].read()
+                actual_digest = hashlib.sha256(raw_bytes).hexdigest()[:16]
+                assert actual_digest == key_digest, (
+                    f"Expected deploy.sh to purge/re-archive S3 batch {key} with mismatched SHA-256 digest (expected {actual_digest})"
+                )
+                body = raw_bytes.decode()
+                batch_seqs: list[int] = []
+                for line in body.splitlines():
+                    if line.strip():
+                        total_s3_lines += 1
+                        rec = json.loads(line)
+                        ev_id = str(rec.get("eventId") or "")
+                        assert ev_id in pg_outbox_map, (
+                            f"Expected deploy.sh to purge orphan S3 audit record {ev_id} under ledger-audit/"
+                        )
+                        assert ev_id not in s3_records_by_eid, (
+                            f"Duplicate S3 audit record found for eventId {ev_id} under ledger-audit/"
+                        )
+                        row_seq, auth_pay = pg_outbox_map[ev_id]
+                        assert rec == auth_pay, (
+                            f"Expected deploy.sh to heal tampered S3 audit record for eventId {ev_id}: got {rec.get('data')}, expected {auth_pay.get('data')}"
+                        )
+                        s3_records_by_eid[ev_id] = rec
+                        batch_seqs.append(row_seq)
+                assert batch_seqs == sorted(batch_seqs), (
+                    f"Expected S3 audit batch {key} records to be ordered by ascending clearledger.outbox.seq, got {batch_seqs}"
+                )
+                assert batch_seqs[0] == int(first_seq_str) and batch_seqs[-1] == int(last_seq_str), (
+                    f"Expected S3 audit batch {key} sequence bounds ({first_seq_str}..{last_seq_str}) to match outbox.seq range ({batch_seqs[0]}..{batch_seqs[-1]})"
+                )
+            assert total_s3_lines == len(pg_outbox_map) and set(s3_records_by_eid.keys()) == set(pg_outbox_map.keys()), (
+                f"Expected S3 audit archive under ledger-audit/ to match clearledger.outbox 1-to-1 "
+                f"(pg={len(pg_outbox_map)}, s3={total_s3_lines})"
+            )
+            ver_resp = s3.list_object_versions(Bucket=after_manifest["audit"]["bucket_name"])
+            del_markers = ver_resp.get("DeleteMarkers", [])
+            assert not del_markers, (
+                f"Expected deploy.sh to purge all S3 DeleteMarkers from versioned audit bucket, found {len(del_markers)}: "
+                f"{[(dm.get('Key'), dm.get('VersionId')) for dm in del_markers[:5]]}"
+            )
+            noncurrent_vers = [v for v in ver_resp.get("Versions", []) if not v.get("IsLatest")]
+            assert not noncurrent_vers, (
+                f"Expected deploy.sh to purge all noncurrent S3 object versions (IsLatest=false) from audit bucket, "
+                f"found {len(noncurrent_vers)}: {[(v.get('Key'), v.get('VersionId')) for v in noncurrent_vers[:5]]}"
+            )
+    
+            read_tok = get_access_token(after_manifest, "read")
+            service_url = resolve_service_url(after_manifest["service_url"], ctx.config)
+            rclient = valkey_connect(after_manifest, ctx.config)
+            with httpx.Client(base_url=service_url, timeout=10.0) as client:
+                resp = client.get(
+                    f"/v1/settlements/{sample_sid}",
+                    headers={"Authorization": f"Bearer {read_tok}"},
+                )
+                assert resp.status_code == 200, (
+                    f"Expected deploy.sh to heal corrupted DynamoDB STATE projection for {sample_sid}, got {resp.status_code}"
+                )
+                body = resp.json()
+                assert body["version"] == sample_meta["expected_version"], (
+                    f"Expected healed version {sample_meta['expected_version']} for {sample_sid}, got {body}"
+                )
+                assert body["status"] == sample_meta["last_status"]
+                assert body["clearingStage"] == sample_meta["last_stage"]
+    
+                r_ledger = client.get(
+                    f"/v1/settlements/{ledger_sid}/ledger",
+                    headers={"Authorization": f"Bearer {read_tok}"},
+                )
+                assert r_ledger.status_code == 200, (
+                    f"Expected deploy.sh to heal DynamoDB EVENT#* items for {ledger_sid}, got {r_ledger.status_code}"
+                )
+                ledger_events = r_ledger.json().get("events", [])
+                assert [e["version"] for e in ledger_events] == list(range(1, ledger_meta["expected_version"] + 1)), (
+                    f"Expected healed ledger events 1..{ledger_meta['expected_version']} for {ledger_sid}, got {[e['version'] for e in ledger_events]}"
+                )
+                expected_v2_stage = ledger_meta["spec"]["entries"][0]["clearingStage"]
+                assert ledger_events[1].get("clearingStage") == expected_v2_stage, (
+                    f"Expected deploy.sh to repair in-place mutated EVENT#00000002 for {ledger_sid}: "
+                    f"expected {expected_v2_stage}, got {ledger_events[1]}"
+                )
+    
+                r_same_ver = client.get(
+                    f"/v1/settlements/{same_ver_sid}",
+                    headers={"Authorization": f"Bearer {read_tok}"},
+                )
+                assert r_same_ver.status_code == 200
+                sv_body = r_same_ver.json()
+                expected_sv_last_entry = same_ver_meta["spec"]["entries"][-1]
+                assert (
+                    sv_body.get("status") == same_ver_meta["last_status"]
+                    and sv_body.get("clearingStage") == same_ver_meta["last_stage"]
+                    and sv_body.get("lastEntryId") == expected_sv_last_entry["entryId"]
+                    and sv_body.get("lastMemo") == expected_sv_last_entry["memo"]
+                    and not str(sv_body.get("updatedAt", "")).startswith("1999-")
+                ), (
+                    f"Expected deploy.sh to heal same-version drifted STATE (lastEntryId/lastMemo/updatedAt) for {same_ver_sid}, got {sv_body}"
+                )
+                r_sv_ledger = client.get(
+                    f"/v1/settlements/{same_ver_sid}/ledger",
+                    headers={"Authorization": f"Bearer {read_tok}"},
+                )
+                assert r_sv_ledger.status_code == 200
+                sv_events = r_sv_ledger.json().get("events", [])
+                expected_sv_v2 = same_ver_meta["spec"]["entries"][0]
+                assert (
+                    len(sv_events) &gt;= 2
+                    and not str(sv_events[0].get("occurredAt", "")).startswith("1999-")
+                    and sv_events[1].get("entryId") == expected_sv_v2["entryId"]
+                    and sv_events[1].get("memo") == expected_sv_v2["memo"]
+                ), (
+                    f"Expected deploy.sh to heal same-version mutated EVENT#00000001..2 (occurredAt/entryId/memo) for {same_ver_sid}, got {sv_events[:2]}"
+                )
+                sv_v1_ddb = ddb.get_item(
+                    TableName=after_manifest["projections"]["table_name"],
+                    Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000001"}},
+                    ConsistentRead=True,
+                ).get("Item") or {}
+                assert json.loads(sv_v1_ddb.get("envelope", {}).get("S", "{}")) == expected_sv_v1_env, (
+                    f"Expected deploy.sh to heal EVENT#00000001.envelope JSON attribute for {same_ver_sid}"
+                )
+                assert sv_v1_ddb.get("correlation_id", {}).get("S") != "corr-drifted-same-ver", (
+                    f"Expected deploy.sh to heal EVENT#00000001.correlation_id attribute for {same_ver_sid}"
+                )
+                stray_item = ddb.get_item(
+                    TableName=after_manifest["projections"]["table_name"],
+                    Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "META#STRAY"}},
+                    ConsistentRead=True,
+                ).get("Item")
+                assert stray_item is None, (
+                    f"Expected deploy.sh to purge stray non-STATE/non-EVENT item SK=META#STRAY under SETTLEMENT#{same_ver_sid}"
+                )
+                stray_part_item = ddb.get_item(
+                    TableName=after_manifest["projections"]["table_name"],
+                    Key={"PK": {"S": "AUDIT#STRAY-PARTITION"}, "SK": {"S": "META#01"}},
+                    ConsistentRead=True,
+                ).get("Item")
+                assert stray_part_item is None, (
+                    "Expected deploy.sh to purge stray non-SETTLEMENT partition item PK=AUDIT#STRAY-PARTITION"
+                )
+                gsi_q = ddb.query(
+                    TableName=after_manifest["projections"]["table_name"],
+                    IndexName=after_manifest["projections"]["gsi_name"],
+                    KeyConditionExpression="GSI1PK = :gpk AND GSI1SK = :gsk",
+                    ExpressionAttributeValues={
+                        ":gpk": {"S": f"ACCOUNT#{same_ver_meta['spec']['accountId']}"},
+                        ":gsk": {"S": f"SETTLEMENT#{same_ver_sid}"},
+                    },
+                ).get("Items", [])
+                assert len(gsi_q) == 1, (
+                    f"Expected deploy.sh to heal AccountIndex GSI attributes (GSI1PK/GSI1SK) for {same_ver_sid}, found {gsi_q}"
+                )
+    
+                r_cache_drift = client.get(
+                    f"/v1/settlements/{cache_drift_sid}",
+                    headers={"Authorization": f"Bearer {read_tok}"},
+                )
+                assert r_cache_drift.status_code == 200
+                cd_body = r_cache_drift.json()
+                expected_cd_last_entry = cache_drift_meta["spec"]["entries"][-1]
+                assert (
+                    cd_body.get("lastEntryId") == expected_cd_last_entry["entryId"]
+                    and cd_body.get("lastMemo") == expected_cd_last_entry["memo"]
+                    and not str(cd_body.get("updatedAt", "")).startswith("1999-")
+                ), (
+                    f"Expected deploy.sh to evict/reconcile Valkey cache entry with poisoned lastEntryId/lastMemo/updatedAt for {cache_drift_sid}, got {cd_body}"
+                )
+    
+                r_orphan = client.get(
+                    f"/v1/settlements/{orphan_sid}",
+                    headers={"Authorization": f"Bearer {read_tok}"},
+                )
+                assert r_orphan.status_code == 404, (
+                    f"Expected deploy.sh to purge orphan DynamoDB/Valkey settlement {orphan_sid}, got {r_orphan.status_code}"
+                )
+                assert rclient.get(f"clearledger:settlement:{orphan_sid}") is None, (
+                    f"Expected deploy.sh to purge orphan Valkey key clearledger:settlement:{orphan_sid}"
+                )
+                assert rclient.get("clearledger:lock:stray-marker") is None, (
+                    "Expected deploy.sh to purge stray non-settlement Valkey key clearledger:lock:stray-marker"
+                )
+    
+            return (
+                f"Re-applied deploy.sh cleanly, reconciled multi-service control-plane &amp; bidirectional data-plane/GSI/S3 drift, "
+                f"and preserved all {after_count} settlements"
+            )
+    
+&gt;       _run_block(ctx, "lifecycle.reapply_idempotence", _check)
+
+/tests/suite/test_lifecycle.py:766: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/tests/suite/test_lifecycle.py:30: in _run_block
+    detail = fn()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _check() -&gt; str:
+        before_manifest = ctx.manifest
+        before_db_endpoint = before_manifest["database"]["endpoint"]
+        before_table_arn = before_manifest["projections"]["table_arn"]
+        before_bucket = before_manifest["audit"]["bucket_name"]
+        sqs = boto_client("sqs", ctx.config)
+        lam = boto_client("lambda", ctx.config)
+        scheduler = boto_client("scheduler", ctx.config)
+        logs = boto_client("logs", ctx.config)
+        ddb = boto_client("dynamodb", ctx.config)
+        s3 = boto_client("s3", ctx.config)
+        iam = boto_client("iam", ctx.config)
+        ec2 = boto_client("ec2", ctx.config)
+        rclient = valkey_connect(before_manifest, ctx.config)
+    
+        committed_items = list(ctx.committed_settlements.items())
+        sample_sid, sample_meta = committed_items[0]
+        ledger_sid, ledger_meta = committed_items[1]
+        s3_loss_sid, s3_loss_meta = committed_items[2]
+        same_ver_sid, same_ver_meta = committed_items[3]
+        cache_drift_sid, cache_drift_meta = committed_items[4]
+        orphan_sid = str(uuid.uuid4())
+        now_iso = datetime.now(timezone.utc).isoformat()
+    
+        with pg_connect(before_manifest, ctx.config) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM clearledger.settlements")
+                before_count = cur.fetchone()[0]
+                cur.execute("SET LOCAL session_replication_role = 'replica'")
+                cur.execute(
+                    """
+                    UPDATE clearledger.outbox
+                    SET published_at = NULL, archived_at = NULL
+                    WHERE settlement_id = %s AND aggregate_version = %s
+                    """,
+                    (sample_sid, sample_meta["expected_version"]),
+                )
+                cur.execute("SET LOCAL session_replication_role = 'origin'")
+            conn.commit()
+    
+        # Corrupt S3 audit archive for s3_loss_sid in-place (while archived_at remains NOT NULL in PostgreSQL),
+        # drop one archived event completely while keeping a valid-digest subset batch, write an overlapping valid-digest
+        # single-event batch, and write a forged-digest batch key.
+        # Note: we do NOT delete sample_sid's existing S3 batch here, so if deploy.sh merely runs audit_archiver
+        # without deduplicating S3 batches against unarchived PostgreSQL rows, sample_sid will be duplicated in S3!
+        with pg_connect(before_manifest, ctx.config) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT event_id::text, seq FROM clearledger.outbox")
+                eid_to_seq = {r[0]: int(r[1]) for r in cur.fetchall()}
+                cur.execute(
+                    "SELECT payload FROM clearledger.events WHERE settlement_id = %s AND aggregate_version = 1",
+                    (same_ver_sid,),
+                )
+                sv_v1_row = cur.fetchone()
+                expected_sv_v1_env = (
+                    json.loads(sv_v1_row[0]) if isinstance(sv_v1_row[0], str) else sv_v1_row[0]
+                )
+    
+        for obj in s3.list_objects_v2(Bucket=before_bucket, Prefix="ledger-audit/").get("Contents", []):
+            body = s3.get_object(Bucket=before_bucket, Key=obj["Key"])["Body"].read().decode()
+            lines = [ln for ln in body.splitlines() if ln.strip()]
+            tampered = False
+            for idx, line in enumerate(lines):
+                rec = json.loads(line)
+                agg_id = rec.get("aggregateId")
+                agg_ver = int(rec.get("aggregateVersion", 0))
+                if agg_id == s3_loss_sid and agg_ver == s3_loss_meta["expected_version"]:
+                    rec.setdefault("data", {})["clearingStage"] = "TAMPERED_S3_REAPPLY_STAGE"
+                    lines[idx] = json.dumps(rec)
+                    tampered = True
+            if tampered:
+                if len(lines) &gt;= 4:
+                    _dropped_line = lines.pop()
+                    forged_line = lines.pop()
+                    valid_subset = [ln for ln in lines[:2] if json.loads(ln).get("aggregateId") != sample_sid]
+                    if valid_subset:
+                        valid_raw = ("\n".join(valid_subset) + "\n").encode("utf-8")
+                        valid_s1 = eid_to_seq[json.loads(valid_subset[0])["eventId"]]
+                        valid_s2 = eid_to_seq[json.loads(valid_subset[-1])["eventId"]]
+                        valid_dig = hashlib.sha256(valid_raw).hexdigest()[:16]
+                        dup_raw = (valid_subset[0] + "\n").encode("utf-8")
+                        dup_dig = hashlib.sha256(dup_raw).hexdigest()[:16]
+                        s3.put_object(
+                            Bucket=before_bucket,
+                            Key=f"ledger-audit/batch-{valid_s1:08d}-{valid_s2:08d}-{valid_dig}.ndjson",
+                            Body=valid_raw,
+                            ContentType="application/x-ndjson",
+                        )
+                        s3.put_object(
+                            Bucket=before_bucket,
+                            Key=f"ledger-audit/batch-{valid_s1:08d}-{valid_s1:08d}-{dup_dig}.ndjson",
+                            Body=dup_raw,
+                            ContentType="application/x-ndjson",
+                        )
+                        if len(valid_subset) == 2 and valid_s1 &lt; valid_s2:
+                            rev_raw = ("\n".join(reversed(valid_subset)) + "\n").encode("utf-8")
+                            rev_dig = hashlib.sha256(rev_raw).hexdigest()[:16]
+                            s3.put_object(
+                                Bucket=before_bucket,
+                                Key=f"ledger-audit/batch-{valid_s1:08d}-{valid_s2:08d}-{rev_dig}.ndjson",
+                                Body=rev_raw,
+                                ContentType="application/x-ndjson",
+                            )
+                else:
+                    forged_line = lines.pop() if len(lines) &gt;= 2 and json.loads(lines[-1]).get("aggregateId") != s3_loss_sid else lines[0]
+                s3.put_object(
+                    Bucket=before_bucket,
+                    Key=obj["Key"],
+                    Body=("\n".join(lines) + "\n").encode("utf-8"),
+                    ContentType="application/x-ndjson",
+                )
+                s3.put_object(
+                    Bucket=before_bucket,
+                    Key="ledger-audit/batch-00000001-00000001-0000000000000000.ndjson",
+                    Body=(forged_line + "\n").encode("utf-8"),
+                    ContentType="application/x-ndjson",
+                )
+                break
+    
+        # Plant both a stray S3 object outside ledger-audit/ AND an orphan S3 batch inside ledger-audit/
+        s3.put_object(
+            Bucket=before_bucket,
+            Key="drifted-audit/stray-unscoped-batch.ndjson",
+            Body=b'{"stray":true}\n',
+            ContentType="application/x-ndjson",
+        )
+        orphan_s3_env = {
+            "schemaVersion": "1.0",
+            "eventId": str(uuid.uuid4()),
+            "eventType": "SettlementInitiated",
+            "aggregateType": "settlement",
+            "aggregateId": orphan_sid,
+            "aggregateVersion": 1,
+            "occurredAt": now_iso,
+            "correlationId": "corr-orphan-reapply",
+            "idempotencyKey": "idem-orphan-reapply",
+            "data": {
+                "kind": "settlementInitiated",
+                "accountId": "ACCT-ORPHAN",
+                "reference": "REF-ORPHAN",
+                "debitParty": "BANK-ORPHAN-A",
+                "creditParty": "BANK-ORPHAN-B",
+                "entryId": None,
+                "status": "INITIATED",
+                "clearingStage": "ORPHAN_S3_REAPPLY",
+                "memo": None,
+            },
+        }
+        s3.put_object(
+            Bucket=before_bucket,
+            Key="ledger-audit/batch-99999902-99999902-orphan.ndjson",
+            Body=(json.dumps(orphan_s3_env) + "\n").encode("utf-8"),
+            ContentType="application/x-ndjson",
+        )
+    
+        # 1. Control-plane drift across SQS, DLQ, EventBridge Scheduler, CloudWatch Logs, Lambda worker environments,
+        #    out-of-band IAM role policies, and security group egress rules
+        sqs.set_queue_attributes(
+            QueueUrl=before_manifest["messaging"]["queue_url"],
+            Attributes={"VisibilityTimeout": "19"},
+        )
+        sqs.set_queue_attributes(
+            QueueUrl=before_manifest["messaging"]["dlq_url"],
+            Attributes={"MessageRetentionPeriod": "86400"},
+        )
+    
+        outbox_sched_name = before_manifest["schedules"]["outbox_schedule_name"]
+        sched_cur = scheduler.get_schedule(Name=outbox_sched_name)
+        scheduler.update_schedule(
+            Name=outbox_sched_name,
+            ScheduleExpression=sched_cur["ScheduleExpression"],
+            FlexibleTimeWindow=sched_cur["FlexibleTimeWindow"],
+            Target=sched_cur["Target"],
+            State="DISABLED",
+        )
+    
+        archive_sched_name = before_manifest["schedules"]["archive_schedule_name"]
+        arch_sched_cur = scheduler.get_schedule(Name=archive_sched_name)
+        scheduler.update_schedule(
+            Name=archive_sched_name,
+            ScheduleExpression="rate(30 minutes)",
+            FlexibleTimeWindow=arch_sched_cur["FlexibleTimeWindow"],
+            Target=arch_sched_cur["Target"],
+            State="DISABLED",
+        )
+    
+        logs.put_retention_policy(
+            logGroupName=before_manifest["logs"]["api_log_group"],
+            retentionInDays=7,
+        )
+    
+        relay_fn = before_manifest["workers"]["outbox_relay"]["function_name"]
+        relay_cfg = lam.get_function_configuration(FunctionName=relay_fn)
+        relay_env = dict((relay_cfg.get("Environment") or {}).get("Variables") or {})
+        relay_env["OUTBOX_BATCH_SIZE"] = "5"
+        lam.update_function_configuration(
+            FunctionName=relay_fn,
+            Environment={"Variables": relay_env},
+        )
+    
+        archiver_fn = before_manifest["workers"]["audit_archiver"]["function_name"]
+        archiver_cfg = lam.get_function_configuration(FunctionName=archiver_fn)
+        archiver_env = dict((archiver_cfg.get("Environment") or {}).get("Variables") or {})
+        archiver_env["AUDIT_PREFIX"] = "drifted-audit/"
+        lam.update_function_configuration(
+            FunctionName=archiver_fn,
+            Environment={"Variables": archiver_env},
+        )
+    
+        prefix = before_manifest["resource_prefix"]
+        task_role_name = before_manifest["iam"]["ecs_task_role_arn"].rsplit("/", 1)[-1]
+        iam.put_role_policy(
+            RoleName=task_role_name,
+            PolicyName="drifted-ops-s3-bypass",
+            PolicyDocument=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": ["s3:*"],
+                            "Resource": "*",
+                        }
+                    ],
+                }
+            ),
+        )
+        proj_role_name = before_manifest["iam"]["projector_role_arn"].rsplit("/", 1)[-1]
+        drifted_managed_pol = iam.create_policy(
+            PolicyName=f"{prefix}-drifted-projector-policy",
+            PolicyDocument=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": ["dynamodb:*"],
+                            "Resource": "*",
+                        }
+                    ],
+                }
+            ),
+        )["Policy"]
+        iam.attach_role_policy(RoleName=proj_role_name, PolicyArn=drifted_managed_pol["Arn"])
+    
+        rds_sg_id = before_manifest["network"]["security_group_ids"]["rds"]
+        try:
+            ec2.authorize_security_group_egress(
+                GroupId=rds_sg_id,
+                IpPermissions=[
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 443,
+                        "ToPort": 443,
+                        "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+                    }
+                ],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    
+        # 2. Data-plane drift:
+        # - Inflated-version STATE corruption on sample_sid + poisoned Valkey cache
+        # - Missing EVENT#00000001 + in-place mutated EVENT#00000002 + phantom EVENT#00000099 on ledger_sid
+        # - Same-version / same-SK attribute (last_memo, last_entry_id, updated_at, occurred_at, entry_id, memo, GSI) + stray SK item on same_ver_sid
+        # - Valkey-only cache poison (lastEntryId/lastMemo/updatedAt with valid TTL=80s) on cache_drift_sid (whose DynamoDB items remain valid)
+        # - Orphan settlement partition in DynamoDB and Valkey absent from PostgreSQL
+        ddb.put_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Item={
+                "PK": {"S": f"SETTLEMENT#{sample_sid}"},
+                "SK": {"S": "STATE"},
+                "GSI1PK": {"S": f"ACCOUNT#{sample_meta['spec']['accountId']}"},
+                "GSI1SK": {"S": f"UPDATED#{now_iso}#SETTLEMENT#{sample_sid}"},
+                "settlement_id": {"S": sample_sid},
+                "account_id": {"S": sample_meta["spec"]["accountId"]},
+                "reference": {"S": sample_meta["spec"]["reference"]},
+                "debit_party": {"S": sample_meta["spec"]["debitParty"]},
+                "credit_party": {"S": sample_meta["spec"]["creditParty"]},
+                "status": {"S": "DISPUTED"},
+                "clearing_stage": {"S": "DRIFTED_INFLATED_STATE"},
+                "version": {"N": "99"},
+                "entry_count": {"N": "98"},
+                "updated_at": {"S": now_iso},
+            },
+        )
+        ddb.delete_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{ledger_sid}"}, "SK": {"S": "EVENT#00000001"}},
+        )
+        ddb.update_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{ledger_sid}"}, "SK": {"S": "EVENT#00000002"}},
+            UpdateExpression="SET clearing_stage = :cs, #st = :st",
+            ExpressionAttributeNames={"#st": "status"},
+            ExpressionAttributeValues={
+                ":cs": {"S": "DRIFTED_EVENT_STAGE"},
+                ":st": {"S": "DISPUTED"},
+            },
+        )
+        ddb.put_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Item={
+                "PK": {"S": f"SETTLEMENT#{ledger_sid}"},
+                "SK": {"S": "EVENT#00000099"},
+                "event_id": {"S": str(uuid.uuid4())},
+                "settlement_id": {"S": ledger_sid},
+                "version": {"N": "99"},
+                "event_type": {"S": "LedgerEntryRecorded"},
+                "status": {"S": "DISPUTED"},
+                "clearing_stage": {"S": "PHANTOM_EVENT_99"},
+                "correlation_id": {"S": "corr-phantom-99"},
+                "occurred_at": {"S": now_iso},
+            },
+        )
+        ddb.update_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "STATE"}},
+            UpdateExpression="SET last_memo = :lm, last_entry_id = :leid, updated_at = :ua, GSI1PK = :gpk, GSI1SK = :gsk",
+            ExpressionAttributeValues={
+                ":lm": {"S": "DRIFTED_SAME_VER_LAST_MEMO"},
+                ":leid": {"S": "00000000-0000-0000-0000-000000000000"},
+                ":ua": {"S": "1999-01-01T00:00:00Z"},
+                ":gpk": {"S": "ACCOUNT#DRIFTED-GSI"},
+                ":gsk": {"S": f"CORRUPTED#{same_ver_sid}"},
+            },
+        )
+        ddb.update_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000001"}},
+            UpdateExpression="SET occurred_at = :oa, correlation_id = :cid, envelope = :env",
+            ExpressionAttributeValues={
+                ":oa": {"S": "1999-01-01T00:00:00Z"},
+                ":cid": {"S": "corr-drifted-same-ver"},
+                ":env": {"S": json.dumps({"corruptedEnvelope": True, "aggregateId": same_ver_sid})},
+            },
+        )
+        ddb.update_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Key={"PK": {"S": f"SETTLEMENT#{same_ver_sid}"}, "SK": {"S": "EVENT#00000002"}},
+            UpdateExpression="SET memo = :m, entry_id = :eid",
+            ExpressionAttributeValues={
+                ":m": {"S": "DRIFTED_SAME_VER_EVENT_MEMO"},
+                ":eid": {"S": "00000000-0000-0000-0000-000000000000"},
+            },
+        )
+        ddb.put_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Item={
+                "PK": {"S": f"SETTLEMENT#{same_ver_sid}"},
+                "SK": {"S": "META#STRAY"},
+                "settlement_id": {"S": same_ver_sid},
+                "note": {"S": "stray non-STATE/non-EVENT item in partition"},
+            },
+        )
+        ddb.put_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Item={
+                "PK": {"S": "AUDIT#STRAY-PARTITION"},
+                "SK": {"S": "META#01"},
+                "note": {"S": "stray non-SETTLEMENT partition item"},
+            },
+        )
+        ddb.put_item(
+            TableName=before_manifest["projections"]["table_name"],
+            Item={
+                "PK": {"S": f"SETTLEMENT#{orphan_sid}"},
+                "SK": {"S": "STATE"},
+                "GSI1PK": {"S": "ACCOUNT#ACCT-ORPHAN"},
+                "GSI1SK": {"S": f"UPDATED#{now_iso}#SETTLEMENT#{orphan_sid}"},
+                "settlement_id": {"S": orphan_sid},
+                "account_id": {"S": "ACCT-ORPHAN"},
+                "reference": {"S": "REF-ORPHAN"},
+                "debit_party": {"S": "BANK-ORPHAN-A"},
+                "credit_party": {"S": "BANK-ORPHAN-B"},
+                "status": {"S": "INITIATED"},
+                "clearing_stage": {"S": "ORPHAN_STATE"},
+                "version": {"N": "1"},
+                "entry_count": {"N": "0"},
+                "updated_at": {"S": now_iso},
+            },
+        )
+        rclient.set(
+            f"clearledger:settlement:{sample_sid}",
+            json.dumps(
+                {
+                    "settlementId": sample_sid,
+                    "accountId": sample_meta["spec"]["accountId"],
+                    "reference": sample_meta["spec"]["reference"],
+                    "debitParty": sample_meta["spec"]["debitParty"],
+                    "creditParty": sample_meta["spec"]["creditParty"],
+                    "status": "DISPUTED",
+                    "clearingStage": "DRIFTED_CACHE_STAGE",
+                    "version": 99,
+                    "entryCount": 98,
+                    "updatedAt": now_iso,
+                }
+            ),
+        )
+        rclient.set(
+            f"clearledger:settlement:{cache_drift_sid}",
+            json.dumps(
+                {
+                    "settlementId": cache_drift_sid,
+                    "accountId": cache_drift_meta["spec"]["accountId"],
+                    "reference": cache_drift_meta["spec"]["reference"],
+                    "debitParty": cache_drift_meta["spec"]["debitParty"],
+                    "creditParty": cache_drift_meta["spec"]["creditParty"],
+                    "status": cache_drift_meta["last_status"],
+                    "clearingStage": cache_drift_meta["last_stage"],
+                    "lastEntryId": "00000000-0000-0000-0000-000000000000",
+                    "lastMemo": "DRIFTED_CACHE_ONLY_MEMO_POISON",
+                    "version": cache_drift_meta["expected_version"],
+                    "entryCount": cache_drift_meta["expected_version"] - 1,
+                    "updatedAt": "1999-01-01T00:00:00Z",
+                }
+            ),
+            ex=80,
+        )
+        rclient.set(
+            f"clearledger:settlement:{orphan_sid}",
+            json.dumps(
+                {
+                    "settlementId": orphan_sid,
+                    "accountId": "ACCT-ORPHAN",
+                    "reference": "REF-ORPHAN",
+                    "debitParty": "BANK-ORPHAN-A",
+                    "creditParty": "BANK-ORPHAN-B",
+                    "status": "INITIATED",
+                    "clearingStage": "ORPHAN_CACHE",
+                    "version": 1,
+                    "entryCount": 0,
+                    "updatedAt": now_iso,
+                }
+            ),
+        )
+        rclient.set("clearledger:lock:stray-marker", "poison-lock-value", ex=300)
+    
+        proc = run_script(SUBMISSION_DIR / "deploy.sh", timeout_sec=720)
+        assert proc.returncode == 0, f"Second deploy.sh failed: {proc.stderr[-800:]}"
+    
+        after_manifest = ctx.refresh_manifest()
+        assert after_manifest["database"]["endpoint"] == before_db_endpoint
+        assert after_manifest["projections"]["table_arn"] == before_table_arn
+        assert after_manifest["audit"]["bucket_name"] == before_bucket
+    
+        q_attrs = sqs.get_queue_attributes(
+            QueueUrl=after_manifest["messaging"]["queue_url"],
+            AttributeNames=["All"],
+        )["Attributes"]
+        assert int(q_attrs.get("VisibilityTimeout", 0)) == 3, (
+            f"Expected deploy.sh to reconcile drifted SQS VisibilityTimeout back to 3, got {q_attrs.get('VisibilityTimeout')}"
+        )
+        dlq_attrs = sqs.get_queue_attributes(
+            QueueUrl=after_manifest["messaging"]["dlq_url"],
+            AttributeNames=["All"],
+        )["Attributes"]
+        assert int(dlq_attrs.get("MessageRetentionPeriod", 0)) == 1209600, (
+            f"Expected deploy.sh to reconcile drifted DLQ MessageRetentionPeriod back to 1209600, got {dlq_attrs.get('MessageRetentionPeriod')}"
+        )
+    
+        sched_after = scheduler.get_schedule(Name=after_manifest["schedules"]["outbox_schedule_name"])
+        assert sched_after.get("State") == "ENABLED", (
+            f"Expected deploy.sh to re-enable drifted EventBridge schedule, got {sched_after.get('State')}"
+        )
+        arch_sched_after = scheduler.get_schedule(Name=after_manifest["schedules"]["archive_schedule_name"])
+        assert arch_sched_after.get("State") == "ENABLED" and arch_sched_after.get("ScheduleExpression") == "rate(5 minutes)", (
+            f"Expected deploy.sh to restore drifted archive EventBridge schedule to ENABLED / rate(5 minutes), got {arch_sched_after}"
+        )
+    
+        api_lg_after = logs.describe_log_groups(
+            logGroupNamePrefix=after_manifest["logs"]["api_log_group"]
+        ).get("logGroups", [])
+        api_lg_match = [g for g in api_lg_after if g.get("logGroupName") == after_manifest["logs"]["api_log_group"]]
+        assert api_lg_match and int(api_lg_match[0].get("retentionInDays") or 0) &gt;= 14, (
+            f"Expected deploy.sh to restore drifted api_log_group retentionInDays &gt;= 14, got {api_lg_match}"
+        )
+    
+        relay_after = lam.get_function_configuration(
+            FunctionName=after_manifest["workers"]["outbox_relay"]["function_name"]
+        )
+        assert ((relay_after.get("Environment") or {}).get("Variables") or {}).get("OUTBOX_BATCH_SIZE") == "50", (
+            "Expected deploy.sh to restore drifted outbox_relay OUTBOX_BATCH_SIZE=50"
+        )
+        archiver_after = lam.get_function_configuration(
+            FunctionName=after_manifest["workers"]["audit_archiver"]["function_name"]
+        )
+        assert ((archiver_after.get("Environment") or {}).get("Variables") or {}).get("AUDIT_PREFIX") == "ledger-audit/", (
+            "Expected deploy.sh to restore drifted audit_archiver AUDIT_PREFIX=ledger-audit/"
+        )
+    
+        task_inline_after = iam.list_role_policies(RoleName=task_role_name).get("PolicyNames", [])
+        assert "drifted-ops-s3-bypass" not in task_inline_after, (
+            f"Expected deploy.sh to remove out-of-band inline IAM policy drifted-ops-s3-bypass from {task_role_name}, found {task_inline_after}"
+        )
+        proj_attached_after = [
+            p.get("PolicyName") for p in iam.list_attached_role_policies(RoleName=proj_role_name).get("AttachedPolicies", [])
+        ]
+        assert f"{prefix}-drifted-projector-policy" not in proj_attached_after, (
+            f"Expected deploy.sh to detach out-of-band customer-managed IAM policy {prefix}-drifted-projector-policy from {proj_role_name}, found {proj_attached_after}"
+        )
+        rds_sg_after = ec2.describe_security_groups(GroupIds=[rds_sg_id])["SecurityGroups"][0]
+&gt;       assert not (rds_sg_after.get("IpPermissionsEgress") or []), (
+            f"Expected deploy.sh to revoke out-of-band egress rules on rds security group {rds_sg_id}, found {rds_sg_after.get('IpPermissionsEgress')}"
+        )
+E       AssertionError: Expected deploy.sh to revoke out-of-band egress rules on rds security group sg-0be71f1a4602f0009, found [{'IpProtocol': 'tcp', 'FromPort': 0, 'ToPort': 65535, 'UserIdGroupPairs': [], 'IpRanges': [{'Description': 'Intra-VPC only', 'CidrIp': '10.42.0.0/16'}], 'Ipv6Ranges': [], 'PrefixListIds': []}]
+E       assert not ([{'FromPort': 0, 'IpProtocol': 'tcp', 'IpRanges': [{'CidrIp': '10.42.0.0/16', 'Description': 'Intra-VPC only'}], 'Ipv6Ranges': [], ...}])
+E        +  where [{'FromPort': 0, 'IpProtocol': 'tcp', 'IpRanges': [{'CidrIp': '10.42.0.0/16', 'Description': 'Intra-VPC only'}], 'Ipv6Ranges': [], ...}] = &lt;built-in method get of dict object at 0x70d8b204f880&gt;('IpPermissionsEgress')
+E        +    where &lt;built-in method get of dict object at 0x70d8b204f880&gt; = {'Description': 'ClearLedger PostgreSQL - 5432 from ECS tasks only', 'GroupId': 'sg-0be71f1a4602f0009', 'GroupName': 'cl-2ecc21-rds', 'IpPermissions': [{'FromPort': 5432, 'IpProtocol': 'tcp', 'IpRanges': [], 'Ipv6Ranges': [], ...}], ...}.get
+
+/tests/suite/test_lifecycle.py:543: AssertionError</failure></testcase><testcase classname="test_lifecycle" name="test_destroy_clean" time="287.132" /></testsuite></testsuites>

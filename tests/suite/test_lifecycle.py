@@ -112,7 +112,13 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 if len(lines) >= 4:
                     _dropped_line = lines.pop()
                     forged_line = lines.pop()
-                    valid_subset = [ln for ln in lines[:2] if json.loads(ln).get("aggregateId") != sample_sid]
+                    non_sample = [ln for ln in lines[:4] if json.loads(ln).get("aggregateId") != sample_sid]
+                    if len(non_sample) >= 3:
+                        valid_subset = [non_sample[0], non_sample[2]]
+                        if non_sample[1] in lines:
+                            lines.remove(non_sample[1])
+                    else:
+                        valid_subset = non_sample[:2]
                     if valid_subset:
                         valid_raw = ("\n".join(valid_subset) + "\n").encode("utf-8")
                         valid_s1 = eid_to_seq[json.loads(valid_subset[0])["eventId"]]
@@ -539,6 +545,14 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         assert f"{prefix}-drifted-projector-policy" not in proj_attached_after, (
             f"Expected deploy.sh to detach out-of-band customer-managed IAM policy {prefix}-drifted-projector-policy from {proj_role_name}, found {proj_attached_after}"
         )
+        remaining_drifted_pols = [
+            p.get("PolicyName")
+            for p in iam.list_policies(Scope="Local").get("Policies", [])
+            if p.get("PolicyName") == f"{prefix}-drifted-projector-policy"
+        ]
+        assert not remaining_drifted_pols, (
+            f"Expected deploy.sh to delete detached out-of-band prefix-scoped customer-managed IAM policy {prefix}-drifted-projector-policy, found {remaining_drifted_pols}"
+        )
         rds_sg_after = ec2.describe_security_groups(GroupIds=[rds_sg_id])["SecurityGroups"][0]
         assert not (rds_sg_after.get("IpPermissionsEgress") or []), (
             f"Expected deploy.sh to revoke out-of-band egress rules on rds security group {rds_sg_id}, found {rds_sg_after.get('IpPermissionsEgress')}"
@@ -568,6 +582,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         )
 
         s3_records_by_eid: dict[str, dict] = {}
+        batch_intervals: list[tuple[int, int, str]] = []
         total_s3_lines = 0
         key_pattern = re.compile(r"^ledger-audit/batch-(\d{8})-(\d{8})-([0-9a-f]{16})\.ndjson$")
         for obj in all_bucket_objs:
@@ -577,6 +592,7 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 f"Expected S3 audit batch key {key} to match canonical format ledger-audit/batch-<first_seq:08d>-<last_seq:08d>-<16_char_sha256_hex>.ndjson"
             )
             first_seq_str, last_seq_str, key_digest = key_match.groups()
+            first_seq_int, last_seq_int = int(first_seq_str), int(last_seq_str)
             raw_bytes = s3.get_object(Bucket=after_manifest["audit"]["bucket_name"], Key=key)["Body"].read()
             actual_digest = hashlib.sha256(raw_bytes).hexdigest()[:16]
             assert actual_digest == key_digest, (
@@ -604,8 +620,22 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             assert batch_seqs == sorted(batch_seqs), (
                 f"Expected S3 audit batch {key} records to be ordered by ascending clearledger.outbox.seq, got {batch_seqs}"
             )
-            assert batch_seqs[0] == int(first_seq_str) and batch_seqs[-1] == int(last_seq_str), (
+            assert batch_seqs[0] == first_seq_int and batch_seqs[-1] == last_seq_int, (
                 f"Expected S3 audit batch {key} sequence bounds ({first_seq_str}..{last_seq_str}) to match outbox.seq range ({batch_seqs[0]}..{batch_seqs[-1]})"
+            )
+            expected_range_seqs = sorted(
+                s for s, _ in pg_outbox_map.values() if first_seq_int <= s <= last_seq_int
+            )
+            assert batch_seqs == expected_range_seqs, (
+                f"Expected S3 audit batch {key} to contain a contiguous, gap-free slice of clearledger.outbox.seq "
+                f"across [{first_seq_int}, {last_seq_int}], expected {expected_range_seqs}, got {batch_seqs}"
+            )
+            batch_intervals.append((first_seq_int, last_seq_int, key))
+        batch_intervals.sort()
+        for prev_b, curr_b in zip(batch_intervals, batch_intervals[1:]):
+            assert prev_b[1] < curr_b[0], (
+                f"Expected S3 audit batches to have strictly disjoint, non-overlapping [first_seq, last_seq] intervals, "
+                f"found overlap between {prev_b[2]} and {curr_b[2]}"
             )
         assert total_s3_lines == len(pg_outbox_map) and set(s3_records_by_eid.keys()) == set(pg_outbox_map.keys()), (
             f"Expected S3 audit archive under ledger-audit/ to match clearledger.outbox 1-to-1 "
@@ -626,6 +656,19 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         read_tok = get_access_token(after_manifest, "read")
         service_url = resolve_service_url(after_manifest["service_url"], ctx.config)
         rclient = valkey_connect(after_manifest, ctx.config)
+
+        # Verify active Valkey cache convergence before issuing GET requests that would lazily populate cache
+        for check_sid in (sample_sid, same_ver_sid, cache_drift_sid):
+            rkey = f"clearledger:settlement:{check_sid}"
+            raw_cached = rclient.get(rkey)
+            assert raw_cached is not None, (
+                f"Expected deploy.sh to actively populate Valkey key {rkey} during convergence, found None"
+            )
+            ttl_val = int(rclient.ttl(rkey))
+            assert 0 < ttl_val <= 90, (
+                f"Expected Valkey key {rkey} populated by deploy.sh to have TTL in (0, 90], got {ttl_val}"
+            )
+
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             resp = client.get(
                 f"/v1/settlements/{sample_sid}",
@@ -734,6 +777,10 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 headers={"Authorization": f"Bearer {read_tok}"},
             )
             assert r_cache_drift.status_code == 200
+            assert r_cache_drift.headers.get("X-ClearLedger-Source") == "cache", (
+                f"Expected GET /v1/settlements/{cache_drift_sid} immediately after deploy.sh to hit populated Valkey cache "
+                f"(X-ClearLedger-Source: cache), got {r_cache_drift.headers.get('X-ClearLedger-Source')}"
+            )
             cd_body = r_cache_drift.json()
             expected_cd_last_entry = cache_drift_meta["spec"]["entries"][-1]
             assert (
