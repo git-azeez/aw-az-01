@@ -1,0 +1,1486 @@
+Selected strategy: _DaytonaDinD
+Starting Docker daemon inside DinD sandbox...
+Waiting for Docker daemon inside DinD sandbox...
+Docker daemon is ready
+Building compose services inside DinD sandbox...
+Starting compose services inside DinD sandbox...
+Waiting for main container to be running...
+Main container is running
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; command -v opencode >/dev/null 2>&1 && node --experimental-sqlite -e "const {DatabaseSync}=require('node:sqlite'); new DatabaseSync(':memory:').close()" && opencode --version >&2
+Command outputs captured
+Running command: set -euo pipefail; mkdir -p /logs/agent /tmp; cat > /tmp/m1_agent_progress_watchdog.mjs <<'M1_AGENT_WATCHDOG'
+import fs from "node:fs";
+import path from "node:path";
+
+const num = (v, d) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d; };
+const env = process.env;
+const PROBE_MS = num(env.M1_AGENT_PROGRESS_PROBE_SEC, 60) * 1000;
+const SPIN_ERRORS = num(env.M1_AGENT_PROGRESS_SPIN_ERRORS, 8);
+const SPIN_WINDOW_MS = num(env.M1_AGENT_PROGRESS_SPIN_WINDOW_SEC, 900) * 1000;
+const DEAD_WINDOW_MS = num(env.M1_AGENT_PROGRESS_DEAD_WINDOW_SEC, 2400) * 1000;
+const KILL_GRACE_MS = num(env.M1_AGENT_PROGRESS_KILL_GRACE_SEC, 5) * 1000;
+const HOME = env.HOME || "/root";
+const STORAGE_DIR = env.M1_WATCHDOG_STORAGE_DIR || path.join(HOME, ".local/share/opencode/storage");
+const DATA_DIR = env.M1_WATCHDOG_OPENCODE_DATA_DIR || path.join(HOME, ".local/share/opencode");
+const OC_LOG_DIR = env.M1_WATCHDOG_OPENCODE_LOG_DIR || path.join(HOME, ".local/share/opencode/log");
+const PROC_DIR = env.M1_WATCHDOG_PROC_DIR || "/proc";
+const MARKER_PATH = env.M1_WATCHDOG_MARKER_PATH || "/tmp/m1_agent_stall.json";
+const PROXY_LOGS = (env.M1_WATCHDOG_PROXY_LOGS || "").split(",").filter(Boolean);
+// Error pressure is LEVEL-ANCHORED: ERROR records always count; WARN
+// records count only when they carry a provider-failure token (the retry-
+// loop shape · the Class-C fingerprint was ProviderHeaderTimeoutError x182).
+// Bare token mentions (INFO retry chatter, stack-trace continuation lines)
+// never count: a slow-but-progressing max-reasoning step can legitimately
+// outlast the spin window with a few recovered transients. Proxy-observed
+// failures are the second pressure source (see the proxy-log loop).
+// opencode >= 1.16 writes structured logfmt: "timestamp=... level=ERROR
+// run=... message=...". The level is NOT at line start, so a /^ERROR/
+// anchor matches nothing and errsSinceProgress stays 0 for the whole run ·
+// the spin kill then can never fire from opencode's own log (observed on
+// every Inkling xhigh trial 2026-07-26: 200+ level=ERROR lines, 179 probes
+// all reporting errs_since_progress 0). Accept both shapes, and ONLY those
+// two: a bare `\sERROR\b` alternative would also match the word inside an
+// INFO record's message text (level=INFO ... message="tool exited with
+// ERROR"), and 8 of those inside the spin window SIGTERM a healthy agent.
+const ERROR_LINE = /^\s*ERROR\b|\blevel=ERROR\b/;
+const WARN_LINE = /^\s*(WARN|WARNING)\b|\blevel=(WARN|WARNING)\b/;
+const ERROR_TOKEN = /ProviderHeaderTimeoutError|AbortError|APICallError|FetchError|ECONNRESET|ETIMEDOUT/;
+// Minimum tree-CPU delta between probes that counts as liveness. treeCpu
+// is a CUMULATIVE utime+stime counter, so a bare `>` test reads any
+// trickle · a wedged node process polling a dead socket · as "alive" and
+// pins liveness_age_s at 0 forever, disabling the dead kill entirely (the
+// same Inkling trials: progress_age_s reached 10,750s against a 2,400s dead
+// window with liveness_age_s 0 at all 179 probes). A real working agent
+// burns far more than this; the observed delta ships in each probe so the
+// floor can be retuned from data.
+// The env knob is jiffies per 60s of wall clock (~= percent CPU at
+// USER_HZ=100) and is scaled to the actual probe cadence, so retuning
+// PROBE_SEC does not silently retune the floor · unscaled, a shorter
+// cadence would make the floor stricter, and on a blind run the dead kill
+// reduces to this liveness test alone.
+const CPU_MIN_JIFFIES = num(env.M1_AGENT_PROGRESS_CPU_MIN_JIFFIES, 60) * (PROBE_MS / 60000);
+
+function heartbeat(obj) { console.log(JSON.stringify({ ts: new Date().toISOString(), ...obj })); }
+
+function newestMtimeMs(dir) {
+  let newest = 0;
+  const stack = [dir];
+  while (stack.length) {
+    const d = stack.pop();
+    let entries;
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { continue; }
+    for (const e of entries) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) { stack.push(p); continue; }
+      try { const m = fs.statSync(p).mtimeMs; if (m > newest) newest = m; } catch {}
+    }
+  }
+  return newest;
+}
+
+const offsets = new Map();
+function appended(file) {
+  let st;
+  try { st = fs.statSync(file); } catch { return ""; }
+  let prev = offsets.get(file) ?? 0;
+  if (st.size < prev) prev = 0; // rotated/truncated
+  const start = Math.max(prev, st.size - (1 << 20)); // cap 1MB per probe
+  offsets.set(file, st.size);
+  if (st.size <= start) return "";
+  const buf = Buffer.alloc(st.size - start);
+  try {
+    const fd = fs.openSync(file, "r");
+    fs.readSync(fd, buf, 0, buf.length, start);
+    fs.closeSync(fd);
+  } catch { return ""; }
+  return buf.toString("utf8");
+}
+
+function ocLogFiles() {
+  try { return fs.readdirSync(OC_LOG_DIR).map((f) => path.join(OC_LOG_DIR, f)); } catch { return []; }
+}
+
+// cmdline invokes the opencode binary ("/bin/opencode --model=..." or a
+// wrapping "bash -lc ... opencode --model ..."); "opencode/log" paths and
+// "opencode.txt" must NOT match.
+const isAgentCmdline = (c) => /(^|\/|\s)opencode(\s|$)/.test(c) && !c.includes("m1_agent_progress_watchdog");
+
+function scanProcs() {
+  const procs = [];
+  let names = [];
+  try { names = fs.readdirSync(PROC_DIR); } catch {}
+  for (const name of names) {
+    if (!/^[0-9]+$/.test(name)) continue;
+    const pid = Number(name);
+    if (pid === process.pid) continue;
+    let cmdline = "";
+    try { cmdline = fs.readFileSync(path.join(PROC_DIR, name, "cmdline"), "utf8").replace(/\0/g, " ").trim(); } catch { continue; }
+    if (!cmdline) continue;
+    let ppid = 0, cpu = 0;
+    try {
+      const m = /^PPid:\s*([0-9]+)/m.exec(fs.readFileSync(path.join(PROC_DIR, name, "status"), "utf8"));
+      if (m) ppid = Number(m[1]);
+    } catch {}
+    try {
+      const stat = fs.readFileSync(path.join(PROC_DIR, name, "stat"), "utf8");
+      const rest = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      cpu = Number(rest[11] || 0) + Number(rest[12] || 0); // utime + stime jiffies
+    } catch {}
+    procs.push({ pid, ppid, cmdline, cpu });
+  }
+  const agentPids = procs.filter((p) => isAgentCmdline(p.cmdline)).map((p) => p.pid);
+  const agentSet = new Set(agentPids);
+  const byParent = new Map();
+  for (const p of procs) {
+    if (!byParent.has(p.ppid)) byParent.set(p.ppid, []);
+    byParent.get(p.ppid).push(p.pid);
+  }
+  const treeSet = new Set(agentPids);
+  const stack = [...agentPids];
+  while (stack.length) {
+    for (const c of byParent.get(stack.pop()) || []) {
+      if (!treeSet.has(c)) { treeSet.add(c); stack.push(c); }
+    }
+  }
+  const childPids = [...treeSet].filter((p) => !agentSet.has(p));
+  let treeCpu = 0;
+  for (const p of procs) if (treeSet.has(p.pid)) treeCpu += p.cpu;
+  return { agentPids, childPids, treeCpu };
+}
+
+function stall(kind, snapshot) {
+  const detail = kind === "spin"
+    ? `${snapshot.errs_since_progress} provider/tool errors with no completed agent step for ${snapshot.progress_age_s}s`
+    : `no completed agent step, no running tool child, no CPU activity for ${snapshot.progress_age_s}s`;
+  // Built non-contiguously on purpose: this script's source travels inside
+  // exec commands, and a failed exec echoes the command into harbor's
+  // stderr · a literal marker there would false-trip harbor_runner's
+  // typed-stall stream check on a healthy run.
+  const marker = { error_class: ["agent", "stalled", kind].join("-"), kind, detail, snapshot };
+  const tmp = path.join(path.dirname(MARKER_PATH), `.${path.basename(MARKER_PATH)}.${process.pid}.tmp`);
+  try { fs.writeFileSync(tmp, JSON.stringify(marker)); fs.renameSync(tmp, MARKER_PATH); }
+  catch (e) { try { fs.unlinkSync(tmp); } catch {} heartbeat({ event: "marker_write_failed", message: String(e) }); }
+  heartbeat({ event: "stall_kill", kind, detail, pids: snapshot.agent_pids });
+  const pids = [...snapshot.agent_pids];
+  for (const pid of pids) { try { process.kill(pid, "SIGTERM"); } catch {} }
+  setTimeout(() => {
+    for (const pid of pids) { try { process.kill(pid, "SIGKILL"); } catch {} }
+    heartbeat({ event: "exit", reason: "stalled" });
+    process.exit(0);
+  }, KILL_GRACE_MS);
+}
+
+let lastProgressMs = Date.now();
+let lastLivenessMs = Date.now();
+let lastStorageNewest = newestMtimeMs(STORAGE_DIR);
+let lastDbNewest = 0;
+// opencode >= 1.16 persists sessions in SQLite (opencode.db + WAL), not
+// the legacy storage/ flat files (the 1.17.8 staging canary showed
+// storage_age_s null for a full run). A db write proves the process is
+// alive, but rows can also land during retry loops, so db mtime is
+// LIVENESS ONLY · progress stays proxy 2xx + legacy storage writes.
+function dbNewestMtimeMs() {
+  let newest = 0;
+  for (const f of ["opencode.db", "opencode.db-wal", "opencode.db-shm"]) {
+    try { const m = fs.statSync(path.join(DATA_DIR, f)).mtimeMs; if (m > newest) newest = m; } catch {}
+  }
+  return newest;
+}
+// Can this watchdog SEE progress at all? Its only two progress sources are
+// a legacy storage/ write and a proxy 2xx response_end, so on a run with
+// neither · nova/xai (no idle_proxy block), meta under Daytona-native
+// secrets, broker mode, M1_NATIVE_SECRETS_IDLE_PROXY=0, any provider the
+// opus proxy does not target · `progressed` is false at EVERY probe.
+// lastProgressMs then stays pinned at watchdog start and errsSinceProgress
+// never resets, so the spin rule degenerates from "8 errors since the last
+// completed step" into "the 8th error of the whole run, any time after the
+// first 15 minutes" · which SIGKILLs a healthy agent that recovered eight
+// scattered transients over a multi-hour run. That was latent while the
+// level anchor matched nothing in opencode's logfmt; fixing the anchor arms
+// it. Gate the spin kill on having a window into LLM traffic. Sticky: a
+// proxy log appearing once is proof enough for the rest of the run.
+// The `dead` kill deliberately stays armed when blind. With progress
+// pinned it degenerates to a pure liveness test · no db write, no tool-child
+// churn and sub-floor CPU for 40 minutes · which is exactly the frozen-agent
+// shape, and the only in-sandbox protection those providers have.
+let sighted = false;
+function updateSighted() {
+  if (sighted) return true;
+  if (lastStorageNewest > 0) { sighted = true; return true; }
+  for (const f of PROXY_LOGS) {
+    try { fs.statSync(f); sighted = true; return true; } catch {}
+  }
+  return false;
+}
+let errsSinceProgress = 0;
+let llmCallsCompleted = 0;
+let llmFailures = 0;
+let everSawAgent = false;
+let agentGoneStreak = 0;
+let lastChildSig = "";
+let lastTreeCpu = -1;
+let stalled = false;
+const startMs = Date.now();
+for (const f of ocLogFiles()) appended(f); // baseline offsets: pre-watchdog history is not error pressure
+for (const f of PROXY_LOGS) appended(f);
+heartbeat({ event: "start", probe_s: PROBE_MS / 1000, spin_errors: SPIN_ERRORS, spin_window_s: SPIN_WINDOW_MS / 1000, dead_window_s: DEAD_WINDOW_MS / 1000, storage_dir: STORAGE_DIR, data_dir: DATA_DIR });
+
+// Make the agent the LAST thing the kernel reaches for when the sandbox
+// runs out of memory. It is never the process that filled the box · the
+// measured cases are a `make -j128` fan-out sized off a host-reported
+// nproc, and an MCP gateway holding 7.4 GiB of an 8 GiB sandbox, while the
+// agent container itself peaks under 1 GiB. But `node` is one fat process
+// and the OOM killer picks by size, so the agent dies, the run comes back
+// as exit 137 with no reward, and the component that actually failed looks
+// innocent. With the agent deprioritised the kernel takes the compiler or
+// the leaking gateway instead, and the agent sees a normal tool failure it
+// can react to. Set to 0 to disable. Verified writable in a live Daytona
+// sandbox as uid 1001, and every failure is caught: a kernel that refuses
+// the write logs one line per pid and the run carries on unprotected.
+const OOM_SCORE_ADJ = env.M1_AGENT_OOM_SCORE_ADJ || "-500";
+const oomProtected = new Set();
+function protectAgents(pids) {
+  if (OOM_SCORE_ADJ === "0") return;
+  for (const pid of pids) {
+    if (oomProtected.has(pid)) continue;
+    try {
+      fs.writeFileSync(path.join(PROC_DIR, String(pid), "oom_score_adj"), OOM_SCORE_ADJ);
+      oomProtected.add(pid);
+      heartbeat({ event: "oom_protect", pid, oom_score_adj: OOM_SCORE_ADJ });
+    } catch (e) {
+      // One line per pid, not per probe: an unwritable /proc (no root,
+      // hardened kernel) must not spam the log for the whole run.
+      oomProtected.add(pid);
+      heartbeat({ event: "oom_protect_failed", pid, message: String(e).slice(0, 120) });
+    }
+  }
+}
+
+function probe() {
+  if (stalled) return;
+  const now = Date.now();
+  const { agentPids, childPids, treeCpu } = scanProcs();
+  protectAgents(agentPids);
+  if (agentPids.length) { everSawAgent = true; agentGoneStreak = 0; }
+  else if (everSawAgent && ++agentGoneStreak >= 3) {
+    heartbeat({ event: "exit", reason: "agent_exited" });
+    process.exit(0);
+  }
+  if (!everSawAgent && now - startMs > 2 * DEAD_WINDOW_MS) {
+    heartbeat({ event: "exit", reason: "agent_never_seen" });
+    process.exit(0);
+  }
+
+  let progressed = false;
+  let errsNew = 0;
+  const storageNewest = newestMtimeMs(STORAGE_DIR);
+  if (storageNewest > lastStorageNewest) { lastStorageNewest = storageNewest; progressed = true; }
+  const dbNewest = dbNewestMtimeMs();
+  if (dbNewest > lastDbNewest) { lastDbNewest = dbNewest; lastLivenessMs = now; }
+  for (const f of PROXY_LOGS) {
+    for (const line of appended(f).split("\n")) {
+      if (!line.includes("_proxy.")) continue;
+      let ev; try { ev = JSON.parse(line); } catch { continue; }
+      // llm_idle_proxy.* (openai/openrouter) and opus_anthropic_proxy.*
+      // share the same response-lifecycle suffixes · match by suffix.
+      const name = String(ev.event || "");
+      // strictly 2xx: a redirect/error loop must never read as progress
+      const ok = Number(ev.status || 0) >= 200 && Number(ev.status || 0) < 300;
+      if (name.endsWith(".response_end") && ok) { progressed = true; llmCallsCompleted += 1; }
+      else if (ok && (name.endsWith(".response_start") || name.endsWith(".stream_progress"))) lastLivenessMs = now;
+      // proxy-observed provider failures are unambiguous spin pressure ·
+      // a hot retry loop shows up here even when opencode logs it below
+      // ERROR level (or not at all)
+      else if (
+        (name.endsWith(".response_end") && !ok) ||
+        name.endsWith(".request_error") ||
+        name.endsWith(".headers_timeout") ||
+        name.endsWith(".upstream_error") ||
+        name.endsWith(".kill")
+      ) { errsNew += 1; llmFailures += 1; }
+    }
+  }
+  for (const f of ocLogFiles()) {
+    for (const line of appended(f).split("\n")) {
+      if (ERROR_LINE.test(line) || (WARN_LINE.test(line) && ERROR_TOKEN.test(line))) errsNew += 1;
+    }
+  }
+  const childSig = childPids.join(",");
+  if (childSig !== lastChildSig) { lastChildSig = childSig; lastLivenessMs = now; }
+  const cpuDelta = lastTreeCpu >= 0 ? treeCpu - lastTreeCpu : 0;
+  if (cpuDelta >= CPU_MIN_JIFFIES) lastLivenessMs = now;
+  lastTreeCpu = treeCpu;
+
+  if (progressed) { lastProgressMs = now; lastLivenessMs = now; errsSinceProgress = 0; }
+  else errsSinceProgress += errsNew;
+  const canSeeProgress = updateSighted();
+
+  const snapshot = {
+    alive: agentPids.length > 0,
+    agent_pids: agentPids,
+    tool_children: childPids.length,
+    progress_age_s: Math.round((now - lastProgressMs) / 1000),
+    liveness_age_s: Math.round((now - lastLivenessMs) / 1000),
+    errs_since_progress: errsSinceProgress,
+    storage_age_s: lastStorageNewest ? Math.round((now - lastStorageNewest) / 1000) : null,
+    db_age_s: lastDbNewest ? Math.round((now - lastDbNewest) / 1000) : null,
+    // cumulative proxy-observed LLM traffic · surfaced live in the dev-ui
+    // vitals strip via the agent live-observer's probe events
+    llm_calls_completed: llmCallsCompleted,
+    llm_failures: llmFailures,
+    // observed tree-CPU jiffies since the previous probe, against
+    // CPU_MIN_JIFFIES. Recorded so the liveness floor is tunable from real
+    // wedged-vs-working runs instead of guessed.
+    cpu_delta_jiffies: cpuDelta,
+    cpu_min_jiffies: CPU_MIN_JIFFIES,
+    // false => no progress source exists for this run, so progress_age_s is
+    // just the wall clock and errs_since_progress is a run-total. Both
+    // still ship (they are the calibration data for a windowed spin rule
+    // that would work when blind), but the spin kill does not read them.
+    progress_observable: canSeeProgress,
+  };
+  heartbeat({ event: "probe", ...snapshot });
+  if (!agentPids.length) return;
+  if (canSeeProgress && errsSinceProgress >= SPIN_ERRORS && now - lastProgressMs >= SPIN_WINDOW_MS) {
+    stalled = true;
+    stall("spin", snapshot);
+  } else if (now - lastProgressMs >= DEAD_WINDOW_MS && now - lastLivenessMs >= DEAD_WINDOW_MS) {
+    stalled = true;
+    stall("dead", snapshot);
+  }
+}
+
+setInterval(probe, PROBE_MS);
+M1_AGENT_WATCHDOG
+if [ -f /tmp/m1_agent_progress_watchdog.pid ] && kill -0 "$(cat /tmp/m1_agent_progress_watchdog.pid)" 2>/dev/null; then echo '[m1-agent-watchdog] already running' >&2; else if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; nohup node /tmp/m1_agent_progress_watchdog.mjs > /logs/agent/agent-progress-watchdog.log 2>&1 & echo $! > /tmp/m1_agent_progress_watchdog.pid; fi
+Command outputs captured
+Running command: set -euo pipefail; m1_runtime_dir=/tmp; if [ ! -d "$m1_runtime_dir" ] || [ ! -w "$m1_runtime_dir" ]; then m1_runtime_dir=""; for m1_candidate in "${TMPDIR:-}" "${HOME:-}" /var/tmp /logs/agent /tmp; do [ -n "$m1_candidate" ] || continue; mkdir -p "$m1_candidate" 2>/dev/null || true; if [ -d "$m1_candidate" ] && [ -w "$m1_candidate" ]; then m1_runtime_dir=$m1_candidate; break; fi; done; fi; if [ -z "$m1_runtime_dir" ]; then echo "[m1] no writable directory for the idle proxy" >&2; exit 1; fi; m1_log_dir=/logs/agent; m1_log_path=/logs/agent/anthropic-opus-proxy.log; mkdir -p "$m1_log_dir" 2>/dev/null || true; if [ ! -d "$m1_log_dir" ] || [ ! -w "$m1_log_dir" ]; then m1_log_path="$m1_runtime_dir"/anthropic-opus-proxy.log; fi; m1_script_path="$m1_runtime_dir"/m1_anthropic_messages_cap.py; m1_pid_path="$m1_runtime_dir"/m1_anthropic_messages_cap.pid; cat > "$m1_script_path" <<'M1_OPUS_PROXY'
+import json
+import os
+import sys
+import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib import error as urlerror
+from urllib import request as urlrequest
+
+TARGET_MAX_TOKENS = 32000
+
+
+def env_value(name, legacy_name, default):
+    return os.environ.get(name) or (os.environ.get(legacy_name) if legacy_name else None) or default
+
+
+PORT = int(env_value("M1_OPUS_ANTHROPIC_PROXY_PORT", "M1_OPUS_4_8_ANTHROPIC_PROXY_PORT", "18181"))
+REWRITE_MAX_TOKENS = int(
+    env_value("M1_OPUS_ANTHROPIC_MAX_TOKENS", "M1_OPUS_4_8_ANTHROPIC_MAX_TOKENS", "128000")
+)
+UPSTREAM_PROTOCOL = env_value(
+    "M1_OPUS_ANTHROPIC_UPSTREAM_PROTOCOL", "M1_OPUS_4_8_ANTHROPIC_UPSTREAM_PROTOCOL", "https:"
+)
+UPSTREAM_HOST = env_value(
+    "M1_OPUS_ANTHROPIC_UPSTREAM_HOST", "M1_OPUS_4_8_ANTHROPIC_UPSTREAM_HOST", "api.anthropic.com"
+)
+UPSTREAM_PORT = int(
+    env_value(
+        "M1_OPUS_ANTHROPIC_UPSTREAM_PORT",
+        "M1_OPUS_4_8_ANTHROPIC_UPSTREAM_PORT",
+        "443" if UPSTREAM_PROTOCOL == "https:" else "80",
+    )
+)
+UPSTREAM_TIMEOUT = float(os.environ.get("M1_OPUS_ANTHROPIC_UPSTREAM_TIMEOUT_SEC", "1800"))
+RATE_LIMIT_MAX_ATTEMPTS = 3
+RATE_LIMIT_MAX_DELAY_SEC = 60.0
+# Broker mode: the upstream is the egress broker, whose Anthropic route lives under a
+# path prefix (e.g. /anthropic) and takes OpenCode's request path unchanged. Empty
+# (direct api.anthropic.com) keeps the /v1 insertion below.
+UPSTREAM_PATH_PREFIX = env_value("M1_OPUS_ANTHROPIC_UPSTREAM_PATH_PREFIX", None, "").rstrip("/")
+HOP_HEADERS = {
+    "connection",
+    "content-length",
+    "host",
+    "keep-alive",
+    "proxy-connection",
+    "transfer-encoding",
+    "upgrade",
+}
+
+
+def emit(**event):
+    print(json.dumps(event, separators=(",", ":")), file=sys.stderr, flush=True)
+
+
+def is_messages_path(path):
+    return path == "/messages" or path.startswith("/messages?") or path == "/v1/messages" or path.startswith(
+        "/v1/messages?"
+    )
+
+
+def upstream_path(path):
+    if UPSTREAM_PATH_PREFIX:
+        return f"{UPSTREAM_PATH_PREFIX}{path}"
+    return f"/v1{path}" if path == "/messages" or path.startswith("/messages?") else path
+
+
+def is_anthropic_model(model):
+    return isinstance(model, str) and (model.startswith("anthropic/") or model.startswith("claude-"))
+
+
+def retry_after_seconds(value):
+    if not value:
+        return None
+    try:
+        delay = float(value)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            delay = max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return delay if 0.0 <= delay <= RATE_LIMIT_MAX_DELAY_SEC else None
+
+
+def rate_limit_count(headers, name):
+    value = headers.get(name) if headers else None
+    return int(value) if isinstance(value, str) and value.isascii() and value.isdecimal() and len(value) <= 12 else None
+
+
+def response_metrics(headers):
+    return {
+        "output_token_limit": rate_limit_count(headers, "anthropic-ratelimit-output-tokens-limit"),
+        "output_tokens_remaining": rate_limit_count(headers, "anthropic-ratelimit-output-tokens-remaining"),
+    }
+
+
+def rewrite_body_if_needed(method, path, body):
+    if method != "POST" or not is_messages_path(path):
+        return body
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError):
+        return body
+    if (
+        isinstance(payload, dict)
+        and is_anthropic_model(payload.get("model"))
+        and payload.get("max_tokens") == TARGET_MAX_TOKENS
+    ):
+        payload["max_tokens"] = REWRITE_MAX_TOKENS
+        emit(
+            event="opus_anthropic_proxy.rewrite",
+            model=payload.get("model"),
+            old_max_tokens=TARGET_MAX_TOKENS,
+            new_max_tokens=REWRITE_MAX_TOKENS,
+            path=path,
+        )
+        return json.dumps(payload, separators=(",", ":")).encode()
+    return body
+
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, _format, *_args):
+        return
+
+    def do_GET(self):
+        if self.path == "/health":
+            body = b"ok"
+            self.send_response(200)
+            self.send_header("content-type", "text/plain")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self._proxy()
+
+    def do_POST(self):
+        self._proxy()
+
+    def do_PUT(self):
+        self._proxy()
+
+    def do_PATCH(self):
+        self._proxy()
+
+    def do_DELETE(self):
+        self._proxy()
+
+    def _proxy(self):
+        try:
+            length = int(self.headers.get("content-length", "0"))
+        except ValueError:
+            length = 0
+        body = rewrite_body_if_needed(self.command, self.path, self.rfile.read(max(0, length)))
+        headers = {key: value for key, value in self.headers.items() if key.lower() not in HOP_HEADERS}
+        url = f"{UPSTREAM_PROTOCOL}//{UPSTREAM_HOST}:{UPSTREAM_PORT}{upstream_path(self.path)}"
+        request_body = None if self.command in {"GET", "HEAD"} else body
+        upstream_request = urlrequest.Request(
+            url,
+            data=request_body,
+            headers=headers,
+            method=self.command,
+        )
+        for attempt in range(1, RATE_LIMIT_MAX_ATTEMPTS + 1):
+            started = time.monotonic()
+            try:
+                upstream = urlrequest.urlopen(upstream_request, timeout=UPSTREAM_TIMEOUT)
+                break
+            except urlerror.HTTPError as exc:
+                delay = (
+                    retry_after_seconds(exc.headers.get("retry-after") if exc.headers else None)
+                    if exc.code == 429
+                    else None
+                )
+                retry_eligible = delay is not None and attempt < RATE_LIMIT_MAX_ATTEMPTS
+                emit(
+                    event="opus_anthropic_proxy.http_error",
+                    status=exc.code,
+                    attempt=attempt,
+                    retry_eligible=retry_eligible,
+                    elapsed_ms=int((time.monotonic() - started) * 1000),
+                    **response_metrics(exc.headers),
+                )
+                if delay is None or attempt == RATE_LIMIT_MAX_ATTEMPTS:
+                    upstream = exc
+                    break
+                exc.close()
+                emit(
+                    event="opus_anthropic_proxy.rate_limit_retry",
+                    attempt=attempt,
+                    delay_sec=delay,
+                    status=exc.code,
+                )
+                time.sleep(delay)
+            except Exception as exc:
+                emit(event="opus_anthropic_proxy.upstream_error", message=str(exc))
+                error_body = f"upstream error: {exc}".encode()
+                self.send_response(502)
+                self.send_header("content-type", "text/plain")
+                self.send_header("content-length", str(len(error_body)))
+                self.end_headers()
+                self.wfile.write(error_body)
+                return
+
+        status = int(getattr(upstream, "status", None) or upstream.getcode() or 502)
+        emit(
+            event="opus_anthropic_proxy.response_start",
+            path=self.path,
+            status=status,
+            attempt=attempt,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            **response_metrics(upstream.headers),
+        )
+        self.send_response(status)
+        for key, value in upstream.headers.items():
+            if key.lower() not in HOP_HEADERS:
+                self.send_header(key, value)
+        self.send_header("connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        last_progress = time.monotonic()
+        try:
+            while chunk := upstream.read(65536):
+                self.wfile.write(chunk)
+                self.wfile.flush()
+                if time.monotonic() - last_progress >= 30:
+                    last_progress = time.monotonic()
+                    emit(event="opus_anthropic_proxy.stream_progress", path=self.path, status=status)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            upstream.close()
+            emit(event="opus_anthropic_proxy.response_end", path=self.path, status=status)
+
+
+emit(
+    event="opus_anthropic_proxy.ready",
+    port=PORT,
+    rewrite_max_tokens=REWRITE_MAX_TOKENS,
+    upstream_host=UPSTREAM_HOST,
+)
+ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+M1_OPUS_PROXY
+if curl -fsS http://127.0.0.1:18181/health >/dev/null 2>&1; then echo '[m1-opus-proxy] already running' >&2; else nohup python3 -u - < "$m1_script_path" > "$m1_log_path" 2>&1 & echo $! > "$m1_pid_path"; fi; for i in $(seq 1 300); do curl -fsS http://127.0.0.1:18181/health >/dev/null 2>&1 && { set +e; exit 0; }; sleep 0.1; done; echo '[m1-opus-proxy] WARNING: health probe never succeeded after 300 attempts; continuing' >&2; cat "$m1_log_path" >&2 || true; set +e; exit 0
+Running command: set -euo pipefail; mkdir -p /tmp; cat > /tmp/m1_agent_live_observer.mjs <<'M1_AGENT_OBSERVER'
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const arg = (name, d) => { const i = process.argv.indexOf(name); return i >= 0 && process.argv[i + 1] !== undefined ? process.argv[i + 1] : d; };
+const HOME = process.env.HOME || "/root";
+const DATA_DIR = arg("--data-dir", process.env.M1_WATCHDOG_OPENCODE_DATA_DIR || path.join(HOME, ".local/share/opencode"));
+const WATCHDOG_LOG = arg("--watchdog-log", "/logs/agent/agent-progress-watchdog.log");
+const CURSOR = Number(arg("--cursor", "0")) || 0;
+const LIMIT = Math.max(1, Math.min(200, Number(arg("--limit", "80")) || 80));
+const RECEIPT_AFTER = arg("--receipt-after", "");
+const RECEIPT_ONLY = process.argv.includes("--receipt-only");
+const PART_RECEIPTS = arg("--receipt-kind", "message") === "part";
+
+const clip = (v, n) => (typeof v === "string" && v.length > n ? v.slice(0, n) + "…" : v);
+const out = { ok: true, cursor: CURSOR, probe: null, parts: [], todos: null, sessions: [], receipts: [], receipt_after: RECEIPT_AFTER, receipt_more: false, receipt_scan_ok: false, receipt_invalid_rows: 0 };
+
+// Latest watchdog heartbeat (probe/stall/exit) from the log tail.
+try {
+  const st = fs.statSync(WATCHDOG_LOG);
+  const start = Math.max(0, st.size - 16384);
+  const buf = Buffer.alloc(st.size - start);
+  const fd = fs.openSync(WATCHDOG_LOG, "r");
+  fs.readSync(fd, buf, 0, buf.length, start);
+  fs.closeSync(fd);
+  for (const line of buf.toString("utf8").split("\n")) {
+    let ev; try { ev = JSON.parse(line); } catch { continue; }
+    if (ev && (ev.event === "probe" || ev.event === "stall_kill" || ev.event === "exit")) out.probe = ev;
+  }
+} catch {}
+
+let db = null;
+const DB_PATH = path.join(DATA_DIR, "opencode.db");
+// never open a missing db: DatabaseSync would CREATE an empty one, racing
+// opencode's own first-write migration
+if (!fs.existsSync(DB_PATH)) {
+  out.sqlite_error = "opencode.db not present yet";
+} else {
+  try {
+    const sqlite = await import("node:sqlite");
+    db = new sqlite.DatabaseSync(DB_PATH);
+    db.exec("PRAGMA busy_timeout=2000");
+  } catch (e) {
+    out.sqlite_error = clip(String((e && e.message) || e), 200);
+  }
+}
+
+if (db) {
+  if (RECEIPT_ONLY) {
+  // Scan native evidence independently of previews. Repeated full scans catch
+  // updates even when timestamps tie or a row changes behind the cursor.
+  try {
+    const query = PART_RECEIPTS
+      ? "SELECT p.id, p.message_id, p.session_id, p.time_created, p.time_updated, p.data, m.data AS message_data, m.time_updated AS message_updated, s.parent_id FROM part p LEFT JOIN message m ON m.id = p.message_id AND m.session_id = p.session_id LEFT JOIN session s ON s.id = p.session_id WHERE p.id > ? ORDER BY p.id ASC LIMIT ?"
+      : "SELECT m.id, m.session_id, m.time_created, m.time_updated, m.data, s.parent_id FROM message m LEFT JOIN session s ON s.id = m.session_id WHERE m.id > ? ORDER BY m.id ASC LIMIT ?";
+    const rows = db.prepare(query).all(RECEIPT_AFTER, LIMIT);
+    const count = (v) => Number.isSafeInteger(v) && v >= 0 ? v : null;
+    const identity = (v) => typeof v === "string" && v.length > 0 && v.length <= 512 ? v : null;
+    for (const row of rows) {
+      out.receipt_after = row.id;
+      let data;
+      try { data = JSON.parse(row.data); }
+      catch { out.receipt_invalid_rows++; continue; }
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        out.receipt_invalid_rows++;
+        continue;
+      }
+      if (PART_RECEIPTS) {
+        if (typeof data.type !== "string" || !data.type) { out.receipt_invalid_rows++; continue; }
+        if (data.type !== "step-finish") continue;
+        let message = null;
+        try { message = JSON.parse(row.message_data); } catch {}
+        if (!message || typeof message !== "object" || Array.isArray(message) || message.role !== "assistant") message = null;
+        const tokens = data.tokens || {};
+        const cache = tokens.cache || {};
+        out.receipts.push({
+          protocol: "opencode-finish-part-usage-v1",
+          session_id: row.session_id, message_id: row.message_id, part_id: row.id,
+          parent_session_id: identity(row.parent_id),
+          provider_id: identity(message?.providerID), model_id: identity(message?.modelID),
+          updated_ms: count(row.time_updated), created_ms: count(row.time_created),
+          completed_ms: count(message?.time?.completed), message_updated_ms: count(row.message_updated),
+          message_error_present: message === null ? null : Object.hasOwn(message, "error") && message.error !== null,
+          input_tokens: count(tokens.input), output_tokens: count(tokens.output),
+          reasoning_tokens: count(tokens.reasoning), total_tokens: count(tokens.total),
+          cache_read_tokens: count(cache.read), cache_write_tokens: count(cache.write),
+          reported_cost: typeof data.cost === "number" && Number.isFinite(data.cost) && data.cost >= 0 ? data.cost : null,
+          finish: identity(data.reason),
+        });
+        continue;
+      }
+      if (data.role !== "assistant") continue;
+      const tokens = data.tokens || {};
+      const cache = tokens.cache || {};
+      const time = data.time || {};
+      out.receipts.push({
+        protocol: "opencode-message-usage-v1",
+        session_id: row.session_id, message_id: row.id,
+        parent_session_id: identity(row.parent_id),
+        provider_id: identity(data.providerID), model_id: identity(data.modelID),
+        updated_ms: count(row.time_updated), created_ms: count(time.created),
+        completed_ms: count(time.completed),
+        input_tokens: count(tokens.input), output_tokens: count(tokens.output),
+        reasoning_tokens: count(tokens.reasoning), total_tokens: count(tokens.total),
+        cache_read_tokens: count(cache.read), cache_write_tokens: count(cache.write),
+        reported_cost: typeof data.cost === "number" && Number.isFinite(data.cost) && data.cost >= 0 ? data.cost : null,
+        finish: identity(data.finish),
+      });
+    }
+    out.receipt_more = rows.length === LIMIT;
+    out.receipt_scan_ok = true;
+  } catch { out.receipt_error = "message_scan_failed"; }
+  }
+  if (!RECEIPT_ONLY) {
+  try {
+    const rows = db
+      .prepare("SELECT rowid, id, message_id, session_id, time_created, time_updated, data FROM part WHERE time_updated > ? ORDER BY time_updated ASC LIMIT ?")
+      .all(CURSOR, LIMIT);
+    for (const row of rows) {
+      if (row.time_updated > out.cursor) out.cursor = row.time_updated;
+      let data; try { data = JSON.parse(row.data); } catch { continue; }
+      const item = {
+        id: row.id,
+        oc_session_id: row.session_id,
+        kind: String(data.type || "unknown"),
+        time_created: row.time_created,
+        time_updated: row.time_updated,
+      };
+      if (data.type === "tool") {
+        const state = data.state || {};
+        const input = state.input || {};
+        item.tool = clip(String(data.tool || ""), 60);
+        item.status = clip(String(state.status || ""), 30);
+        if (typeof state.title === "string") item.title = clip(state.title, 160);
+        const summary =
+          typeof input.command === "string" ? input.command
+          : typeof input.filePath === "string" ? input.filePath
+          : typeof input.pattern === "string" ? input.pattern
+          : typeof input.url === "string" ? input.url
+          : typeof input.description === "string" ? input.description
+          : undefined;
+        if (summary !== undefined) item.input_summary = clip(summary, 200);
+        const meta = state.metadata || {};
+        if (typeof meta.preview === "string") item.output_preview = clip(meta.preview, 160);
+        const t = state.time || {};
+        if (t.start && t.end) item.duration_ms = t.end - t.start;
+      } else if (data.type === "text" || data.type === "reasoning") {
+        item.preview = clip(String(data.text || ""), 240);
+      } else if (data.type === "step-finish") {
+        if (data.tokens && typeof data.tokens === "object") {
+          item.tokens_total = Number(data.tokens.total || 0);
+          item.tokens_output = Number(data.tokens.output || 0);
+          item.tokens_reasoning = Number(data.tokens.reasoning || 0);
+        }
+        if (typeof data.cost === "number") item.cost = data.cost;
+        if (typeof data.reason === "string") item.reason = clip(data.reason, 60);
+      } else if (data.type === "patch") {
+        if (Array.isArray(data.files)) item.files = data.files.slice(0, 10).map((f) => clip(String(f), 120));
+      }
+      out.parts.push(item);
+    }
+  } catch (e) {
+    out.ok = false;
+    out.error = clip(String((e && e.message) || e), 200);
+  }
+  try {
+    const todos = db.prepare("SELECT content, status, priority, position FROM todo ORDER BY position ASC LIMIT 50").all();
+    out.todos = todos.map((t) => ({ content: clip(t.content, 200), status: t.status, priority: t.priority, position: t.position }));
+  } catch {}
+  try {
+    const sessions = db.prepare("SELECT id, parent_id, slug, title FROM session ORDER BY rowid ASC LIMIT 50").all();
+    out.sessions = sessions.map((s) => ({ id: s.id, parent_id: s.parent_id, slug: clip(s.slug, 80), title: clip(s.title, 160) }));
+  } catch {}
+  }
+  try { db.close(); } catch {}
+}
+
+if (!RECEIPT_ONLY) {
+  try { out.storage = probeStorage(); }
+  catch { out.storage = { status: "unavailable", filesystems: [], files: [] }; }
+}
+
+function asStatus(err) {
+  const c = err && err.code;
+  if (c === "ENOENT") return "missing";
+  if (c === "EACCES" || c === "EPERM") return "permission_denied";
+  if (c === "ENOTSUP" || c === "ENOSYS") return "unsupported";
+  return "read_error";
+}
+function countBig(v) {
+  try {
+    if (typeof v === "bigint") {
+      if (v < 0n || v > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+      return Number(v);
+    }
+    if (typeof v === "number" && Number.isSafeInteger(v) && v >= 0) return v;
+  } catch {}
+  return null;
+}
+function fieldCount(v) {
+  if (v === undefined || v === null) return { availability: "unsupported" };
+  const n = countBig(v);
+  if (n === null) return { availability: "invalid" };
+  return { value: n, availability: "available" };
+}
+function productBig(a, b) {
+  if (a === undefined || a === null || b === undefined || b === null) return { availability: "unsupported" };
+  try {
+    const x = typeof a === "bigint" ? a : BigInt(a);
+    const y = typeof b === "bigint" ? b : BigInt(b);
+    const n = countBig(x * y);
+    if (n === null) return { availability: "invalid" };
+    return { value: n, availability: "available" };
+  } catch {
+    return { availability: "invalid" };
+  }
+}
+function applyField(entry, name, result) {
+  entry.availability[name] = result.availability;
+  if (result.availability === "available") entry[name] = result.value;
+}
+function unavailableFs(label, status) {
+  return { label, availability: { bytes_total: status, bytes_free: status, bytes_available: status, inodes_total: status, inodes_free: status } };
+}
+function unavailableFile(label, status) {
+  return { label, availability: { bytes_logical: status, bytes_allocated: status } };
+}
+function probeFs(label, p) {
+  if (typeof p !== "string" || !p) return unavailableFs(label, "unsupported");
+  if (typeof fs.statfsSync !== "function") return unavailableFs(label, "unsupported");
+  try {
+    const st = fs.statfsSync(p, { bigint: true });
+    const entry = { label, availability: {} };
+    applyField(entry, "bytes_total", productBig(st.blocks, st.bsize));
+    applyField(entry, "bytes_free", productBig(st.bfree, st.bsize));
+    applyField(entry, "bytes_available", productBig(st.bavail, st.bsize));
+    applyField(entry, "inodes_total", fieldCount(st.files));
+    applyField(entry, "inodes_free", fieldCount(st.ffree));
+    return entry;
+  } catch (e) {
+    return unavailableFs(label, asStatus(e));
+  }
+}
+function probeFile(label, p) {
+  if (typeof p !== "string" || !p) return unavailableFile(label, "unsupported");
+  if (typeof fs.lstatSync !== "function") return unavailableFile(label, "unsupported");
+  try {
+    const st = fs.lstatSync(p, { bigint: true });
+    const entry = { label, availability: {} };
+    applyField(entry, "bytes_logical", fieldCount(st.size));
+    applyField(entry, "bytes_allocated", productBig(st.blocks, 512));
+    return entry;
+  } catch (e) {
+    return unavailableFile(label, asStatus(e));
+  }
+}
+function probeStorage() {
+  const observed_at_ms = countBig(Date.now());
+  const empty = (status) => ({
+    observed_at_ms,
+    status,
+    filesystems: ["root", "logs", "temporary_directory", "agent_home"].map((l) => unavailableFs(l, "unavailable")),
+    files: ["opencode_log", "watchdog_log", "opencode_db", "opencode_db_wal"].map((l) => unavailableFile(l, "unavailable")),
+  });
+  try {
+    let tmp = null;
+    try { tmp = os.tmpdir(); } catch {}
+    return {
+      observed_at_ms,
+      status: "ok",
+      filesystems: [
+        probeFs("root", "/"),
+        probeFs("logs", "/logs"),
+        probeFs("temporary_directory", tmp),
+        probeFs("agent_home", HOME),
+      ],
+      files: [
+        probeFile("opencode_log", "/logs/agent/opencode.txt"),
+        probeFile("watchdog_log", WATCHDOG_LOG),
+        probeFile("opencode_db", DB_PATH),
+        probeFile("opencode_db_wal", DB_PATH + "-wal"),
+      ],
+    };
+  } catch {
+    return empty("unavailable");
+  }
+}
+
+console.log("M1_OBSERVER_JSON=" + JSON.stringify(out));
+M1_AGENT_OBSERVER
+
+Command outputs captured
+Command outputs captured
+Running command: mkdir -p ~/.config/opencode && echo '{
+  "provider": {
+    "anthropic": {
+      "models": {
+        "claude-sonnet-5-5": {}
+      },
+      "options": {
+        "baseURL": "http://127.0.0.1:18181",
+        "chunkTimeout": 1800000
+      }
+    }
+  },
+  "permission": {
+    "external_directory": "allow",
+    "websearch": "allow"
+  },
+  "agent": {
+    "title": {
+      "disable": true
+    }
+  }
+}' > ~/.config/opencode/opencode.json
+Command outputs captured
+Running command: unset XDG_DATA_HOME XDG_STATE_HOME; [ -f ~/.nvm/nvm.sh ] && . ~/.nvm/nvm.sh; opencode --model=anthropic/claude-sonnet-5-5 run --format=json --thinking --dangerously-skip-permissions -- 'We need to stand up the AWS infrastructure for **ClearLedger**, an event-sourced interbank clearing and settlement ledger service, against the local AWS control plane (`http://aws:4566`). Your job is to write the Terraform or OpenTofu configuration, wire up the networking, KMS keys, Cognito OAuth2 scopes, and IAM roles, initialize the PostgreSQL schema and triggers, and provide deployment and teardown scripts that hold up under live traffic and recovery drills.
+
+The application is already compiled into four container images and loaded into the local runtime. Do not rebuild or modify the application binaries. Your work is strictly on the infrastructure, database schema, and operational lifecycle side:
+
+1. **API service (`api_image`)**: Serves the HTTP API (`POST /v1/settlements`, `POST /v1/settlements/{id}/entries`, `GET /v1/settlements/{id}`, `GET /v1/settlements/{id}/ledger`, `POST /v1/admin/projections/{id}/rebuild`, `/health/live`, and `/health/ready`). Run this on **ECS Fargate** (`desired_count = 2` across `us-east-1a` and `us-east-1b`) in private subnets behind an internet-facing **Application Load Balancer** (`port 80` HTTP listener forwarding to a target group on `port 8080` with `/health/ready` health checks).
+2. **Projector (`projector_image`)**: Consumes domain events from the main **SQS** queue, writes the current settlement projection and ordered ledger event items into **DynamoDB**, and invalidates stale cached projections in **ElastiCache for Valkey**. Deploy this as a container-based **AWS Lambda** function connected to the main SQS queue via an event source mapping (`batch_size = 5`, `ReportBatchItemFailures` enabled) backed by a dead-letter queue (`maxReceiveCount = 4`).
+3. **Outbox relay (`relay_image`)**: Polls **Amazon RDS for PostgreSQL** for committed outbox rows (`published_at IS NULL`), publishes them to the main SQS queue, and stamps `published_at`. Deploy this as a container-based **AWS Lambda** function triggered every minute (`rate(1 minute)`) by **EventBridge Scheduler**.
+4. **Audit archiver (`archiver_image`)**: Reads published settlement events from PostgreSQL (`published_at IS NOT NULL AND archived_at IS NULL`) and writes deterministic NDJSON audit batches (`ledger-audit/batch-*.ndjson`) to a private, versioned **Amazon S3** bucket. Deploy this as a container-based **AWS Lambda** function triggered every five minutes (`rate(5 minutes)`) by **EventBridge Scheduler**.
+
+## Workspace Environment and Contracts
+
+The workspace comes with `terraform`, `tofu`, `aws`, `psql`, `jq`, `curl`, and Python 3 pre-installed. The local AWS control plane (`http://aws:4566`, region `us-east-1`) is configured through `AWS_ENDPOINT_URL` and `/workspace/config/config.json`. Docker is intentionally disabled inside the workspace; provision every cloud resource through Terraform or OpenTofu against the AWS endpoint.
+
+Read the contract files under `/workspace/contracts/` before writing your code:
+
+- `/workspace/contracts/runtime.md`: Container environment variables for the API and each Lambda worker (`DATABASE_URL`, `SQS_QUEUE_URL`, `PROJECTION_TABLE`, `VALKEY_URL`, `CACHE_TTL_SECONDS`, `OUTBOX_BATCH_SIZE`, `AUDIT_BUCKET`, `AUDIT_PREFIX`, `AUTH_ISSUER`, `AUTH_AUDIENCES`, `AUTH_JWKS_URL`, `CLOUDWATCH_LOG_GROUP`), the three non-hierarchical Cognito OAuth2 scopes (`clearledger/read`, `clearledger/write`, `clearledger/admin`), and the data-plane reconciliation rules required when `deploy.sh` runs.
+- `/workspace/contracts/infrastructure.md` and `/workspace/contracts/services/*.md`: Service-by-service infrastructure requirements covering:
+  - `services/vpc.md`: Two-AZ VPC (`us-east-1a` and `us-east-1b`), public and private subnets, route tables, and four least-privilege security groups (`alb`, `ecs`, `rds`, `valkey`).
+  - `services/alb.md` and `services/ecs.md`: Application Load Balancer, target group, HTTP listener, ECS cluster (`containerInsights = "enabled"`), Fargate task definition, and service configuration.
+  - `services/rds.md`: RDS PostgreSQL 16 (`db.t4g.micro`) instance settings and the `clearledger` schema (`settlements`, `events`, `outbox`, `idempotency_keys`), `CHECK` / `UNIQUE` / `FOREIGN KEY` constraints, PL/pgSQL triggers, and partial/composite indexes.
+  - `services/sqs.md`, `services/lambda.md`, and `services/scheduler.md`: Main SQS queue and DLQ parameters, Lambda container workers, SQS event source mapping, and EventBridge Scheduler rules.
+  - `services/dynamodb.md`, `services/elasticache-valkey.md`, and `services/s3.md`: DynamoDB key schema (`PK`/`SK`), `AccountIndex` GSI (`GSI1PK`/`GSI1SK`), and point-in-time recovery, ElastiCache Valkey 8 (`cache.t4g.micro`), and S3 bucket versioning, KMS encryption, public-access block, and canonical batch key layout.
+  - `services/cognito.md`, `services/iam.md`, `services/kms.md`, and `services/cloudwatch-logs.md`: Cognito User Pool, resource server, and three client-credentials app clients, the six dedicated IAM roles (`ecs_execution`, `ecs_task`, `projector`, `relay`, `archiver`, `scheduler`) with both least-privilege `Allow` statements and explicit `Effect = "Deny"` guardrails, the four customer-managed KMS keys and aliases (`database`, `messaging`, `projection`, `audit`), and the four CloudWatch Log Groups (`retention_in_days >= 14`).
+- `/workspace/contracts/openapi.yaml`: HTTP endpoints, request and response bodies, required request headers (`Idempotency-Key`, `X-Correlation-Id`), and response headers (`X-ClearLedger-Source`, `X-ClearLedger-Version`, `X-ClearLedger-Instance`).
+- `/workspace/contracts/schemas/events.schema.json`: Domain event envelope schema used on SQS and in S3 NDJSON audit batches.
+- `/workspace/contracts/schemas/manifest.schema.json`: JSON Schema for `/workspace/submission/manifest.json` (`additionalProperties: false` throughout).
+
+Deployment inputs (`resource_prefix`, `region`, `aws_endpoint_url`, `db_name`, `db_username`, `db_password`, and the four container image tags and digests: `api_image` / `clearledger/api:1.0.0`, `projector_image` / `clearledger/projector:1.0.0`, `relay_image` / `clearledger/relay:1.0.0`, `archiver_image` / `clearledger/archiver:1.0.0`) are stored in `/workspace/config/config.json`. Read those values dynamically in `deploy.sh` and `destroy.sh` instead of hardcoding values from the current workspace.
+
+## Deliverables and Lifecycle Rules
+
+Write your solution under `/workspace/submission/`:
+
+```text
+/workspace/submission/
+├── deploy.sh
+├── destroy.sh
+├── manifest.json
+└── infra/
+    └── *.tf (or *.tofu)
+```
+
+- `infra/`: Your Terraform or OpenTofu configuration. All required cloud resources and IAM policies must be declared here and tracked in `/workspace/submission/infra/terraform.tfstate`. Do not create scored cloud resources via imperative `aws` CLI commands in `deploy.sh`.
+- `deploy.sh` (timeout: 720 seconds, max combined stdout/stderr: 8 MiB):
+  - Initializes and applies `/workspace/submission/infra` with local state at `/workspace/submission/infra/terraform.tfstate`.
+  - Idempotently creates and enables the `clearledger` PostgreSQL schema, tables, relational `CHECK` / `UNIQUE` / `FOREIGN KEY` constraints, triggers, and indexes on the RDS instance as specified in `/workspace/contracts/services/rds.md`.
+  - Exports `/workspace/submission/manifest.json` (max 1 MiB) from your Terraform/OpenTofu outputs matching `/workspace/contracts/schemas/manifest.schema.json`.
+  - Waits until `GET <service_url>/health/ready` returns HTTP `200`.
+  - Handles repair and re-apply cleanly: re-running `deploy.sh` must preserve the existing RDS instance, DynamoDB table, and S3 bucket without losing committed data, repair out-of-band control-plane drift and recreate any deleted resources across all services (`/workspace/contracts/services/*.md`), and converge the outbox, DynamoDB projections, Valkey cache, and versioned S3 `ledger-audit/` archive 1-to-1 against PostgreSQL before exiting `0`.
+- `destroy.sh` (timeout: 900 seconds, max combined stdout/stderr: 8 MiB):
+  - Tears down all resources created for the active `resource_prefix` while leaving pre-existing baseline (`cl-base-*`) resources untouched.
+  - Cleans up any out-of-band operational resources or policy attachments scoped to `<resource_prefix>` so `terraform.tfstate` has zero remaining managed resources and post-destroy cloud inventory matches the pre-deployment baseline.
+
+' 2>&1 </dev/null | stdbuf -oL tee /logs/agent/opencode.txt
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 0 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791622715044 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791622723569 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791622723569 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791622723569 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791622842153 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791622842153 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791622907789 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791622934447 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791622977380 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791622977380 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791622977380 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791622977380 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623112138 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623145940 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623180095 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623180095 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623180095 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623180095 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623314975 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623347739 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623358850 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623358850 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623435845 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623464117 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623519282 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623519282 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623519282 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623616856 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623629639 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623678524 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623678524 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623678524 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623678524 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623678524 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623678524 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623678524 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623934275 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623934275 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623934275 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623934275 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623934275 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791623934275 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791624145628 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791624145628 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791624145628 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791624248156 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791624273802 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791624300884 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791624300884 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_12522cbac001GvDqV4d3Kizsv3 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791624389406 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_12522cbac001GvDqV4d3Kizsv3 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --cursor 1791624400292 --watchdog-log /logs/agent/agent-progress-watchdog.log 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if ! grep -q 'opus_anthropic_proxy.response_end' /logs/agent/anthropic-opus-proxy.log; then echo '[m1-opus-proxy] FATAL: Anthropic broker run completed without a proxied response; refusing unverified benchmark result' >&2; cat /logs/agent/anthropic-opus-proxy.log >&2 || true; exit 86; fi
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: cat /tmp/m1_agent_stall.json
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command failed
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_1250efcd5001u3wYDj3xtsg9f7 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_125155393001O8KH1NvFS85nzm 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind part --receipt-after prt_12522cbac001GvDqV4d3Kizsv3 2>/dev/null
+Command outputs captured
+Running command: if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; node --experimental-sqlite /tmp/m1_agent_live_observer.mjs --receipt-only --receipt-kind message --receipt-after '' 2>/dev/null
+Command outputs captured
+Running command: sh -c 'oc="${HOME:-/root}/.local/share/opencode"; cp -r "$oc/log" /logs/agent/opencode-internal-log 2>/dev/null || true; if [ -d "$oc/storage" ]; then mb=$(du -sm "$oc/storage" 2>/dev/null | cut -f1); if [ "${mb:-0}" -le 512 ]; then cp -r "$oc/storage" /logs/agent/opencode-storage 2>/dev/null || true; else echo "storage dir ${mb}MB > 512MB cap; not collected" > /logs/agent/opencode-storage-skipped.txt; fi; fi; mkdir -p /logs/agent/opencode-db; rm -f /logs/agent/opencode-db/opencode.db* /logs/agent/opencode-db-skipped.txt; if [ -f "${HOME:-/root}/.local/share/opencode/opencode.db" ]; then echo "SQLite snapshot unavailable (missing runtime, size cap, timeout or capture failure)" > /logs/agent/opencode-db-skipped.txt; bash -c '"'"'if [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh"; fi; umask 077; node --experimental-sqlite -e '"'"'"'"'"'"'"'"'
+const fs = require("node:fs");
+const path = require("node:path");
+const {spawnSync} = require("node:child_process");
+const source = path.join(process.env.HOME || "/root", ".local/share/opencode/opencode.db");
+const target = "/logs/agent/opencode-db/opencode.db";
+const partial = target + ".partial";
+const cap = 512 * 1024 * 1024;
+const worker = `
+  const {DatabaseSync} = require("node:sqlite");
+  const db = new DatabaseSync(process.argv[1], {readOnly: true});
+  db.prepare("VACUUM INTO ?").run(process.argv[2]);
+  db.close();
+`;
+try {
+  let bytes = fs.statSync(source).size;
+  if (fs.existsSync(source + "-wal")) bytes += fs.statSync(source + "-wal").size;
+  if (bytes > cap) process.exit(1);
+  // Bash ulimit uses KiB: bound even a source growing during the snapshot.
+  const result = spawnSync("bash", ["-c", '"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'ulimit -f 524288 || exit 1; exec "$@"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"'"',
+    "snapshot", process.execPath, "--experimental-sqlite", "-e", worker, source, partial],
+    {timeout: 30000, killSignal: "SIGKILL", stdio: "ignore"});
+  if (result.error || result.status !== 0 || fs.statSync(partial).size > cap) process.exit(1);
+  fs.renameSync(partial, target);
+} catch { process.exit(1); }
+'"'"'"'"'"'"'"'"''"'"' 2>/dev/null && rm -f /logs/agent/opencode-db-skipped.txt; rm -f /logs/agent/opencode-db/opencode.db.partial*; fi; { echo "== date"; date -u; echo "== cgroup"; for f in memory.events memory.max memory.peak memory.current pids.events; do [ -f /sys/fs/cgroup/$f ] && { echo "-- $f"; cat /sys/fs/cgroup/$f; }; done; echo "== meminfo (host-wide, NOT the sandbox budget)"; grep -E "^(MemTotal|MemAvailable|SwapTotal|SwapFree)" /proc/meminfo; nproc; echo "== pressure"; cat /proc/pressure/memory 2>/dev/null; echo "== top rss kB"; for p in /proc/[0-9]*; do r=$(grep VmRSS $p/status 2>/dev/null | tr -dc 0-9); [ -n "$r" ] && echo "$r $(cat $p/comm 2>/dev/null)"; done | sort -rn | head -12; } > /logs/agent/kill-forensics.txt 2>&1 || true'
+Command outputs captured
+Wrote opencode trajectory to /tmp/m1-run-9cb3f175-b6d8-42df-a434-5085074df986-sq4cqca0/harbor-trials/materialized-task__KJfJxXY/agent/trajectory.json
+Collecting main service artifacts
+Selected strategy: _DaytonaDinD
+Starting Docker daemon inside DinD sandbox...
+Waiting for Docker daemon inside DinD sandbox...
+Docker daemon is ready
+Building compose services inside DinD sandbox...
+Starting compose services inside DinD sandbox...
+Waiting for main container to be running...
+Main container is running

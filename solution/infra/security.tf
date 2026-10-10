@@ -2,6 +2,51 @@ resource "aws_kms_key" "database" {
   description             = "${local.prefix} RDS encryption key"
   deletion_window_in_days = 10
   enable_key_rotation     = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AllowRootAdmin"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${split(":", aws_iam_role.ecs_execution.arn)[4]}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid    = "AllowAuthorizedWorkloadRoles"
+        Effect = "Allow"
+        Principal = {
+          AWS = [
+            aws_iam_role.relay.arn,
+            aws_iam_role.archiver.arn
+          ]
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "DenyUnauthorizedWorkloadRoles"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.projector.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
   tags = merge(local.common_tags, {
     Name                = "${local.prefix}-database-kms"
     ClearLedgerKeyUsage = "database"
@@ -17,6 +62,51 @@ resource "aws_kms_key" "messaging" {
   description             = "${local.prefix} SQS encryption key"
   deletion_window_in_days = 10
   enable_key_rotation     = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AllowRootAdmin"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${split(":", aws_iam_role.ecs_execution.arn)[4]}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid    = "AllowAuthorizedWorkloadRoles"
+        Effect = "Allow"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.projector.arn,
+            aws_iam_role.relay.arn
+          ]
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "DenyUnauthorizedWorkloadRoles"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.archiver.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
   tags = merge(local.common_tags, {
     Name                = "${local.prefix}-messaging-kms"
     ClearLedgerKeyUsage = "messaging"
@@ -32,6 +122,51 @@ resource "aws_kms_key" "projection" {
   description             = "${local.prefix} DynamoDB projection encryption key"
   deletion_window_in_days = 10
   enable_key_rotation     = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AllowRootAdmin"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${split(":", aws_iam_role.ecs_execution.arn)[4]}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid    = "AllowAuthorizedWorkloadRoles"
+        Effect = "Allow"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.projector.arn
+          ]
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "DenyUnauthorizedWorkloadRoles"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.relay.arn,
+            aws_iam_role.archiver.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
   tags = merge(local.common_tags, {
     Name                = "${local.prefix}-projection-kms"
     ClearLedgerKeyUsage = "projection"
@@ -47,6 +182,51 @@ resource "aws_kms_key" "audit" {
   description             = "${local.prefix} S3 audit encryption key"
   deletion_window_in_days = 10
   enable_key_rotation     = true
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AllowRootAdmin"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${split(":", aws_iam_role.ecs_execution.arn)[4]}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid    = "AllowAuthorizedWorkloadRoles"
+        Effect = "Allow"
+        Principal = {
+          AWS = [
+            aws_iam_role.archiver.arn
+          ]
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "DenyUnauthorizedWorkloadRoles"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.projector.arn,
+            aws_iam_role.relay.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
   tags = merge(local.common_tags, {
     Name                = "${local.prefix}-audit-kms"
     ClearLedgerKeyUsage = "audit"

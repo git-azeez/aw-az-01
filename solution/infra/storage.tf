@@ -111,6 +111,7 @@ resource "aws_elasticache_replication_group" "valkey" {
   subnet_group_name          = aws_elasticache_subnet_group.main.name
   security_group_ids         = [aws_security_group.valkey.id]
   transit_encryption_enabled = false
+  at_rest_encryption_enabled = false
   automatic_failover_enabled = false
 
   tags = merge(local.common_tags, {

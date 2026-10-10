@@ -284,6 +284,11 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
                             f"alb VPC security group egress rule must be restricted to TCP port 8080, got {verule}"
                         )
 
+        hcl_text = "\n".join(
+            p.read_text(encoding="utf-8", errors="ignore")
+            for p in sorted(list(INFRA_DIR.glob("*.tf")) + list(INFRA_DIR.glob("*.tofu")))
+        )
+
         lbs = _by_type(items, "aws_lb")
         assert len(lbs) == 1
         lb = lbs[0]
@@ -295,8 +300,16 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
         assert len(tgs) == 1
         tg = tgs[0]
         assert int(tg.get("port", 0)) == 8080
+        assert int(tg.get("deregistration_delay", 300)) == 5, (
+            f"Expected aws_lb_target_group deregistration_delay = 5, got {tg.get('deregistration_delay')}"
+        )
         hc = (tg.get("health_check") or [{}])[0]
         assert hc.get("path") == "/health/ready"
+        assert int(hc.get("interval", 30)) == 5, f"Expected health_check.interval = 5, got {hc.get('interval')}"
+        assert int(hc.get("timeout", 5)) == 2, f"Expected health_check.timeout = 2, got {hc.get('timeout')}"
+        assert int(hc.get("healthy_threshold", 3)) == 2, (
+            f"Expected health_check.healthy_threshold = 2, got {hc.get('healthy_threshold')}"
+        )
 
         listeners = _by_type(items, "aws_lb_listener")
         assert len(listeners) == 1
@@ -332,6 +345,9 @@ def test_declared_compute_and_ingress(ctx: VerifierContext) -> None:
         td = task_defs[0]
         assert "FARGATE" in (td.get("requires_compatibilities") or [])
         assert td.get("network_mode") == "awsvpc"
+        assert "create_before_destroy" in hcl_text, (
+            "aws_ecs_task_definition must declare lifecycle { create_before_destroy = true }"
+        )
         assert td.get("execution_role_arn") == manifest["iam"]["ecs_execution_role_arn"], (
             f"ECS task definition execution_role_arn ({td.get('execution_role_arn')}) does not match manifest"
         )
@@ -390,6 +406,10 @@ def test_declared_data_and_async(ctx: VerifierContext) -> None:
         items = _collect_resources(state)
         manifest = ctx.manifest
         cfg_map = load_iac_configuration(INFRA_DIR)
+        hcl_text = "\n".join(
+            p.read_text(encoding="utf-8", errors="ignore")
+            for p in sorted(list(INFRA_DIR.glob("*.tf")) + list(INFRA_DIR.glob("*.tofu")))
+        )
         priv_ids = set(manifest["network"]["private_subnet_ids"])
 
         db_subnet_groups = _by_type(items, "aws_db_subnet_group")
@@ -503,6 +523,9 @@ def test_declared_data_and_async(ctx: VerifierContext) -> None:
 
         lambdas = {fn["function_name"]: fn for fn in _by_type(items, "aws_lambda_function")}
         assert len(lambdas) == 3
+        assert "image_config" in hcl_text, (
+            "aws_lambda_function resources must declare an explicit image_config block"
+        )
         expected_workers = {
             manifest["workers"]["projector"]["function_name"]: (
                 ctx.config["projector_image"],
@@ -601,12 +624,15 @@ def test_declared_data_and_async(ctx: VerifierContext) -> None:
             "DynamoDB server_side_encryption must be enabled with the projection KMS key"
         )
 
-        caches = _by_type(items, "aws_elasticache_replication_group") + _by_type(items, "aws_elasticache_cluster")
-        assert len(caches) >= 1
+        caches = _by_type(items, "aws_elasticache_replication_group")
+        assert len(caches) >= 1, "Expected aws_elasticache_replication_group in state"
         cache = caches[0]
         assert str(cache.get("engine", "valkey")).lower() in {"valkey", "redis"}
         assert cache.get("node_type") == "cache.t4g.micro"
         assert int(cache.get("port") or 6379) == 6379
+        assert "transit_encryption_enabled" in hcl_text and "at_rest_encryption_enabled" in hcl_text, (
+            "aws_elasticache_replication_group must explicitly configure transit_encryption_enabled = false and at_rest_encryption_enabled = false"
+        )
 
         buckets = _by_type(items, "aws_s3_bucket")
         assert len(buckets) == 1

@@ -156,6 +156,12 @@ for b in s3.list_buckets().get("Buckets", []):
     bname = b["Name"]
     if bname.startswith(prefix):
         try:
+            ups = s3.list_multipart_uploads(Bucket=bname).get("Uploads", [])
+            for up in ups:
+                try:
+                    s3.abort_multipart_upload(Bucket=bname, Key=up["Key"], UploadId=up["UploadId"])
+                except Exception:
+                    pass
             vers = s3.list_object_versions(Bucket=bname)
             for item in (vers.get("Versions") or []) + (vers.get("DeleteMarkers") or []):
                 try:
@@ -169,6 +175,45 @@ for b in s3.list_buckets().get("Buckets", []):
                 except Exception:
                     pass
             s3.delete_bucket(Bucket=bname)
+        except Exception:
+            pass
+
+ecs = boto3.client("ecs", **kwargs)
+for status in ("ACTIVE", "INACTIVE"):
+    try:
+        tdefs = ecs.list_task_definitions(status=status).get("taskDefinitionArns", [])
+    except Exception:
+        tdefs = []
+    for td_arn in tdefs:
+        family_rev = td_arn.rsplit("/", 1)[-1]
+        if family_rev.startswith(prefix):
+            if status == "ACTIVE":
+                try:
+                    ecs.deregister_task_definition(taskDefinition=td_arn)
+                except Exception:
+                    pass
+            try:
+                ecs.delete_task_definitions(taskDefinitions=[td_arn])
+            except Exception:
+                pass
+
+cognito = boto3.client("cognito-idp", **kwargs)
+for pool in cognito.list_user_pools(MaxResults=60).get("UserPools", []):
+    pname = pool.get("Name", "")
+    pid = pool.get("Id", "")
+    if pname.startswith(prefix):
+        try:
+            desc = cognito.describe_user_pool(UserPoolId=pid).get("UserPool", {})
+            dom = desc.get("Domain") or desc.get("CustomDomain")
+            if dom:
+                try:
+                    cognito.delete_user_pool_domain(Domain=dom, UserPoolId=pid)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            cognito.delete_user_pool(UserPoolId=pid)
         except Exception:
             pass
 
@@ -212,9 +257,27 @@ for kentry in kms.list_keys().get("Keys", []):
         pass
 
 iam = boto3.client("iam", **kwargs)
+for ip in iam.list_instance_profiles().get("InstanceProfiles", []):
+    ip_name = ip.get("InstanceProfileName", "")
+    if ip_name.startswith(prefix):
+        for r in ip.get("Roles", []):
+            try:
+                iam.remove_role_from_instance_profile(InstanceProfileName=ip_name, RoleName=r["RoleName"])
+            except Exception:
+                pass
+        try:
+            iam.delete_instance_profile(InstanceProfileName=ip_name)
+        except Exception:
+            pass
+
 for role in iam.list_roles().get("Roles", []):
     rname = role["RoleName"]
     if rname.startswith(prefix):
+        for ip in iam.list_instance_profiles_for_role(RoleName=rname).get("InstanceProfiles", []):
+            try:
+                iam.remove_role_from_instance_profile(InstanceProfileName=ip["InstanceProfileName"], RoleName=rname)
+            except Exception:
+                pass
         for pname in iam.list_role_policies(RoleName=rname).get("PolicyNames", []):
             try:
                 iam.delete_role_policy(RoleName=rname, PolicyName=pname)

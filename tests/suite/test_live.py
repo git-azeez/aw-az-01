@@ -67,6 +67,10 @@ def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
                     assert "0.0.0.0/0" not in v4_cidrs and "::/0" not in v6_cidrs, (
                         f"Live {sg_key} security group ({sg_id}) exposes ingress to 0.0.0.0/0 or ::/0"
                     )
+                    if sg_key == "ecs":
+                        assert not v4_cidrs and not v6_cidrs, (
+                            f"Live ecs security group ({sg_id}) must restrict port 8080 ingress to alb security group {sg_ids['alb']}, not CIDR blocks {v4_cidrs}"
+                        )
             egress_perms = [
                 ep for ep in (live_sgs[sg_id].get("IpPermissionsEgress", []) or [])
                 if str(ep.get("IpProtocol", "")) != "-1"
@@ -96,6 +100,15 @@ def test_live_compute_and_ingress(ctx: VerifierContext) -> None:
         assert len(tgs) == 1
         assert int(tgs[0]["Port"]) == 8080
         assert tgs[0]["HealthCheckPath"] == "/health/ready"
+        assert int(tgs[0].get("HealthCheckIntervalSeconds", 5)) == 5, (
+            f"Expected live target group HealthCheckIntervalSeconds = 5, got {tgs[0].get('HealthCheckIntervalSeconds')}"
+        )
+        assert int(tgs[0].get("HealthCheckTimeoutSeconds", 2)) == 2, (
+            f"Expected live target group HealthCheckTimeoutSeconds = 2, got {tgs[0].get('HealthCheckTimeoutSeconds')}"
+        )
+        assert int(tgs[0].get("HealthyThresholdCount", 2)) == 2, (
+            f"Expected live target group HealthyThresholdCount = 2, got {tgs[0].get('HealthyThresholdCount')}"
+        )
 
         td_live = ecs.describe_task_definition(
             taskDefinition=m["compute"]["task_definition_arn"]
@@ -215,6 +228,12 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
         assert db_inst is not None, f"RDS instance {raw_db_id} not found"
         assert db_inst["Engine"] == "postgres"
         assert db_inst.get("DBInstanceStatus") == "available"
+        rds_arn = db_inst.get("DBInstanceArn") or m["database"]["instance_arn"]
+        rds_tags_list = db_inst.get("TagList") or rds.list_tags_for_resource(ResourceName=rds_arn).get("TagList", [])
+        rds_tags = {t.get("Key"): t.get("Value") for t in rds_tags_list}
+        assert rds_tags.get("ClearLedgerDeployment") == ctx.config["resource_prefix"], (
+            f"Live RDS instance {raw_db_id} must have tag ClearLedgerDeployment={ctx.config['resource_prefix']}, found {rds_tags}"
+        )
 
         with pg_connect(m, ctx.config) as conn:
             with conn.cursor() as cur:
@@ -242,9 +261,30 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                     "idx_clearledger_outbox_unpublished",
                     "idx_clearledger_outbox_unarchived",
                     "idx_clearledger_events_settlement_version",
+                    "idx_clearledger_idempotency_event",
+                    "idx_clearledger_idempotency_version",
+                    "idx_clearledger_entry_id",
                 }
                 assert expected_indexes.issubset(found_indexes), (
                     f"Missing required clearledger indexes in PostgreSQL: expected {expected_indexes}, found {found_indexes}"
+                )
+                cur.execute(
+                    """
+                    SELECT c.relname, t.tgname, t.tgenabled::text
+                    FROM pg_trigger t
+                    JOIN pg_class c ON c.oid = t.tgrelid
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'clearledger'
+                      AND NOT t.tgisinternal
+                    """
+                )
+                trigger_rows = cur.fetchall()
+                assert len(trigger_rows) >= 4, (
+                    f"Expected user-defined domain triggers on clearledger.{expected_tables}, found {trigger_rows}"
+                )
+                disabled_triggers = [r for r in trigger_rows if r[2] == "D"]
+                assert not disabled_triggers, (
+                    f"All user-defined triggers in schema clearledger must be enabled, found disabled triggers: {disabled_triggers}"
                 )
 
                 def _assert_pg_rejects(label: str, sql: str, params: tuple[Any, ...] = ()) -> None:

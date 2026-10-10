@@ -742,6 +742,43 @@ def invoke_lambda_sync(function_name: str, payload: dict[str, Any] | None = None
     return json.loads(raw) if raw else {}
 
 
+def fetch_cloudwatch_log_messages(logs_client: Any, lg_name: str) -> list[str]:
+    msgs: list[str] = []
+    next_token: str | None = None
+    for _ in range(10):
+        kwargs: dict[str, Any] = {"logGroupName": lg_name, "limit": 1000}
+        if next_token:
+            kwargs["nextToken"] = next_token
+        try:
+            resp = logs_client.filter_log_events(**kwargs)
+        except Exception:  # noqa: BLE001
+            break
+        for ev in resp.get("events", []):
+            msgs.append(ev.get("message", ""))
+        next_token = resp.get("nextToken")
+        if not next_token:
+            break
+    try:
+        streams = logs_client.describe_log_streams(logGroupName=lg_name).get("logStreams", [])
+    except Exception:  # noqa: BLE001
+        streams = []
+    for st in streams:
+        sname = st.get("logStreamName")
+        if sname:
+            try:
+                st_events = logs_client.get_log_events(
+                    logGroupName=lg_name,
+                    logStreamName=sname,
+                    startFromHead=False,
+                    limit=500,
+                ).get("events", [])
+                for ev in st_events:
+                    msgs.append(ev.get("message", ""))
+            except Exception:  # noqa: BLE001
+                pass
+    return msgs
+
+
 def build_random_settlement_spec(rng: random.Random, step_count: int | None = None) -> dict[str, Any]:
     settlement_id = str(uuid.uuid4())
     account_id = f"acct-{rng.randint(1000, 9999)}"
@@ -802,6 +839,13 @@ def snapshot_inventory(config: dict[str, Any] | None = None) -> dict[str, set[st
     inv["dynamodb_tables"] = set(ddb.list_tables().get("TableNames", []))
     inv["lambda_functions"] = {f["FunctionName"] for f in lam.list_functions().get("Functions", [])}
     inv["ecs_clusters"] = set(ecs.list_clusters().get("clusterArns", []))
+    ecs_tdefs: set[str] = set()
+    for td_status in ("ACTIVE", "INACTIVE"):
+        try:
+            ecs_tdefs.update(ecs.list_task_definitions(status=td_status).get("taskDefinitionArns", []))
+        except Exception:  # noqa: BLE001
+            pass
+    inv["ecs_task_definitions"] = ecs_tdefs
     inv["load_balancers"] = {lb["LoadBalancerArn"] for lb in elbv2.describe_load_balancers().get("LoadBalancers", [])}
     inv["target_groups"] = {tg["TargetGroupArn"] for tg in elbv2.describe_target_groups().get("TargetGroups", [])}
     inv["rds_instances"] = {
@@ -817,6 +861,9 @@ def snapshot_inventory(config: dict[str, Any] | None = None) -> dict[str, set[st
     }
     inv["iam_roles"] = {r["RoleName"] for r in iam.list_roles().get("Roles", [])}
     inv["iam_policies"] = {p["PolicyName"] for p in iam.list_policies(Scope="Local").get("Policies", [])}
+    inv["iam_instance_profiles"] = {
+        ip["InstanceProfileName"] for ip in iam.list_instance_profiles().get("InstanceProfiles", [])
+    }
     auto_log_prefixes = ("/aws/rds/", "/aws/elasticache/", "/aws/lambda/", "/ecs/")
     inv["log_groups"] = {
         lg["logGroupName"]

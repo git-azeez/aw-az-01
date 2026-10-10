@@ -11,13 +11,13 @@
   - `publicly_accessible = false`
   - `skip_final_snapshot = true`
   - `vpc_security_group_ids` containing the `rds` security group
-- Re-running `deploy.sh` must never replace the RDS instance or lose committed data.
+- Tag the DB subnet group and RDS instance with `ClearLedgerDeployment = <resource_prefix>`. Re-running `deploy.sh` must never replace the RDS instance or lose committed data, and must restore the `ClearLedgerDeployment = <resource_prefix>` tag on the RDS instance if removed out-of-band.
 
 ## Required Database Schema, Relational Invariants, and Triggers
 
-The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and `clearledger-audit-archiver`) do **not** run database migrations on startup. `clearledger-api` relies on PostgreSQL `CHECK`/`UNIQUE`/`FOREIGN KEY` constraints and PL/pgSQL triggers to enforce domain, schema, and state-transition invariants at the database layer (mapping SQLSTATE `23514`, `23503`, `23502`, `23505`, and `P0001` exceptions to HTTP `400 Bad Request`), and `GET /health/ready` verifies that all four tables, all three indexes, and user-defined triggers on all four tables exist in the `clearledger` schema before reporting `checks.postgres = "UP"`.
+The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and `clearledger-audit-archiver`) do **not** run database migrations on startup. `clearledger-api` relies on PostgreSQL `CHECK`/`UNIQUE`/`FOREIGN KEY` constraints and PL/pgSQL triggers to enforce domain, schema, and state-transition invariants at the database layer (mapping SQLSTATE `23514`, `23503`, `23502`, `23505`, and `P0001` exceptions to HTTP `400 Bad Request`), and `GET /health/ready` verifies that all four tables, required indexes, and user-defined triggers on all four tables exist in the `clearledger` schema before reporting `checks.postgres = "UP"`.
 
-`deploy.sh` must idempotently initialize the `clearledger` schema, all four tables, their constraints, their triggers, and all three indexes on the RDS PostgreSQL instance, and ensure that all user-defined triggers on all four tables are enabled (`tgenabled = 'O'`, re-enabling any trigger disabled out-of-band via `ALTER TABLE ... ENABLE TRIGGER ALL`).
+`deploy.sh` must idempotently initialize the `clearledger` schema, all four tables, their constraints, their triggers, and all six required indexes on the RDS PostgreSQL instance, and ensure all user-defined triggers on all four tables remain enabled (`tgenabled = 'O'` in `pg_trigger`, via `ALTER TABLE clearledger.<table_name> ENABLE TRIGGER ALL`).
 
 ### 1. Table `clearledger.settlements`
 
@@ -100,6 +100,12 @@ The pre-built Rust binaries (`clearledger-api`, `clearledger-outbox-relay`, and 
 
 ### 5. Required Indexes in `clearledger` Schema
 
+Create and maintain all six of the following indexes in the `clearledger` schema (recreating any missing index during `deploy.sh`):
+
 - `idx_clearledger_outbox_unpublished`: on `clearledger.outbox (seq)` with partial predicate `WHERE published_at IS NULL`
 - `idx_clearledger_outbox_unarchived`: on `clearledger.outbox (seq)` with partial predicate `WHERE published_at IS NOT NULL AND archived_at IS NULL`
 - `idx_clearledger_events_settlement_version`: on `clearledger.events (settlement_id, aggregate_version)`
+- `idx_clearledger_idempotency_event`: `UNIQUE INDEX` on `clearledger.idempotency_keys (((response_body->>'eventId')::uuid))`
+- `idx_clearledger_idempotency_version`: `UNIQUE INDEX` on `clearledger.idempotency_keys (((response_body->>'settlementId')::uuid), ((response_body->>'version')::integer))`
+- `idx_clearledger_entry_id`: `UNIQUE INDEX` on `clearledger.events (settlement_id, ((payload->'data'->>'entryId')::uuid))` with partial predicate `WHERE event_type = 'LedgerEntryRecorded'`
+

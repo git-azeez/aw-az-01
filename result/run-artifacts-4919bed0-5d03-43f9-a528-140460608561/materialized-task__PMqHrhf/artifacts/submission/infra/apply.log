@@ -1,0 +1,17 @@
+aws_elasticache_replication_group.cache: Creating...
+aws_elasticache_replication_group.cache: Still creating... [10s elapsed]
+aws_elasticache_replication_group.cache: Still creating... [20s elapsed]
+aws_elasticache_replication_group.cache: Still creating... [30s elapsed]
+aws_elasticache_replication_group.cache: Creation complete after 30s [id=cl-4e6f11-cache]
+aws_ecs_task_definition.api: Creating...
+aws_ecs_task_definition.api: Creation complete after 0s [id=cl-4e6f11-api]
+aws_lambda_event_source_mapping.projector: Modifying... [id=488031bc-0ca6-4ebb-92b8-4518b586e6ec]
+aws_lambda_event_source_mapping.projector: Modifications complete after 0s [id=488031bc-0ca6-4ebb-92b8-4518b586e6ec]
+aws_ecs_service.api: Modifying... [id=arn:aws:ecs:us-east-1:000000000000:service/cl-4e6f11-cluster/cl-4e6f11-api]
+aws_ecs_service.api: Modifications complete after 0s [id=arn:aws:ecs:us-east-1:000000000000:service/cl-4e6f11-cluster/cl-4e6f11-api]
+
+Apply complete! Resources: 2 added, 2 changed, 0 destroyed.
+
+Outputs:
+
+manifest = <sensitive>

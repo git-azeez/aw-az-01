@@ -18,7 +18,7 @@
   - `valkey`:
     - **Ingress**: restricted strictly to TCP port `6379` (`from_port = 6379`, `to_port = 6379`, `protocol = "tcp"`) from the `ecs` security group or VPC CIDR (never `0.0.0.0/0` or `::/0`).
     - **Egress**: no explicit outbound TCP/UDP egress rules (`egress = []`; passive data stores do not initiate outbound connections).
-- During `deploy.sh` convergence, revoke any out-of-band public (`0.0.0.0/0` or `::/0`) ingress rules added to `ecs`, `rds`, or `valkey` and any out-of-band egress rules added to `rds` or `valkey`.
+- During `deploy.sh` convergence, revoke any out-of-band CIDR ingress rules added to `ecs` (which may only accept ingress from the `alb` security group ID), any public (`0.0.0.0/0` or `::/0`) ingress rules added to `rds` or `valkey`, any `0.0.0.0/0` or `::/0` egress rules added to `alb`, and any out-of-band egress rules added to `rds` or `valkey`.
 - Tag the VPC, subnets, internet gateway, route tables, and security groups with `ClearLedgerDeployment = <resource_prefix>`.
 
 

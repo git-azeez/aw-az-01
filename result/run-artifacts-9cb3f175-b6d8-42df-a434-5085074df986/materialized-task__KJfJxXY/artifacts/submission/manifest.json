@@ -1,0 +1,135 @@
+{
+  "audit": {
+    "bucket_arn": "arn:aws:s3:::cl-5e5e07-audit-archive",
+    "bucket_name": "cl-5e5e07-audit-archive",
+    "prefix": "ledger-audit/"
+  },
+  "auth": {
+    "clients": {
+      "admin": {
+        "client_id": "7f12576afc364b3cb9640729f4",
+        "client_secret": "4c33b7b50b784a01b4f4890b2c67ab23a803abac459149fba245f7d318a5eff9",
+        "scope": "clearledger/admin"
+      },
+      "read": {
+        "client_id": "1d8b152302ee453897e3196ca9",
+        "client_secret": "aa9ce52106ae4a28bcf60d3b2987456f321159460c614988b84c25563c5c6aeb",
+        "scope": "clearledger/read"
+      },
+      "write": {
+        "client_id": "a8d492f3fd0743aea0d00bffd5",
+        "client_secret": "caa9e2b6e3e04192a368909eb1b17f0925b28617f4174e34bd1ad62d5b161cef",
+        "scope": "clearledger/write"
+      }
+    },
+    "issuer_url": "http://aws:4566/us-east-1_81072b2b9",
+    "resource_server_identifier": "clearledger",
+    "token_endpoint": "http://aws:4566/cognito-idp/oauth2/token",
+    "user_pool_arn": "arn:aws:cognito-idp:us-east-1:000000000000:userpool/us-east-1_81072b2b9",
+    "user_pool_id": "us-east-1_81072b2b9"
+  },
+  "cache": {
+    "cluster_id": "cl-5e5e07-valkey",
+    "endpoint": "aws",
+    "engine": "valkey",
+    "port": 6379
+  },
+  "compute": {
+    "cluster_arn": "arn:aws:ecs:us-east-1:000000000000:cluster/cl-5e5e07-cluster",
+    "cluster_name": "cl-5e5e07-cluster",
+    "desired_count": 2,
+    "service_arn": "arn:aws:ecs:us-east-1:000000000000:service/cl-5e5e07-cluster/cl-5e5e07-api",
+    "service_name": "cl-5e5e07-api",
+    "task_definition_arn": "arn:aws:ecs:us-east-1:000000000000:task-definition/cl-5e5e07-api:3"
+  },
+  "database": {
+    "db_name": "clearledger",
+    "endpoint": "aws",
+    "instance_arn": "arn:aws:rds:us-east-1:000000000000:db:cl-5e5e07-db",
+    "instance_id": "cl-5e5e07-db",
+    "port": 7001,
+    "username": "clearledger"
+  },
+  "iam": {
+    "archiver_role_arn": "arn:aws:iam::000000000000:role/cl-5e5e07-archiver",
+    "ecs_execution_role_arn": "arn:aws:iam::000000000000:role/cl-5e5e07-ecs-execution",
+    "ecs_task_role_arn": "arn:aws:iam::000000000000:role/cl-5e5e07-ecs-task",
+    "projector_role_arn": "arn:aws:iam::000000000000:role/cl-5e5e07-projector",
+    "relay_role_arn": "arn:aws:iam::000000000000:role/cl-5e5e07-relay",
+    "scheduler_role_arn": "arn:aws:iam::000000000000:role/cl-5e5e07-scheduler"
+  },
+  "ingress": {
+    "alb_arn": "arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/cl-5e5e07-alb/1eaee0e4fc0d4a5e",
+    "alb_dns_name": "cl-5e5e07-alb-1eaee0e4fc0d4a5e.elb.aws",
+    "container_port": 8080,
+    "listener_arn": "arn:aws:elasticloadbalancing:us-east-1:000000000000:listener/app/cl-5e5e07-alb/1eaee0e4fc0d4a5e/c6c3b3f711574ac4",
+    "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/cl-5e5e07-api/4bf09b0234844a81"
+  },
+  "kms": {
+    "audit_arn": "arn:aws:kms:us-east-1:000000000000:key/a2a1d1ec-3a02-48e3-9cd7-879031286314",
+    "database_arn": "arn:aws:kms:us-east-1:000000000000:key/f724b3a8-2ccc-4062-97f9-3e7dbc29df92",
+    "messaging_arn": "arn:aws:kms:us-east-1:000000000000:key/cad8142a-c0d6-480d-b64b-76c1e0b366dc",
+    "projection_arn": "arn:aws:kms:us-east-1:000000000000:key/10b1aba7-7180-4b96-9344-c4d39f66ba09"
+  },
+  "logs": {
+    "api_log_group": "/clearledger/cl-5e5e07/api",
+    "archiver_log_group": "/clearledger/cl-5e5e07/audit-archiver",
+    "projector_log_group": "/clearledger/cl-5e5e07/projector",
+    "relay_log_group": "/clearledger/cl-5e5e07/outbox-relay"
+  },
+  "messaging": {
+    "dlq_arn": "arn:aws:sqs:us-east-1:000000000000:cl-5e5e07-events-dlq",
+    "dlq_name": "cl-5e5e07-events-dlq",
+    "dlq_url": "http://aws:4566/000000000000/cl-5e5e07-events-dlq",
+    "event_source_mapping_uuid": "c7a35da5-fd34-4002-82f7-6fb10227c6d4",
+    "max_receive_count": 4,
+    "queue_arn": "arn:aws:sqs:us-east-1:000000000000:cl-5e5e07-events",
+    "queue_name": "cl-5e5e07-events",
+    "queue_url": "http://aws:4566/000000000000/cl-5e5e07-events"
+  },
+  "network": {
+    "private_subnet_ids": [
+      "subnet-66624e88",
+      "subnet-6afadebf"
+    ],
+    "public_subnet_ids": [
+      "subnet-89c91cc5",
+      "subnet-9ff280cf"
+    ],
+    "security_group_ids": {
+      "alb": "sg-5761816cc89d12ebc",
+      "ecs": "sg-8d7d03fdf76964dc5",
+      "rds": "sg-15362c48b64334e2b",
+      "valkey": "sg-a2ebaa4048ccd2754"
+    },
+    "vpc_id": "vpc-2a8ded6f"
+  },
+  "projections": {
+    "gsi_name": "AccountIndex",
+    "table_arn": "arn:aws:dynamodb:us-east-1:000000000000:table/cl-5e5e07-projections",
+    "table_name": "cl-5e5e07-projections"
+  },
+  "region": "us-east-1",
+  "resource_prefix": "cl-5e5e07",
+  "schedules": {
+    "archive_schedule_arn": "arn:aws:scheduler:us-east-1:000000000000:schedule/default/cl-5e5e07-audit-archive",
+    "archive_schedule_name": "cl-5e5e07-audit-archive",
+    "outbox_schedule_arn": "arn:aws:scheduler:us-east-1:000000000000:schedule/default/cl-5e5e07-outbox-relay",
+    "outbox_schedule_name": "cl-5e5e07-outbox-relay"
+  },
+  "service_url": "http://aws:80",
+  "workers": {
+    "audit_archiver": {
+      "function_arn": "arn:aws:lambda:us-east-1:000000000000:function:cl-5e5e07-audit-archiver",
+      "function_name": "cl-5e5e07-audit-archiver"
+    },
+    "outbox_relay": {
+      "function_arn": "arn:aws:lambda:us-east-1:000000000000:function:cl-5e5e07-outbox-relay",
+      "function_name": "cl-5e5e07-outbox-relay"
+    },
+    "projector": {
+      "function_arn": "arn:aws:lambda:us-east-1:000000000000:function:cl-5e5e07-projector",
+      "function_name": "cl-5e5e07-projector"
+    }
+  }
+}

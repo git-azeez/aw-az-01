@@ -15,6 +15,7 @@ from .helpers import (
     boto_client,
     diff_inventory,
     get_access_token,
+    invoke_lambda_sync,
     load_tfstate,
     pg_connect,
     resolve_service_url,
@@ -51,7 +52,14 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         s3 = boto_client("s3", ctx.config)
         iam = boto_client("iam", ctx.config)
         ec2 = boto_client("ec2", ctx.config)
+        kms = boto_client("kms", ctx.config)
+        rds = boto_client("rds", ctx.config)
+        elbv2 = boto_client("elbv2", ctx.config)
+        ecs = boto_client("ecs", ctx.config)
         rclient = valkey_connect(before_manifest, ctx.config)
+
+        invoke_lambda_sync(before_manifest["workers"]["outbox_relay"]["function_name"])
+        invoke_lambda_sync(before_manifest["workers"]["audit_archiver"]["function_name"])
 
         committed_items = list(ctx.committed_settlements.items())
         sample_sid, sample_meta = committed_items[0]
@@ -66,27 +74,27 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM clearledger.settlements")
                 before_count = cur.fetchone()[0]
-                cur.execute("SET LOCAL session_replication_role = 'replica'")
                 cur.execute(
                     """
                     UPDATE clearledger.outbox
                     SET published_at = NULL,
                         archived_at = NULL,
-                        attempts = 2,
+                        attempts = GREATEST(attempts, 2),
                         last_error = 'Simulated transient SQS timeout'
                     WHERE settlement_id = %s AND aggregate_version = %s
                     """,
                     (sample_sid, sample_meta["expected_version"]),
                 )
-                cur.execute("SET LOCAL session_replication_role = 'origin'")
                 cur.execute("ALTER TABLE clearledger.outbox DISABLE TRIGGER USER")
+                cur.execute("DROP INDEX IF EXISTS clearledger.idx_clearledger_entry_id")
             conn.commit()
 
         # Corrupt S3 audit archive for s3_loss_sid in-place (while archived_at remains NOT NULL in PostgreSQL),
         # drop one archived event completely while keeping a valid-digest subset batch, write an overlapping valid-digest
         # single-event batch, and write a forged-digest batch key.
-        # Note: we do NOT delete sample_sid's existing S3 batch here, so if deploy.sh merely runs audit_archiver
-        # without deduplicating S3 batches against unarchived PostgreSQL rows, sample_sid will be duplicated in S3!
+        # Note: we do NOT delete sample_sid's existing S3 batch or the second S3 batch here, so if deploy.sh merely runs
+        # audit_archiver on sample_sid without re-archiving the full contiguous outbox stream, sample_sid will be duplicated
+        # or out-of-order across S3 batches!
         with pg_connect(before_manifest, ctx.config) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT event_id::text, seq FROM clearledger.outbox")
@@ -100,7 +108,10 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                     json.loads(sv_v1_row[0]) if isinstance(sv_v1_row[0], str) else sv_v1_row[0]
                 )
 
-        for obj in s3.list_objects_v2(Bucket=before_bucket, Prefix="ledger-audit/").get("Contents", []):
+        for obj in sorted(
+            s3.list_objects_v2(Bucket=before_bucket, Prefix="ledger-audit/").get("Contents", []),
+            key=lambda o: o["Key"],
+        ):
             body = s3.get_object(Bucket=before_bucket, Key=obj["Key"])["Body"].read().decode()
             lines = [ln for ln in body.splitlines() if ln.strip()]
             tampered = False
@@ -204,7 +215,8 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         )
 
         # 1. Control-plane drift across SQS, DLQ, EventBridge Scheduler, CloudWatch Logs, Lambda worker environments,
-        #    out-of-band IAM role policies, and security group egress rules
+        #    out-of-band IAM role policies, security group ingress/egress rules, KMS keys/policies/tags, RDS tags,
+        #    ALB health check, ECS containerInsights, DynamoDB PITR, S3 PublicAccessBlock, and prefix-scoped rogue resources
         sqs.set_queue_attributes(
             QueueUrl=before_manifest["messaging"]["queue_url"],
             Attributes={"VisibilityTimeout": "19"},
@@ -293,9 +305,33 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         )["Policy"]
         iam.attach_role_policy(RoleName=proj_role_name, PolicyArn=drifted_managed_pol["Arn"])
 
+        alb_sg_id = before_manifest["network"]["security_group_ids"]["alb"]
+        ecs_sg_id = before_manifest["network"]["security_group_ids"]["ecs"]
         rds_sg_id = before_manifest["network"]["security_group_ids"]["rds"]
         valkey_sg_id = before_manifest["network"]["security_group_ids"]["valkey"]
         try:
+            ec2.authorize_security_group_ingress(
+                GroupId=ecs_sg_id,
+                IpPermissions=[
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 8080,
+                        "ToPort": 8080,
+                        "IpRanges": [{"CidrIp": "10.0.0.0/8"}],
+                    }
+                ],
+            )
+            ec2.authorize_security_group_egress(
+                GroupId=alb_sg_id,
+                IpPermissions=[
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 8080,
+                        "ToPort": 8080,
+                        "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+                    }
+                ],
+            )
             ec2.authorize_security_group_ingress(
                 GroupId=rds_sg_id,
                 IpPermissions=[
@@ -328,6 +364,70 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                         "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
                     }
                 ],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            kms.disable_key_rotation(KeyId=before_manifest["kms"]["audit_arn"])
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            kms.untag_resource(
+                KeyId=before_manifest["kms"]["database_arn"],
+                TagKeys=["ClearLedgerDeployment", "ClearLedgerKeyUsage"],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            kms.disable_key(KeyId=before_manifest["kms"]["projection_arn"])
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            kms.schedule_key_deletion(
+                KeyId=before_manifest["kms"]["messaging_arn"],
+                PendingWindowInDays=7,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            rds.remove_tags_from_resource(
+                ResourceName=before_manifest["database"]["instance_arn"],
+                TagKeys=["ClearLedgerDeployment"],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            elbv2.modify_target_group(
+                TargetGroupArn=before_manifest["ingress"]["target_group_arn"],
+                HealthCheckPath="/health/live",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            ecs.update_cluster_settings(
+                cluster=before_manifest["compute"]["cluster_name"],
+                settings=[{"name": "containerInsights", "value": "disabled"}],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            ddb.update_continuous_backups(
+                TableName=before_manifest["projections"]["table_name"],
+                PointInTimeRecoverySpecification={"PointInTimeRecoveryEnabled": False},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            s3.put_public_access_block(
+                Bucket=before_bucket,
+                PublicAccessBlockConfiguration={
+                    "BlockPublicAcls": False,
+                    "IgnorePublicAcls": False,
+                    "BlockPublicPolicy": False,
+                    "RestrictPublicBuckets": False,
+                },
             )
         except Exception:  # noqa: BLE001
             pass
@@ -580,8 +680,30 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         assert not remaining_drifted_pols, (
             f"Expected deploy.sh to delete detached out-of-band prefix-scoped customer-managed IAM policy {prefix}-drifted-projector-policy, found {remaining_drifted_pols}"
         )
+        alb_sg_after = ec2.describe_security_groups(GroupIds=[alb_sg_id])["SecurityGroups"][0]
+        ecs_sg_after = ec2.describe_security_groups(GroupIds=[ecs_sg_id])["SecurityGroups"][0]
         rds_sg_after = ec2.describe_security_groups(GroupIds=[rds_sg_id])["SecurityGroups"][0]
         valkey_sg_after = ec2.describe_security_groups(GroupIds=[valkey_sg_id])["SecurityGroups"][0]
+        ecs_cidr_ingress = [
+            r
+            for r in (ecs_sg_after.get("IpPermissions") or [])
+            if (r.get("IpRanges") or r.get("Ipv6Ranges"))
+        ]
+        assert not ecs_cidr_ingress, (
+            f"Expected deploy.sh to revoke out-of-band CIDR ingress rules on ecs security group {ecs_sg_id}, found {ecs_cidr_ingress}"
+        )
+        alb_cidr_egress = [
+            r
+            for r in (alb_sg_after.get("IpPermissionsEgress") or [])
+            if str(r.get("IpProtocol")) != "-1"
+            and (
+                any(c.get("CidrIp") in ("0.0.0.0/0", "::/0") for c in r.get("IpRanges", []))
+                or any(c.get("CidrIpv6") in ("0.0.0.0/0", "::/0") for c in r.get("Ipv6Ranges", []))
+            )
+        ]
+        assert not alb_cidr_egress, (
+            f"Expected deploy.sh to revoke out-of-band 0.0.0.0/0 egress rules on alb security group {alb_sg_id}, found {alb_cidr_egress}"
+        )
         rds_public_ingress = [
             r
             for r in (rds_sg_after.get("IpPermissions") or [])
@@ -604,6 +726,65 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             f"Expected deploy.sh to revoke out-of-band egress rules on valkey security group {valkey_sg_id}, found {valkey_explicit_egress}"
         )
 
+        # Verify KMS key state, rotation, and tags after re-apply
+        for role_label, k_arn in (
+            ("database", after_manifest["kms"]["database_arn"]),
+            ("messaging", after_manifest["kms"]["messaging_arn"]),
+            ("projection", after_manifest["kms"]["projection_arn"]),
+            ("audit", after_manifest["kms"]["audit_arn"]),
+        ):
+            k_meta = kms.describe_key(KeyId=k_arn)["KeyMetadata"]
+            assert k_meta.get("Enabled") is True and k_meta.get("KeyState") == "Enabled", (
+                f"Expected deploy.sh to cancel deletion and re-enable drifted KMS key {role_label} ({k_arn}), got {k_meta}"
+            )
+            assert kms.get_key_rotation_status(KeyId=k_arn).get("KeyRotationEnabled") is True, (
+                f"Expected deploy.sh to re-enable key rotation on KMS key {role_label} ({k_arn})"
+            )
+            k_tags = {
+                t.get("TagKey"): t.get("TagValue")
+                for t in kms.list_resource_tags(KeyId=k_arn).get("Tags", [])
+            }
+            assert k_tags.get("ClearLedgerDeployment") == prefix and k_tags.get("ClearLedgerKeyUsage") == role_label, (
+                f"Expected deploy.sh to restore KMS tags on {role_label} ({k_arn}), found {k_tags}"
+            )
+
+        rds_tags_after = {
+            t.get("Key"): t.get("Value")
+            for t in rds.list_tags_for_resource(ResourceName=after_manifest["database"]["instance_arn"]).get("TagList", [])
+        }
+        assert rds_tags_after.get("ClearLedgerDeployment") == prefix, (
+            f"Expected deploy.sh to restore ClearLedgerDeployment={prefix} tag on RDS instance, found {rds_tags_after}"
+        )
+
+        tg_after = elbv2.describe_target_groups(TargetGroupArns=[after_manifest["ingress"]["target_group_arn"]])["TargetGroups"][0]
+        assert tg_after.get("HealthCheckPath") == "/health/ready", (
+            f"Expected deploy.sh to restore ALB target group HealthCheckPath='/health/ready', got {tg_after.get('HealthCheckPath')}"
+        )
+
+        clusters_after = ecs.describe_clusters(
+            clusters=[after_manifest["compute"]["cluster_name"]],
+            include=["SETTINGS"],
+        ).get("clusters", [])
+        if clusters_after and clusters_after[0].get("settings"):
+            assert any(
+                s.get("name") == "containerInsights" and s.get("value") == "enabled"
+                for s in clusters_after[0]["settings"]
+            ), f"Expected deploy.sh to restore ECS cluster containerInsights='enabled', got {clusters_after[0].get('settings')}"
+
+        pitr_after = ddb.describe_continuous_backups(TableName=after_manifest["projections"]["table_name"])[
+            "ContinuousBackupsDescription"
+        ]
+        pitr_status_after = (pitr_after.get("PointInTimeRecoveryDescription") or {}).get("PointInTimeRecoveryStatus")
+        assert pitr_after.get("ContinuousBackupsStatus") == "ENABLED" and pitr_status_after in {"ENABLED", None}, (
+            f"Expected deploy.sh to restore DynamoDB PITR to ENABLED, got {pitr_after}"
+        )
+
+        pab_after = s3.get_public_access_block(Bucket=after_manifest["audit"]["bucket_name"])["PublicAccessBlockConfiguration"]
+        assert all(
+            pab_after.get(k) is True
+            for k in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")
+        ), f"Expected deploy.sh to restore S3 PublicAccessBlock flags to True, got {pab_after}"
+
         with pg_connect(after_manifest, ctx.config) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM clearledger.settlements")
@@ -622,10 +803,12 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                     JOIN pg_namespace n ON n.oid = c.relnamespace
                     WHERE n.nspname = 'clearledger'
                       AND NOT t.tgisinternal
-                      AND t.tgenabled != 'O'
+                      AND t.tgenabled = 'D'
                     """
                 )
                 disabled_triggers = cur.fetchall()
+                cur.execute("SELECT indexname FROM pg_indexes WHERE schemaname = 'clearledger'")
+                pg_indexes = {r[0] for r in cur.fetchall()}
                 cur.execute("SELECT seq, event_id::text, payload FROM clearledger.outbox")
                 pg_outbox_map = {
                     ev_id: (int(seq), (json.loads(pay) if isinstance(pay, str) else pay))
@@ -636,7 +819,19 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
         assert unarch_count == 0, f"deploy.sh left {unarch_count} unarchived outbox rows after re-apply"
         assert err_count == 0, f"deploy.sh left {err_count} outbox rows with non-null last_error after re-apply"
         assert not disabled_triggers, (
-            f"Expected deploy.sh to re-enable all user triggers in schema clearledger, found disabled triggers: {disabled_triggers}"
+            f"Expected deploy.sh to re-enable all user triggers in schema clearledger, found disabled: {disabled_triggers}"
+        )
+        required_pg_indexes = {
+            "idx_clearledger_outbox_unpublished",
+            "idx_clearledger_outbox_unarchived",
+            "idx_clearledger_events_settlement_version",
+            "idx_clearledger_idempotency_event",
+            "idx_clearledger_idempotency_version",
+            "idx_clearledger_entry_id",
+        }
+        missing_pg_indexes = sorted(required_pg_indexes - pg_indexes)
+        assert not missing_pg_indexes, (
+            f"Expected deploy.sh to restore all required clearledger indexes, missing: {missing_pg_indexes}"
         )
 
         all_bucket_objs = s3.list_objects_v2(Bucket=after_manifest["audit"]["bucket_name"]).get("Contents", [])
@@ -772,14 +967,16 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             assert r_same_ver.status_code == 200
             sv_body = r_same_ver.json()
             expected_sv_last_entry = same_ver_meta["spec"]["entries"][-1]
+            expected_sv_last_memo = same_ver_meta["expected_last_memo"]
             assert (
                 sv_body.get("status") == same_ver_meta["last_status"]
                 and sv_body.get("clearingStage") == same_ver_meta["last_stage"]
                 and sv_body.get("lastEntryId") == expected_sv_last_entry["entryId"]
-                and sv_body.get("lastMemo") == expected_sv_last_entry["memo"]
+                and sv_body.get("lastMemo") == expected_sv_last_memo
                 and not str(sv_body.get("updatedAt", "")).startswith("1999-")
             ), (
-                f"Expected deploy.sh to heal same-version drifted STATE (lastEntryId/lastMemo/updatedAt) for {same_ver_sid}, got {sv_body}"
+                f"Expected deploy.sh to heal same-version drifted STATE (lastEntryId/lastMemo/updatedAt) for {same_ver_sid}: "
+                f"expected lastMemo={expected_sv_last_memo!r}, got {sv_body}"
             )
             r_sv_ledger = client.get(
                 f"/v1/settlements/{same_ver_sid}/ledger",
@@ -847,12 +1044,14 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             )
             cd_body = r_cache_drift.json()
             expected_cd_last_entry = cache_drift_meta["spec"]["entries"][-1]
+            expected_cd_last_memo = cache_drift_meta["expected_last_memo"]
             assert (
                 cd_body.get("lastEntryId") == expected_cd_last_entry["entryId"]
-                and cd_body.get("lastMemo") == expected_cd_last_entry["memo"]
+                and cd_body.get("lastMemo") == expected_cd_last_memo
                 and not str(cd_body.get("updatedAt", "")).startswith("1999-")
             ), (
-                f"Expected deploy.sh to evict/reconcile Valkey cache entry with poisoned lastEntryId/lastMemo/updatedAt for {cache_drift_sid}, got {cd_body}"
+                f"Expected deploy.sh to evict/reconcile Valkey cache entry with poisoned lastEntryId/lastMemo/updatedAt for {cache_drift_sid}: "
+                f"expected lastMemo={expected_cd_last_memo!r}, got {cd_body}"
             )
 
             r_orphan = client.get(
@@ -889,6 +1088,7 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
         logs = boto_client("logs", ctx.config)
         scheduler = boto_client("scheduler", ctx.config)
         kms = boto_client("kms", ctx.config)
+        cognito = boto_client("cognito-idp", ctx.config)
 
         # Simulate out-of-band operational artifacts scoped to resource_prefix before teardown:
         # 1) Unmanaged inline policy on a deployment IAM role
@@ -947,7 +1147,7 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
             pass
         iam.attach_role_policy(RoleName=task_role_name, PolicyArn=managed_pol["Arn"])
 
-        # 3) Out-of-band prefix-scoped IAM role with inline policy
+        # 3) Out-of-band prefix-scoped IAM role with inline policy and attached instance profile
         ops_role_name = f"{prefix}-ops-breakglass-role"
         iam.create_role(
             RoleName=ops_role_name,
@@ -985,9 +1185,19 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
                 }
             ),
         )
+        ops_profile_name = f"{prefix}-ops-breakglass-profile"
+        try:
+            iam.create_instance_profile(InstanceProfileName=ops_profile_name)
+            iam.add_role_to_instance_profile(
+                InstanceProfileName=ops_profile_name,
+                RoleName=ops_role_name,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
-        # 4) Out-of-band prefix-scoped SQS queue, versioned S3 bucket, DynamoDB table,
-        #    CloudWatch log group, EventBridge schedule, KMS alias, and customer-managed KMS key
+        # 4) Out-of-band prefix-scoped SQS queue, versioned S3 bucket (with in-progress multipart upload),
+        #    DynamoDB table, CloudWatch log group, EventBridge schedule, Cognito user pool with domain,
+        #    KMS alias, and customer-managed KMS key
         sqs.create_queue(
             QueueName=f"{prefix}-ops-dlq",
             tags={
@@ -1009,6 +1219,18 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
                 Key="quarantine/diag-001.ndjson",
                 Body=b'{"diag":1}\n',
                 ContentType="application/x-ndjson",
+            )
+            s3.create_multipart_upload(
+                Bucket=ops_bucket_name,
+                Key="quarantine/diag-multipart.ndjson",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            ops_pool = cognito.create_user_pool(PoolName=f"{prefix}-ops-pool")["UserPool"]
+            cognito.create_user_pool_domain(
+                Domain=f"{prefix}-ops-dom",
+                UserPoolId=ops_pool["Id"],
             )
         except Exception:  # noqa: BLE001
             pass

@@ -100,21 +100,21 @@ You are an expert Staff Cloud Infrastructure & Benchmark Architect building and 
 
 Your primary mission is to build a complete, production-grade cloud infrastructure and distributed systems benchmark task that satisfies **three non-negotiable calibration targets**:
 1. **Oracle Reference Solution = 100% True Pass (`reward = 1.0`, `100/100` rubric points)** when executed in a clean, separate verifier container.
-2. **Evaluated Model Runs = True Fail (`reward = 0.0`, score `< 100/100`), with at most ONE (1) non-oracle True Pass allowed**:
-   - Target `0` non-oracle True Passes (only the `oracle` run achieves a True Pass and all evaluated model runs are **True Fails**).
-   - Across the entire model evaluation suite (e.g., `claude-opus`, `claude-sonnet`, `gpt-5.4`, `gpt-5.3-codex`, `gemini-3.1-pro`, `deepseek`, `qwen`), **at most one (1) model run** is permitted to achieve a **True Pass (`100/100`)**. If 2 or more model runs pass, the task is too easy and must be hardened so only `oracle` (and at most 1 model run) passes while all other runs are **True Fails**.
+2. **Evaluated Model Runs = `gpt-5.6-m1alias-gpt-6-astra` True Pass (`reward = 1.0`, `100/100`) and All Remaining Model Runs True Fail (`reward = 0.0`, score `< 100/100`)**:
+   - Specifically, `oracle` and `openai/gpt-5.6-m1alias-gpt-6-astra` (`gpt-astra`, at most 1 non-oracle model run) MUST achieve a **True Pass (`100/100`, `reward = 1.0`)**, while all remaining evaluated model runs (`claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-5.6-m1alias-gpt-6.1-sol`, etc.) MUST evaluate to **True Fails (`< 100/100`, `reward = 0.0`)**.
+   - Across the entire model evaluation suite, **only `oracle` and `gpt-5.6-m1alias-gpt-6-astra` (1 non-oracle model run)** are permitted to achieve a **True Pass (`100/100`)**. All other model runs must be **True Fails**.
 3. **Zero False Fails and Zero False Passes (`0` tolerated across all runs)**:
    - **No False Fails (`0` allowed)**: Every model failure MUST be a **True Fail** caused by the model missing an explicit, documented architectural, security, state-machine, drift-remediation, or cross-store recovery requirement. A model must **NEVER** fail due to undocumented test assertions, contradictions between `instruction.md`/`contracts/` and `tests/suite/*.py`, emulator quirks, or Python package/`PATH`/virtualenv discrepancies between `environment/Dockerfile` and `tests/runtime/Dockerfile`.
-   - **No False Passes (`0` allowed)**: A model must **NEVER** pass if it takes shortcuts such as wildcard `"*"` IAM permissions, unrestricted `0.0.0.0/0` security group rules, missing DB constraints/triggers, or incomplete drift/cache/archive cleanup.
+   - **No False Passes (`0` allowed)**: A model must **NEVER** pass if it takes shortcuts such as wildcard `"*"` IAM permissions, unrestricted `0.0.0.0/0` security group rules, missing DB constraints/triggers/indexes, or incomplete drift/cache/archive cleanup.
 
 ---
 
 ## 1. Verdict Taxonomy & Mandatory "Frontier-Breaker" Design Patterns
 
 ### A. Verdict Definitions & Acceptance Criteria
-- **True Pass (Required for `oracle`; at most 1 non-oracle model run allowed)**:
+- **True Pass (Required for `oracle` and `gpt-5.6-m1alias-gpt-6-astra`; 0 other model runs allowed)**:
   - Solution satisfies every documented contract requirement and scores `100/100` (`reward = 1.0`).
-  - Acceptance rule: `oracle` MUST be a **True Pass**, and **0 or at most 1** evaluated model run may be a **True Pass**. All other model runs must be **True Fails**.
+  - Acceptance rule: `oracle` and `openai/gpt-5.6-m1alias-gpt-6-astra` MUST be **True Passes (`100/100`)**, and **all remaining evaluated model runs** (`claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-5.6-m1alias-gpt-6.1-sol`) MUST be **True Fails (`< 100/100`)**.
 - **True Fail (REQUIRED for all remaining evaluated frontier models)**:
   - The environment and `deploy_succeeded` gate work cleanly without harness/container bugs, and the model scores `< 100/100` (`reward = 0.0`, ideally `40–88/100`) because its submission violates one or more documented engineering invariants (or its `deploy.sh` fails due to a genuine bug in the model's own HCL/code).
 - **False Fail (STRICTLY FORBIDDEN — `0` allowed)**:
@@ -123,7 +123,7 @@ Your primary mission is to build a complete, production-grade cloud infrastructu
   - Model scores `100/100` despite violating a documented security, networking, data-integrity, or lifecycle requirement because the verifier didn't test the live state.
 
 ### B. 5 Mandatory "Frontier-Breaker" Invariants (Must Be Included in Every Task)
-Frontier models easily solve standard CRUD + IaC provisioning. To guarantee that only `oracle` (and at most 1 frontier model) achieves a **True Pass** while all other models produce a **True Fail**, you MUST design and document all 5 of these multi-layered invariants in `/workspace/contracts/` and `instruction.md`, and enforce them in `tests/suite/*.py`:
+Frontier models easily solve standard CRUD + IaC provisioning. To guarantee that only `oracle` and `gpt-5.6-m1alias-gpt-6-astra` achieve a **True Pass** while all other models produce a **True Fail**, you MUST design and document all 5 of these multi-layered invariants in `/workspace/contracts/` and `instruction.md`, and enforce them in `tests/suite/*.py`:
 
 1. **Zero-Trust Network Egress (`egress = []` on Data Stores + Port-Scoped Ingress Egress)**:
    - Document in `contracts/infrastructure.md` and `instruction.md` that data-store security groups / firewall rules (e.g., `rds`, `valkey`) must have **no outbound egress rules (`egress = []`)**, and load-balancer security groups (e.g., `alb`) must restrict outbound egress strictly to the application target port (e.g., TCP `8080`) within the VPC CIDR.
@@ -312,9 +312,9 @@ Execute these steps in order:
 - **AUTHOR_EMAIL**: `azeez@micro1.ai`
 - **ORACLE_TARGET**: `100% True Pass (100/100, reward = 1.0)`
 - **MODEL_EVALUATION_ACCEPTANCE_RULE**:
-  # 1. `oracle` MUST be a True Pass (100/100, reward = 1.0).
-  # 2. Target: ALL evaluated model runs (`claude-opus`, `claude-sonnet`, `gpt-5.4`, `gpt-5.3-codex`, `gemini-3.1-pro`, `deepseek`, `qwen`) evaluate to True Fail (< 100/100, reward = 0.0).
-  # 3. Maximum allowed non-oracle True Passes: at most ONE (1) model run across the entire suite. All remaining model runs MUST be True Fails.
+  # 1. `oracle` AND `openai/gpt-5.6-m1alias-gpt-6-astra` (`gpt-astra`) MUST both be True Passes (100/100, reward = 1.0).
+  # 2. All remaining evaluated model runs (`claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-5.6-m1alias-gpt-6.1-sol`, etc.) MUST evaluate to True Fail (< 100/100, reward = 0.0).
+  # 3. Maximum allowed non-oracle True Passes: strictly ONE (1) model run (`gpt-5.6-m1alias-gpt-6-astra`). All other model runs MUST be True Fails.
   # 4. Strictly ZERO (0) False Passes and ZERO (0) False Fails are allowed across all runs.
 - **ADDITIONAL_NOTES**: `Start by proposing 3 distinct, high-difficulty task architectures for the selected CLOUD_PROVIDER and REALM_DOMAIN, or if a specific BUSINESS_SCENARIO is set above, begin implementing Step 1 immediately.`
 
@@ -337,8 +337,8 @@ Inspect `result.json`, `verifier/results.json`, `verifier/test-stdout.txt`, `age
 2. Did the `deploy_succeeded` gate pass or fail on each run, and why?
 3. For every failed test in `verifier/results.json`, was it a genuine model mistake against a documented requirement in `instruction.md` / `/workspace/contracts/` (**True Fail**), or was it caused by an environment issue / undocumented check (**False Fail**)?
 4. Verify our strict acceptance rule:
-   - `oracle` = **True Pass (`100/100`, `reward = 1.0`)**
-   - Non-oracle model runs = **0 (or at most 1) True Pass**, with all other model runs being **True Fails (`< 100/100`, `reward = 0.0`)**
+   - `oracle` AND `openai/gpt-5.6-m1alias-gpt-6-astra` = **True Pass (`100/100`, `reward = 1.0`)**
+   - All remaining model runs (`claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-5.6-m1alias-gpt-6.1-sol`) = **True Fails (`< 100/100`, `reward = 0.0`)**
    - **0 False Fails** and **0 False Passes** across all runs
-5. If ANY run is a **False Fail** or **False Pass**, or if **more than 1 non-oracle model run** achieved a **True Pass (`100/100`)**, immediately fix the False Fail/Pass and harden the task across `/workspace/contracts/`, `instruction.md`, `solution/`, and `tests/suite/` so that only `oracle` (and at most 1 model run) is a True Pass and all other model runs are True Fails with zero False Fails.
+5. If ANY run is a **False Fail** or **False Pass**, or if any model run other than `oracle` and `gpt-5.6-m1alias-gpt-6-astra` achieved a **True Pass (`100/100`)**, immediately fix the False Fail/Pass and calibrate the task across `/workspace/contracts/`, `instruction.md`, `solution/`, and `tests/suite/` so that `oracle` and `gpt-5.6-m1alias-gpt-6-astra` are True Passes and all other model runs are True Fails with zero False Passes and zero False Fails.
 ```

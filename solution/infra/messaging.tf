@@ -32,6 +32,11 @@ resource "aws_lambda_function" "projector" {
   timeout       = 15
   memory_size   = 256
 
+  image_config {
+    command     = []
+    entry_point = []
+  }
+
   environment {
     variables = {
       AWS_REGION                = var.region
@@ -72,6 +77,11 @@ resource "aws_lambda_function" "outbox_relay" {
   timeout       = 30
   memory_size   = 256
 
+  image_config {
+    command     = []
+    entry_point = []
+  }
+
   environment {
     variables = {
       AWS_REGION                = var.region
@@ -103,6 +113,11 @@ resource "aws_lambda_function" "audit_archiver" {
   image_uri     = var.archiver_image
   timeout       = 30
   memory_size   = 256
+
+  image_config {
+    command     = []
+    entry_point = []
+  }
 
   environment {
     variables = {

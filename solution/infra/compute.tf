@@ -11,11 +11,12 @@ resource "aws_lb" "api" {
 }
 
 resource "aws_lb_target_group" "api" {
-  name        = "${local.prefix}-api-tg"
-  port        = 8080
-  protocol    = "HTTP"
-  target_type = "ip"
-  vpc_id      = aws_vpc.main.id
+  name                 = "${local.prefix}-api-tg"
+  port                 = 8080
+  protocol             = "HTTP"
+  target_type          = "ip"
+  vpc_id               = aws_vpc.main.id
+  deregistration_delay = 5
 
   health_check {
     enabled             = true
@@ -23,8 +24,8 @@ resource "aws_lb_target_group" "api" {
     protocol            = "HTTP"
     port                = "traffic-port"
     matcher             = "200"
-    interval            = 10
-    timeout             = 5
+    interval            = 5
+    timeout             = 2
     healthy_threshold   = 2
     unhealthy_threshold = 2
   }
@@ -81,6 +82,10 @@ resource "aws_ecs_task_definition" "api" {
   memory                   = "512"
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+
+  lifecycle {
+    create_before_destroy = true
+  }
 
   container_definitions = jsonencode([
     {

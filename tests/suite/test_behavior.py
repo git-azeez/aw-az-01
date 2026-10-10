@@ -99,6 +99,10 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
 
                 expected_version = len(spec["entries"]) + 1
                 last_entry = spec["entries"][-1]
+                expected_last_memo = next(
+                    (e["memo"] for e in reversed(spec["entries"]) if e.get("memo") is not None),
+                    "Settlement initiated",
+                )
 
                 def _projected() -> dict | None:
                     r = client.get(f"/v1/settlements/{sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
@@ -112,6 +116,9 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
                 assert proj["debitParty"] == spec["debitParty"] and proj["creditParty"] == spec["creditParty"]
                 assert proj["status"] == last_entry["status"] and proj["clearingStage"] == last_entry["clearingStage"]
                 assert proj["entryCount"] == len(spec["entries"])
+                assert proj.get("lastMemo") == expected_last_memo, (
+                    f"Expected projected lastMemo to retain most recent non-null memo {expected_last_memo!r}, got {proj.get('lastMemo')!r}"
+                )
 
                 tl_resp = client.get(f"/v1/settlements/{sid}/ledger", headers={"Authorization": f"Bearer {tokens['read']}"})
                 assert tl_resp.status_code == 200
@@ -124,6 +131,7 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
                     "expected_version": expected_version,
                     "last_status": last_entry["status"],
                     "last_stage": last_entry["clearingStage"],
+                    "expected_last_memo": expected_last_memo,
                 }
 
             same_party_sid = str(uuid.uuid4())
@@ -414,6 +422,7 @@ def test_projection_and_valkey_cache(ctx: VerifierContext) -> None:
             meta["expected_version"] = target_version
             meta["last_status"] = "RECONCILED"
             meta["last_stage"] = "CACHE_REFRESH_STAGE"
+            meta["expected_last_memo"] = "Cache invalidation verification"
 
         return "Verified projection miss -> Valkey cache populate (TTL & schema) -> cache hit -> write invalidation"
 
@@ -551,11 +560,13 @@ def test_idempotency_and_optimistic_concurrency(ctx: VerifierContext) -> None:
 
             wait_until(_v4_projected, timeout_sec=35.0, interval_sec=0.8, description="concurrent winner v4 projected")
 
+        spec["entries"][2] = winning_entry
         ctx.committed_settlements[sid] = {
             "spec": spec,
             "expected_version": 4,
             "last_status": winning_entry["status"],
             "last_stage": winning_entry["clearingStage"],
+            "expected_last_memo": winning_entry["memo"],
         }
         return f"Verified {replays} sequential + 6 concurrent idempotent replays, payload mismatch 409, and 5-way optimistic concurrency race"
 
@@ -630,6 +641,7 @@ def test_backlog_accumulation_and_drain(ctx: VerifierContext) -> None:
                     "expected_version": expected_version,
                     "last_status": spec["entries"][-1]["status"],
                     "last_stage": spec["entries"][-1]["clearingStage"],
+                    "expected_last_memo": spec["entries"][-1]["memo"],
                 }
 
         return f"Queued and drained {total_events} events across {len(specs)} settlements"
@@ -800,6 +812,7 @@ def test_duplicate_delivery_and_dlq_isolation(ctx: VerifierContext) -> None:
             "expected_version": 3,
             "last_status": spec["entries"][-1]["status"],
             "last_stage": spec["entries"][-1]["clearingStage"],
+            "expected_last_memo": spec["entries"][-1]["memo"],
         }
         return "Verified duplicate, out-of-order (v3->v1->v2), and concurrent SQS projection safety plus DLQ isolation"
 
@@ -816,18 +829,71 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         lam = boto_client("lambda", ctx.config)
         ddb = boto_client("dynamodb", ctx.config)
         s3 = boto_client("s3", ctx.config)
+        logs = boto_client("logs", ctx.config)
         rclient = valkey_connect(m, ctx.config)
         service_url = resolve_service_url(m["service_url"], ctx.config)
 
         invoke_lambda_sync(m["workers"]["outbox_relay"]["function_name"])
         invoke_lambda_sync(m["workers"]["audit_archiver"]["function_name"])
 
+        existing_s3 = sorted(
+            s3.list_objects_v2(Bucket=m["audit"]["bucket_name"], Prefix=m["audit"]["prefix"]).get("Contents", []),
+            key=lambda o: o["Key"],
+        )
+        if len(existing_s3) < 2:
+            b2_spec = build_random_settlement_spec(ctx.rng, step_count=1)
+            b2_sid = b2_spec["settlementId"]
+            with httpx.Client(base_url=service_url, timeout=10.0) as client:
+                r_b2 = client.post(
+                    "/v1/settlements",
+                    headers={"Authorization": f"Bearer {tokens['write']}", "Idempotency-Key": f"idem-b2-create-{b2_sid}"},
+                    json={
+                        "settlementId": b2_sid,
+                        "accountId": b2_spec["accountId"],
+                        "reference": b2_spec["reference"],
+                        "debitParty": b2_spec["debitParty"],
+                        "creditParty": b2_spec["creditParty"],
+                        "expectedVersion": 0,
+                    },
+                )
+                assert r_b2.status_code == 201
+                for entry in b2_spec["entries"]:
+                    r_b2e = client.post(
+                        f"/v1/settlements/{b2_sid}/entries",
+                        headers={"Authorization": f"Bearer {tokens['write']}", "Idempotency-Key": f"idem-b2-entry-{entry['entryId']}"},
+                        json=entry,
+                    )
+                    assert r_b2e.status_code == 202
+                wait_until(
+                    lambda: (
+                        (r := client.get(f"/v1/settlements/{b2_sid}", headers={"Authorization": f"Bearer {tokens['read']}"})).status_code == 200
+                        and r.json().get("version") == 2
+                    ),
+                    timeout_sec=30.0,
+                    interval_sec=0.8,
+                    description="second S3 batch settlement projected",
+                )
+            ctx.committed_settlements[b2_sid] = {
+                "spec": b2_spec,
+                "expected_version": 2,
+                "last_status": b2_spec["entries"][-1]["status"],
+                "last_stage": b2_spec["entries"][-1]["clearingStage"],
+                "expected_last_memo": b2_spec["entries"][-1]["memo"],
+            }
+            invoke_lambda_sync(m["workers"]["outbox_relay"]["function_name"])
+            invoke_lambda_sync(m["workers"]["audit_archiver"]["function_name"])
+            existing_s3 = sorted(
+                s3.list_objects_v2(Bucket=m["audit"]["bucket_name"], Prefix=m["audit"]["prefix"]).get("Contents", []),
+                key=lambda o: o["Key"],
+            )
+
         # Simulate bidirectional projection/cache/archive corruption on already-published settlements:
         # 1) Inflated-version STATE corruption on corrupted_sid (version=99 blocks naive projector #version < :new_version)
         # 2) Missing EVENT#00000001 + in-place mutated EVENT#00000002 + phantom EVENT#00000099 on ledger_corrupted_sid
         #    (keeps total EVENT#* count equal to expected_version so count-only checks fail)
         # 3) Same-version / same-SK attribute + AccountIndex GSI + Valkey corruption on same_ver_sid
-        #    (keeps STATE.version == expected_version and EVENT#00000001..N intact so version-only / SK-only checks fail)
+        #    (keeps STATE.version == expected_version and EVENT#00000001..N intact so version-only / SK-only checks fail,
+        #     and final entry has memo=None so copying clearledger.settlements.last_memo=NULL instead of folding events fails)
         # 4) Orphan settlement partition in DynamoDB, Valkey, and S3 ledger-audit/ absent from PostgreSQL
         committed_items = list(ctx.committed_settlements.items())
         corrupted_sid, corrupted_meta = committed_items[0]
@@ -1023,14 +1089,13 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
         )
         rclient.set("clearledger:lock:stray-marker", "poison-non-settlement-key")
 
-        # Corrupt S3 audit archive inside ledger-audit/:
+        # Corrupt S3 audit archive inside ledger-audit/ (corrupting the first batch while leaving the second batch untouched):
         # 1) Drop one archived event completely from S3 while keeping its remaining peer records in a valid-digest batch
         #    (so object-only S3 validation passes unless deploy.sh cross-checks every archived_at IS NOT NULL row against S3)
         # 2) Write an overlapping valid-digest single-event batch so valid_subset[0] is duplicated across two valid-digest S3 keys
         # 3) Write a reversed-sequence valid-digest batch (valid sha256 & min/max seq bounds, but descending line order)
         # 4) Write a forged-digest batch key and a tampered payload batch
         # 5) Write an orphan batch key
-        existing_s3 = s3.list_objects_v2(Bucket=m["audit"]["bucket_name"], Prefix=m["audit"]["prefix"]).get("Contents", [])
         if existing_s3:
             target_key = existing_s3[0]["Key"]
             orig_lines = [
@@ -1358,14 +1423,16 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             assert r_same_ver.status_code == 200
             sv_body = r_same_ver.json()
             expected_sv_last_entry = same_ver_meta["spec"]["entries"][-1]
+            expected_sv_last_memo = same_ver_meta["expected_last_memo"]
             assert (
                 sv_body.get("status") == same_ver_meta["last_status"]
                 and sv_body.get("clearingStage") == same_ver_meta["last_stage"]
                 and sv_body.get("lastEntryId") == expected_sv_last_entry["entryId"]
-                and sv_body.get("lastMemo") == expected_sv_last_entry["memo"]
+                and sv_body.get("lastMemo") == expected_sv_last_memo
                 and not str(sv_body.get("updatedAt", "")).startswith("1999-")
             ), (
-                f"deploy.sh did not reconcile same-version corrupted STATE (lastEntryId/lastMemo/updatedAt) for {same_ver_sid}: got {sv_body}"
+                f"deploy.sh did not reconcile same-version corrupted STATE (lastEntryId/lastMemo/updatedAt) for {same_ver_sid}: "
+                f"expected lastMemo={expected_sv_last_memo!r}, got {sv_body}"
             )
             r_sv_ledger = client.get(f"/v1/settlements/{same_ver_sid}/ledger", headers={"Authorization": f"Bearer {tokens['read']}"})
             assert r_sv_ledger.status_code == 200
@@ -1434,12 +1501,14 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             )
             cd_body = r_cache_drift.json()
             expected_cd_last_entry = cache_drift_meta["spec"]["entries"][-1]
+            expected_cd_last_memo = cache_drift_meta["expected_last_memo"]
             assert (
                 cd_body.get("lastEntryId") == expected_cd_last_entry["entryId"]
-                and cd_body.get("lastMemo") == expected_cd_last_entry["memo"]
+                and cd_body.get("lastMemo") == expected_cd_last_memo
                 and not str(cd_body.get("updatedAt", "")).startswith("1999-")
             ), (
-                f"Expected deploy.sh to evict/reconcile Valkey cache entry with poisoned lastEntryId/lastMemo/updatedAt for {cache_drift_sid}, got {cd_body}"
+                f"Expected deploy.sh to evict/reconcile Valkey cache entry with poisoned lastEntryId/lastMemo/updatedAt for {cache_drift_sid}: "
+                f"expected lastMemo={expected_cd_last_memo!r}, got {cd_body}"
             )
 
             r_orphan_state = client.get(f"/v1/settlements/{orphan_sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
@@ -1459,6 +1528,7 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
             "expected_version": 3,
             "last_status": spec["entries"][-1]["status"],
             "last_stage": spec["entries"][-1]["clearingStage"],
+            "expected_last_memo": spec["entries"][-1]["memo"],
         }
         return "Accepted writes during SQS queue outage and verified full deploy.sh outbox/projection/GSI/cache/S3 1-to-1 reconciliation"
 
@@ -1648,6 +1718,7 @@ def test_rds_reboot_recovery(ctx: VerifierContext) -> None:
                 "expected_version": 1,
                 "last_status": "INITIATED",
                 "last_stage": f"INITIATED@{spec['debitParty']}",
+                "expected_last_memo": "Settlement initiated",
             }
 
         return f"RDS reboot preserved all {len(ctx.committed_settlements)} committed settlements"
@@ -1745,6 +1816,7 @@ def test_authorization_audit_and_observability(ctx: VerifierContext) -> None:
                 "expected_version": 1,
                 "last_status": "INITIATED",
                 "last_stage": "INITIATED@CITIUS33",
+                "expected_last_memo": "Settlement initiated",
             }
 
         invoke_lambda_sync(m["workers"]["outbox_relay"]["function_name"])

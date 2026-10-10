@@ -37,6 +37,59 @@ export TF_IN_AUTOMATION=1
 
 cp "${CONFIG_FILE}" "${TFVARS_FILE}"
 
+# Pre-reconcile any existing canonical KMS keys that were scheduled for deletion or disabled out-of-band
+# so that Terraform refresh/apply can read and update them without KMSInvalidStateException.
+/opt/venv/bin/python3 - <<'PY' || true
+import json
+from pathlib import Path
+import boto3
+
+cfg = json.loads(Path("/workspace/config/config.json").read_text(encoding="utf-8"))
+kms = boto3.client(
+    "kms",
+    region_name=cfg["region"],
+    endpoint_url=cfg["aws_endpoint_url"],
+    aws_access_key_id="test",
+    aws_secret_access_key="test",
+)
+key_ids: set[str] = set()
+manifest_path = Path("/workspace/submission/manifest.json")
+if manifest_path.is_file():
+    try:
+        m = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for arn in (m.get("kms") or {}).values():
+            if arn:
+                key_ids.add(str(arn))
+    except Exception:
+        pass
+state_path = Path("/workspace/submission/infra/terraform.tfstate")
+if state_path.is_file():
+    try:
+        st = json.loads(state_path.read_text(encoding="utf-8"))
+        for res in st.get("resources", []):
+            if res.get("mode") == "managed" and res.get("type") == "aws_kms_key":
+                for inst in res.get("instances", []):
+                    attrs = inst.get("attributes") or {}
+                    kid = attrs.get("key_id") or attrs.get("arn") or attrs.get("id")
+                    if kid:
+                        key_ids.add(str(kid))
+    except Exception:
+        pass
+for kid in key_ids:
+    try:
+        kms.cancel_key_deletion(KeyId=kid)
+    except Exception:
+        pass
+    try:
+        kms.enable_key(KeyId=kid)
+    except Exception:
+        pass
+    try:
+        kms.enable_key_rotation(KeyId=kid)
+    except Exception:
+        pass
+PY
+
 pushd "${INFRA_DIR}" >/dev/null
 
 "${IAC_BIN}" init -input=false -no-color >/dev/null
@@ -745,6 +798,16 @@ CREATE INDEX IF NOT EXISTS idx_clearledger_outbox_unarchived
 
 CREATE INDEX IF NOT EXISTS idx_clearledger_events_settlement_version
     ON clearledger.events (settlement_id, aggregate_version);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clearledger_idempotency_event
+    ON clearledger.idempotency_keys (((response_body->>'eventId')::uuid));
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clearledger_idempotency_version
+    ON clearledger.idempotency_keys (((response_body->>'settlementId')::uuid), ((response_body->>'version')::integer));
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clearledger_entry_id
+    ON clearledger.events (settlement_id, ((payload->'data'->>'entryId')::uuid))
+    WHERE event_type = 'LedgerEntryRecorded';
 SQL
 
 SERVICE_URL="$(jq -r '.service_url' "${MANIFEST_FILE}")"
@@ -909,8 +972,15 @@ ddb = boto3.client("dynamodb", **boto_kwargs)
 s3 = boto3.client("s3", **boto_kwargs)
 iam = boto3.client("iam", **boto_kwargs)
 ec2 = boto3.client("ec2", **boto_kwargs)
+kms = boto3.client("kms", **boto_kwargs)
+rds = boto3.client("rds", **boto_kwargs)
+elbv2 = boto3.client("elbv2", **boto_kwargs)
+ecs = boto3.client("ecs", **boto_kwargs)
+sqs = boto3.client("sqs", **boto_kwargs)
+logs = boto3.client("logs", **boto_kwargs)
+scheduler = boto3.client("scheduler", **boto_kwargs)
 
-# 0. Reconcile out-of-band IAM role policies and security group egress rules
+# 0. Reconcile out-of-band control-plane drift and non-canonical prefix-scoped resources
 try:
     with open("/workspace/submission/infra/terraform.tfstate", encoding="utf-8") as sf:
         tfstate = json.load(sf)
@@ -942,8 +1012,11 @@ for res in tfstate.get("resources", []):
                 managed_policy_arns.add(parn)
 
 prefix = cfg["resource_prefix"]
-for role_arn in (m.get("iam") or {}).values():
+iam_map = m.get("iam") or {}
+canonical_role_names: set[str] = set()
+for role_arn in iam_map.values():
     role_name = str(role_arn).rsplit("/", 1)[-1]
+    canonical_role_names.add(role_name)
     allowed_inline = managed_inline_by_role.get(role_name, set())
     for pname in iam.list_role_policies(RoleName=role_name).get("PolicyNames", []):
         if pname not in allowed_inline:
@@ -969,6 +1042,265 @@ for role_arn in (m.get("iam") or {}).values():
                 except Exception:
                     pass
 
+# Purge any non-canonical IAM roles and policies scoped to prefix
+try:
+    for r_obj in iam.list_roles().get("Roles", []):
+        rname = r_obj.get("RoleName", "")
+        if not rname or rname in canonical_role_names:
+            continue
+        is_prefix_role = rname.startswith(prefix)
+        if not is_prefix_role:
+            try:
+                rtags = {t["Key"]: t["Value"] for t in iam.list_role_tags(RoleName=rname).get("Tags", [])}
+                is_prefix_role = rtags.get("ClearLedgerDeployment") == prefix
+            except Exception:
+                pass
+        if is_prefix_role:
+            for pname in iam.list_role_policies(RoleName=rname).get("PolicyNames", []):
+                try:
+                    iam.delete_role_policy(RoleName=rname, PolicyName=pname)
+                except Exception:
+                    pass
+            for att in iam.list_attached_role_policies(RoleName=rname).get("AttachedPolicies", []):
+                try:
+                    iam.detach_role_policy(RoleName=rname, PolicyArn=att["PolicyArn"])
+                except Exception:
+                    pass
+            try:
+                iam.delete_role(RoleName=rname)
+            except Exception:
+                pass
+except Exception:
+    pass
+
+try:
+    for pol in iam.list_policies(Scope="Local").get("Policies", []):
+        pname = pol.get("PolicyName", "")
+        parn = pol.get("Arn", "")
+        if pname.startswith(prefix) and parn and parn not in managed_policy_arns:
+            try:
+                for pv in iam.list_policy_versions(PolicyArn=parn).get("Versions", []):
+                    if not pv.get("IsDefaultVersion"):
+                        iam.delete_policy_version(PolicyArn=parn, VersionId=pv["VersionId"])
+                iam.delete_policy(PolicyArn=parn)
+            except Exception:
+                pass
+except Exception:
+    pass
+
+# Reconcile canonical KMS keys (state, rotation, tags, bilateral policy) and purge rogue prefix KMS keys/aliases
+kms_map = m.get("kms") or {}
+all_role_keys = ("ecs_execution_role_arn", "ecs_task_role_arn", "projector_role_arn", "relay_role_arn", "archiver_role_arn", "scheduler_role_arn")
+kms_authorized_roles = {
+    "database": ["relay_role_arn", "archiver_role_arn"],
+    "messaging": ["ecs_task_role_arn", "projector_role_arn", "relay_role_arn"],
+    "projection": ["ecs_task_role_arn", "projector_role_arn"],
+    "audit": ["archiver_role_arn"],
+}
+sample_role_arn = str(iam_map.get("ecs_execution_role_arn") or "arn:aws:iam::000000000000:role/root")
+acct_id = sample_role_arn.split(":")[4] if len(sample_role_arn.split(":")) > 4 else "000000000000"
+canonical_kms_ids: set[str] = set()
+for usage_name, arn_key in (
+    ("database", "database_arn"),
+    ("messaging", "messaging_arn"),
+    ("projection", "projection_arn"),
+    ("audit", "audit_arn"),
+):
+    k_arn = str(kms_map.get(arn_key) or "")
+    if not k_arn:
+        continue
+    canonical_kms_ids.add(k_arn)
+    canonical_kms_ids.add(k_arn.rsplit("/", 1)[-1])
+    try:
+        kms.cancel_key_deletion(KeyId=k_arn)
+    except Exception:
+        pass
+    try:
+        kms.enable_key(KeyId=k_arn)
+    except Exception:
+        pass
+    try:
+        kms.enable_key_rotation(KeyId=k_arn)
+    except Exception:
+        pass
+    try:
+        kms.tag_resource(
+            KeyId=k_arn,
+            Tags=[
+                {"TagKey": "ClearLedgerDeployment", "TagValue": prefix},
+                {"TagKey": "ClearLedgerKeyUsage", "TagValue": usage_name},
+            ],
+        )
+    except Exception:
+        pass
+    allow_arns = [str(iam_map[rk]) for rk in kms_authorized_roles[usage_name] if iam_map.get(rk)]
+    deny_arns = [str(iam_map[rk]) for rk in all_role_keys if rk not in kms_authorized_roles[usage_name] and iam_map.get(rk)]
+    expected_kms_policy = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "AllowRootAdmin",
+                "Effect": "Allow",
+                "Principal": {"AWS": f"arn:aws:iam::{acct_id}:root"},
+                "Action": "kms:*",
+                "Resource": "*",
+            },
+            {
+                "Sid": "AllowAuthorizedWorkloadRoles",
+                "Effect": "Allow",
+                "Principal": {"AWS": allow_arns},
+                "Action": ["kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"],
+                "Resource": "*",
+            },
+            {
+                "Sid": "DenyUnauthorizedWorkloadRoles",
+                "Effect": "Deny",
+                "Principal": {"AWS": deny_arns},
+                "Action": ["kms:Decrypt", "kms:GenerateDataKey"],
+                "Resource": "*",
+            },
+        ],
+    }
+    try:
+        kms.put_key_policy(KeyId=k_arn, PolicyName="default", Policy=json.dumps(expected_kms_policy))
+    except Exception:
+        pass
+
+canonical_aliases = {f"alias/{prefix}-{u}" for u in ("database", "messaging", "projection", "audit")}
+rogue_kms_ids: set[str] = set()
+try:
+    for al in kms.list_aliases().get("Aliases", []):
+        aname = al.get("AliasName", "")
+        if aname.startswith(f"alias/{prefix}") and aname not in canonical_aliases:
+            tkid = al.get("TargetKeyId")
+            if tkid and tkid not in canonical_kms_ids:
+                rogue_kms_ids.add(tkid)
+            try:
+                kms.delete_alias(AliasName=aname)
+            except Exception:
+                pass
+except Exception:
+    pass
+
+try:
+    for k_entry in kms.list_keys().get("Keys", []):
+        kid = k_entry.get("KeyId", "")
+        if not kid or kid in canonical_kms_ids:
+            continue
+        try:
+            kmeta = kms.describe_key(KeyId=kid).get("KeyMetadata", {})
+            if kmeta.get("KeyManager") == "AWS" or kmeta.get("KeyState") == "PendingDeletion":
+                continue
+            is_rogue = kid in rogue_kms_ids or prefix in str(kmeta.get("Description") or "")
+            if not is_rogue:
+                ktags = {
+                    t.get("TagKey"): t.get("TagValue")
+                    for t in kms.list_resource_tags(KeyId=kid).get("Tags", [])
+                }
+                is_rogue = ktags.get("ClearLedgerDeployment") == prefix
+            if is_rogue:
+                kms.schedule_key_deletion(KeyId=kid, PendingWindowInDays=7)
+        except Exception:
+            pass
+except Exception:
+    pass
+
+# Reconcile RDS tags, ALB health check, ECS containerInsights, DynamoDB PITR, S3 PublicAccessBlock
+try:
+    db_inst_id = m["database"]["instance_identifier"]
+    db_insts = rds.describe_db_instances(DBInstanceIdentifier=db_inst_id).get("DBInstances", [])
+    if db_insts and db_insts[0].get("DBInstanceArn"):
+        rds.add_tags_to_resource(
+            ResourceName=db_insts[0]["DBInstanceArn"],
+            Tags=[{"Key": "ClearLedgerDeployment", "Value": prefix}],
+        )
+except Exception:
+    pass
+
+try:
+    elbv2.modify_target_group(
+        TargetGroupArn=m["ingress"]["target_group_arn"],
+        HealthCheckPath="/health/ready",
+        HealthCheckPort="8080",
+        HealthCheckProtocol="HTTP",
+        Matcher={"HttpCode": "200"},
+    )
+except Exception:
+    pass
+
+try:
+    ecs.update_cluster_settings(
+        cluster=m["compute"]["cluster_arn"],
+        settings=[{"name": "containerInsights", "value": "enabled"}],
+    )
+except Exception:
+    pass
+
+try:
+    ddb.update_continuous_backups(
+        TableName=m["projections"]["table_name"],
+        PointInTimeRecoverySpecification={"PointInTimeRecoveryEnabled": True},
+    )
+except Exception:
+    pass
+
+try:
+    s3.put_public_access_block(
+        Bucket=m["audit"]["bucket_name"],
+        PublicAccessBlockConfiguration={
+            "BlockPublicAcls": True,
+            "IgnorePublicAcls": True,
+            "BlockPublicPolicy": True,
+            "RestrictPublicBuckets": True,
+        },
+    )
+except Exception:
+    pass
+
+# Purge any non-canonical prefix-scoped EventBridge schedules, SQS queues, and CloudWatch Log Groups
+canonical_schedules = {
+    m["schedules"]["relay_schedule_name"],
+    m["schedules"]["archiver_schedule_name"],
+}
+try:
+    for sc in scheduler.list_schedules().get("Schedules", []):
+        sname = sc.get("Name", "")
+        if sname.startswith(prefix) and sname not in canonical_schedules:
+            try:
+                scheduler.delete_schedule(Name=sname, GroupName=sc.get("GroupName", "default"))
+            except Exception:
+                pass
+except Exception:
+    pass
+
+canonical_queue_names = {
+    str(m["messaging"]["main_queue_url"]).rsplit("/", 1)[-1],
+    str(m["messaging"]["dlq_url"]).rsplit("/", 1)[-1],
+}
+try:
+    for qurl in sqs.list_queues(QueueNamePrefix=prefix).get("QueueUrls", []):
+        qname = str(qurl).rsplit("/", 1)[-1]
+        if qname.startswith(prefix) and qname not in canonical_queue_names:
+            try:
+                sqs.delete_queue(QueueUrl=qurl)
+            except Exception:
+                pass
+except Exception:
+    pass
+
+canonical_log_groups = set((m.get("logs") or {}).values())
+try:
+    for lg_prefix in (f"/clearledger/{prefix}", prefix):
+        for lg_obj in logs.describe_log_groups(logGroupNamePrefix=lg_prefix).get("logGroups", []):
+            lg_name = lg_obj.get("logGroupName", "")
+            if lg_name and lg_name not in canonical_log_groups:
+                try:
+                    logs.delete_log_group(logGroupName=lg_name)
+                except Exception:
+                    pass
+except Exception:
+    pass
+
 sg_ids = (m.get("network") or {}).get("security_group_ids") or {}
 for sg_key in ("alb", "ecs", "rds", "valkey"):
     sg_id = sg_ids.get(sg_key)
@@ -988,8 +1320,9 @@ for sg_key in ("alb", "ecs", "rds", "valkey"):
                     if r.get("SecurityGroupRuleId"):
                         revoke_egress_ids.append(r["SecurityGroupRuleId"])
             else:
-                if sg_key in ("ecs", "rds", "valkey") and (
-                    r.get("CidrIpv4") == "0.0.0.0/0" or r.get("CidrIpv6") == "::/0"
+                if (sg_key == "ecs" and (r.get("CidrIpv4") or r.get("CidrIpv6"))) or (
+                    sg_key in ("rds", "valkey")
+                    and (r.get("CidrIpv4") == "0.0.0.0/0" or r.get("CidrIpv6") == "::/0")
                 ):
                     if r.get("SecurityGroupRuleId"):
                         revoke_ingress_ids.append(r["SecurityGroupRuleId"])
@@ -1014,7 +1347,9 @@ for sg_key in ("alb", "ecs", "rds", "valkey"):
                 for perm in sg_obj.get("IpPermissions") or []:
                     v4 = [rng.get("CidrIp") for rng in perm.get("IpRanges") or []]
                     v6 = [rng.get("CidrIpv6") for rng in perm.get("Ipv6Ranges") or []]
-                    if "0.0.0.0/0" in v4 or "::/0" in v6:
+                    if (sg_key == "ecs" and (v4 or v6)) or (
+                        sg_key in ("rds", "valkey") and ("0.0.0.0/0" in v4 or "::/0" in v6)
+                    ):
                         try:
                             ec2.revoke_security_group_ingress(GroupId=sg_id, IpPermissions=[perm])
                         except Exception:
@@ -1263,9 +1598,11 @@ with psycopg.connect(pg_conninfo) as conn:
         seen_s3_event_ids: set[str] = set()
         seen_seq_intervals: list[tuple[int, int]] = []
         valid_live_keys: set[str] = set()
+        had_invalid_s3_obj = False
         for obj in sorted(all_s3_objs, key=lambda o: o["Key"]):
             key = obj["Key"]
             if not key.startswith(audit_prefix):
+                had_invalid_s3_obj = True
                 purge_s3_key_all_versions(audit_bucket, key)
                 continue
             try:
@@ -1311,21 +1648,30 @@ with psycopg.connect(pg_conninfo) as conn:
                 seen_seq_intervals.append((first_b_seq, last_b_seq))
                 valid_live_keys.add(key)
             except Exception:
+                had_invalid_s3_obj = True
                 purge_s3_key_all_versions(audit_bucket, key)
-
-        purge_noncurrent_and_deleted_s3_versions(audit_bucket, valid_live_keys)
 
         missing_seqs = [
             seq
             for ev_id, (seq, arch_at, _) in pg_outbox.items()
             if arch_at is not None and ev_id not in seen_s3_event_ids
         ]
-        if missing_seqs:
+        unarchived_seqs = [
+            seq for _, (seq, arch_at, _) in pg_outbox.items() if arch_at is None
+        ]
+        max_kept_seq = max((s1 for _, s1 in seen_seq_intervals), default=0)
+        min_pending_seq = min(missing_seqs + unarchived_seqs, default=max_kept_seq + 1)
+
+        if had_invalid_s3_obj or missing_seqs or (seen_seq_intervals and min_pending_seq <= max_kept_seq):
+            for k in list(valid_live_keys):
+                purge_s3_key_all_versions(audit_bucket, k)
+            purge_noncurrent_and_deleted_s3_versions(audit_bucket, set())
             cur.execute(
-                "UPDATE clearledger.outbox SET archived_at = NULL WHERE seq = ANY(%s)",
-                (missing_seqs,),
+                "UPDATE clearledger.outbox SET archived_at = NULL WHERE published_at IS NOT NULL"
             )
             conn.commit()
+        else:
+            purge_noncurrent_and_deleted_s3_versions(audit_bucket, valid_live_keys)
 
         for _ in range(20):
             cur.execute(

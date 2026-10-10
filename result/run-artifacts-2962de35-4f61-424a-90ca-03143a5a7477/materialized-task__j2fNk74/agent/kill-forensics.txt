@@ -1,0 +1,40 @@
+== date
+Sat Oct 10 09:18:40 UTC 2026
+== cgroup
+-- memory.events
+low 0
+high 0
+max 0
+oom 0
+oom_kill 0
+oom_group_kill 0
+-- memory.max
+max
+-- memory.peak
+2018914304
+-- memory.current
+1276395520
+-- pids.events
+max 0
+== meminfo (host-wide, NOT the sandbox budget)
+MemTotal:       197843352 kB
+MemAvailable:   145436828 kB
+SwapTotal:       8388604 kB
+SwapFree:        5019756 kB
+4
+== pressure
+some avg10=0.00 avg60=0.00 avg300=0.00 total=368761113029
+full avg10=0.00 avg60=0.00 avg300=0.00 total=213747263922
+== top rss kB
+260584 terraform.real
+218096 terraform-provi
+59188 MainThread
+26372 python3
+19196 python3
+3292 bash
+3172 bash
+1752 sh
+1572 sort
+1448 sleep
+876 sh
+696 docker-init

@@ -11,4 +11,6 @@ Each of the four KMS keys must be configured with:
 - `enable_key_rotation = true`
 - `deletion_window_in_days = 10` (must be `10..30` days)
 - Tags `ClearLedgerDeployment = <resource_prefix>` and `ClearLedgerKeyUsage = <database|messaging|projection|audit>` (matching its respective role: `database`, `messaging`, `projection`, or `audit`)
+- During `deploy.sh` convergence, if any of the four canonical KMS keys has been disabled or scheduled for deletion out-of-band, or if its key rotation or `ClearLedgerDeployment` / `ClearLedgerKeyUsage` tags have drifted, `deploy.sh` must cancel pending deletion (`cancel_key_deletion`), re-enable the key (`enable_key`) and key rotation (`enable_key_rotation`), and restore its canonical tags before or during `terraform apply`.
+
 

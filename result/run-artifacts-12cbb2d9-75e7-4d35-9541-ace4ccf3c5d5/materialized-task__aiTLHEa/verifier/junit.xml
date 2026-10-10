@@ -1,0 +1,496 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="19" time="719.249" timestamp="2026-10-10T09:21:02.257987+00:00" hostname="c2fd812aac25"><testcase classname="test_declared" name="test_iac_discipline" time="123.741" /><testcase classname="test_declared" name="test_declared_compute_and_ingress" time="0.001" /><testcase classname="test_declared" name="test_declared_data_and_async" time="1.222" /><testcase classname="test_declared" name="test_declared_security" time="0.011" /><testcase classname="test_live" name="test_live_compute_and_ingress" time="0.078" /><testcase classname="test_live" name="test_live_data_and_event_graph" time="0.139" /><testcase classname="test_live" name="test_live_security" time="0.091" /><testcase classname="test_behavior" name="test_settlement_lifecycle_workflow" time="9.587" /><testcase classname="test_behavior" name="test_projection_and_valkey_cache" time="0.892" /><testcase classname="test_behavior" name="test_idempotency_and_optimistic_concurrency" time="1.345" /><testcase classname="test_behavior" name="test_backlog_accumulation_and_drain" time="5.520" /><testcase classname="test_behavior" name="test_duplicate_delivery_and_dlq_isolation" time="17.770" /><testcase classname="test_behavior" name="test_outbox_recovery_after_sqs_queue_deletion" time="150.317" /><testcase classname="test_behavior" name="test_projection_rebuild_from_event_log" time="2.157" /><testcase classname="test_behavior" name="test_ecs_task_failure_replacement" time="5.267" /><testcase classname="test_behavior" name="test_rds_reboot_recovery" time="1.745" /><testcase classname="test_behavior" name="test_authorization_audit_and_observability" time="1.185" /><testcase classname="test_lifecycle" name="test_reapply_idempotence" time="79.282" /><testcase classname="test_lifecycle" name="test_destroy_clean" time="318.637"><failure message="AssertionError: Post-destroy inventory mismatch: leaked={'kms_keys': ['arn:aws:kms:us-east-1:000000000000:key/98c379a4-b51e-4eb0-9ce0-4688ad55b020']}, removed_baseline={}">ctx = VerifierContext(config={'resource_prefix': 'cl-2f4e9c', 'region': 'us-east-1', 'aws_endpoint_url': 'http://aws:4566', ...-5jhrFPKUFOEtR-bqskF6r-Ef-bJjmfOKYCsAdOs0iAJLLa0_hqtYpNathKXVeomlAcQN1L8RrQQ59f_vYD8zTuryG3Ca7zCPi5Khv8TKRCK1i3X9jvg'})
+
+    def test_destroy_clean(ctx: VerifierContext) -&gt; None:
+        """Scored block: Clean destroy (8 points) — lifecycle.clean_destroy."""
+        def _check() -&gt; str:
+            m = ctx.manifest
+            prefix = m["resource_prefix"]
+            iam = boto_client("iam", ctx.config)
+            sqs = boto_client("sqs", ctx.config)
+            s3 = boto_client("s3", ctx.config)
+            ddb = boto_client("dynamodb", ctx.config)
+            logs = boto_client("logs", ctx.config)
+            scheduler = boto_client("scheduler", ctx.config)
+            kms = boto_client("kms", ctx.config)
+    
+            # Simulate out-of-band operational artifacts scoped to resource_prefix before teardown:
+            # 1) Unmanaged inline policy on a deployment IAM role
+            proj_role_name = m["iam"]["projector_role_arn"].rsplit("/", 1)[-1]
+            iam.put_role_policy(
+                RoleName=proj_role_name,
+                PolicyName=f"{prefix}-ops-diagnostic-inline",
+                PolicyDocument=json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Action": ["sqs:GetQueueAttributes"],
+                                "Resource": m["messaging"]["queue_arn"],
+                            }
+                        ],
+                    }
+                ),
+            )
+            # 2) Out-of-band multi-version customer-managed IAM policy attached to a deployment IAM role
+            task_role_name = m["iam"]["ecs_task_role_arn"].rsplit("/", 1)[-1]
+            managed_pol = iam.create_policy(
+                PolicyName=f"{prefix}-ops-managed-policy",
+                PolicyDocument=json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Action": ["sqs:GetQueueUrl"],
+                                "Resource": m["messaging"]["queue_arn"],
+                            }
+                        ],
+                    }
+                ),
+            )["Policy"]
+            try:
+                iam.create_policy_version(
+                    PolicyArn=managed_pol["Arn"],
+                    PolicyDocument=json.dumps(
+                        {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": ["sqs:GetQueueUrl", "sqs:GetQueueAttributes"],
+                                    "Resource": m["messaging"]["queue_arn"],
+                                }
+                            ],
+                        }
+                    ),
+                    SetAsDefault=True,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            iam.attach_role_policy(RoleName=task_role_name, PolicyArn=managed_pol["Arn"])
+    
+            # 3) Out-of-band prefix-scoped IAM role with inline policy
+            ops_role_name = f"{prefix}-ops-breakglass-role"
+            iam.create_role(
+                RoleName=ops_role_name,
+                AssumeRolePolicyDocument=json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Principal": {"Service": "lambda.amazonaws.com"},
+                                "Action": "sts:AssumeRole",
+                            }
+                        ],
+                    }
+                ),
+                Tags=[
+                    {"Key": "ClearLedgerDeployment", "Value": prefix},
+                    {"Key": "Environment", "Value": m.get("environment", "eval")},
+                    {"Key": "Service", "Value": "clearledger"},
+                ],
+            )
+            iam.put_role_policy(
+                RoleName=ops_role_name,
+                PolicyName=f"{prefix}-ops-breakglass-inline",
+                PolicyDocument=json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Action": ["sqs:GetQueueAttributes"],
+                                "Resource": m["messaging"]["queue_arn"],
+                            }
+                        ],
+                    }
+                ),
+            )
+    
+            # 4) Out-of-band prefix-scoped SQS queue, versioned S3 bucket, DynamoDB table,
+            #    CloudWatch log group, EventBridge schedule, KMS alias, and customer-managed KMS key
+            sqs.create_queue(
+                QueueName=f"{prefix}-ops-dlq",
+                tags={
+                    "ClearLedgerDeployment": prefix,
+                    "Environment": m.get("environment", "eval"),
+                    "Service": "clearledger",
+                    "ManagedBy": "ops-runbook",
+                },
+            )
+            ops_bucket_name = f"{prefix}-ops-quarantine"
+            try:
+                s3.create_bucket(Bucket=ops_bucket_name)
+                s3.put_bucket_versioning(
+                    Bucket=ops_bucket_name,
+                    VersioningConfiguration={"Status": "Enabled"},
+                )
+                s3.put_object(
+                    Bucket=ops_bucket_name,
+                    Key="quarantine/diag-001.ndjson",
+                    Body=b'{"diag":1}\n',
+                    ContentType="application/x-ndjson",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                ddb.create_table(
+                    TableName=f"{prefix}-ops-scratch",
+                    AttributeDefinitions=[{"AttributeName": "PK", "AttributeType": "S"}],
+                    KeySchema=[{"AttributeName": "PK", "KeyType": "HASH"}],
+                    BillingMode="PAY_PER_REQUEST",
+                    Tags=[
+                        {"Key": "ClearLedgerDeployment", "Value": prefix},
+                        {"Key": "Environment", "Value": m.get("environment", "eval")},
+                        {"Key": "Service", "Value": "clearledger"},
+                    ],
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            ops_log_group = f"/clearledger/{prefix}/ops-audit"
+            try:
+                logs.create_log_group(
+                    logGroupName=ops_log_group,
+                    tags={
+                        "ClearLedgerDeployment": prefix,
+                        "Environment": m.get("environment", "eval"),
+                        "Service": "clearledger",
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                scheduler.create_schedule(
+                    Name=f"{prefix}-ops-canary-schedule",
+                    ScheduleExpression="rate(5 minutes)",
+                    FlexibleTimeWindow={"Mode": "OFF"},
+                    Target={
+                        "Arn": m["workers"]["outbox_relay"]["function_arn"],
+                        "RoleArn": m["iam"]["scheduler_role_arn"],
+                        "Input": json.dumps({"source": "ops-canary"}),
+                    },
+                    State="ENABLED",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                ops_kms_key = kms.create_key(
+                    Description=f"{prefix} ops diagnostic key",
+                    Tags=[
+                        {"TagKey": "ClearLedgerDeployment", "TagValue": prefix},
+                        {"TagKey": "Environment", "TagValue": m.get("environment", "eval")},
+                        {"TagKey": "Service", "TagValue": "clearledger"},
+                    ],
+                )["KeyMetadata"]["KeyId"]
+                kms.create_alias(
+                    AliasName=f"alias/{prefix}-ops-alias",
+                    TargetKeyId=ops_kms_key,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+    
+            destroy_sh = SUBMISSION_DIR / "destroy.sh"
+            result = run_script(destroy_sh, timeout_sec=900)
+            if result.returncode != 0:
+                ctx.recorder.add_cap("cleanup_leak", 79)
+                raise AssertionError(
+                    f"destroy.sh failed with rc={result.returncode}:\nSTDOUT:\n{result.stdout[-800:]}\nSTDERR:\n{result.stderr[-800:]}"
+                )
+    
+            def _cleaned() -&gt; dict[str, dict[str, list[str]]] | None:
+                post_inv = snapshot_inventory(ctx.config)
+                diff = diff_inventory(ctx.pre_deploy_inventory, post_inv)
+                if not diff["additions"] and not diff["removals"]:
+                    return diff
+                return None
+    
+            try:
+                wait_until(_cleaned, timeout_sec=30.0, interval_sec=1.5, description="clean post-destroy inventory")
+            except Exception:  # noqa: BLE001
+                pass
+    
+            post_inv = snapshot_inventory(ctx.config)
+            final = diff_inventory(ctx.pre_deploy_inventory, post_inv)
+    
+            baseline = ctx.baseline
+            assert baseline["s3_bucket"] in post_inv["s3_buckets"], "Baseline S3 bucket was deleted by destroy.sh"
+            assert baseline["sqs_queue_url"] in post_inv["sqs_queues"], "Baseline SQS queue was deleted by destroy.sh"
+            assert baseline["dynamodb_table_name"] in post_inv["dynamodb_tables"], "Baseline DynamoDB table was deleted"
+            assert baseline["iam_role_name"] in post_inv["iam_roles"], "Baseline IAM role was deleted"
+            assert baseline["log_group_name"] in post_inv["log_groups"], "Baseline CloudWatch log group was deleted"
+            assert baseline["vpc_id"] in post_inv["vpcs"], "Baseline VPC was deleted"
+    
+            kms = boto_client("kms", ctx.config)
+            base_key = kms.describe_key(KeyId=baseline["kms_key_arn"])["KeyMetadata"]
+            assert base_key["KeyState"] == "Enabled", "Baseline KMS key was disabled or scheduled for deletion"
+    
+            if STATE_PATH.is_file():
+                remaining_state_res = [
+                    r for r in load_tfstate().get("resources", []) if r.get("mode") == "managed"
+                ]
+                if remaining_state_res:
+                    ctx.recorder.add_cap("cleanup_leak", 79)
+                    raise AssertionError(
+                        f"terraform.tfstate still contains {len(remaining_state_res)} managed resources after destroy.sh"
+                    )
+    
+            if final["additions"] or final["removals"]:
+                ctx.recorder.add_cap("cleanup_leak", 79)
+                raise AssertionError(
+                    f"Post-destroy inventory mismatch: leaked={final['additions']}, removed_baseline={final['removals']}"
+                )
+    
+            return "destroy.sh removed all deployment and prefix-scoped operational resources while preserving all baseline resources"
+    
+&gt;       _run_block(ctx, "lifecycle.clean_destroy", _check, cap_on_fail=("cleanup_leak", 79))
+
+/tests/suite/test_lifecycle.py:1124: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/tests/suite/test_lifecycle.py:30: in _run_block
+    detail = fn()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _check() -&gt; str:
+        m = ctx.manifest
+        prefix = m["resource_prefix"]
+        iam = boto_client("iam", ctx.config)
+        sqs = boto_client("sqs", ctx.config)
+        s3 = boto_client("s3", ctx.config)
+        ddb = boto_client("dynamodb", ctx.config)
+        logs = boto_client("logs", ctx.config)
+        scheduler = boto_client("scheduler", ctx.config)
+        kms = boto_client("kms", ctx.config)
+    
+        # Simulate out-of-band operational artifacts scoped to resource_prefix before teardown:
+        # 1) Unmanaged inline policy on a deployment IAM role
+        proj_role_name = m["iam"]["projector_role_arn"].rsplit("/", 1)[-1]
+        iam.put_role_policy(
+            RoleName=proj_role_name,
+            PolicyName=f"{prefix}-ops-diagnostic-inline",
+            PolicyDocument=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": ["sqs:GetQueueAttributes"],
+                            "Resource": m["messaging"]["queue_arn"],
+                        }
+                    ],
+                }
+            ),
+        )
+        # 2) Out-of-band multi-version customer-managed IAM policy attached to a deployment IAM role
+        task_role_name = m["iam"]["ecs_task_role_arn"].rsplit("/", 1)[-1]
+        managed_pol = iam.create_policy(
+            PolicyName=f"{prefix}-ops-managed-policy",
+            PolicyDocument=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": ["sqs:GetQueueUrl"],
+                            "Resource": m["messaging"]["queue_arn"],
+                        }
+                    ],
+                }
+            ),
+        )["Policy"]
+        try:
+            iam.create_policy_version(
+                PolicyArn=managed_pol["Arn"],
+                PolicyDocument=json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Action": ["sqs:GetQueueUrl", "sqs:GetQueueAttributes"],
+                                "Resource": m["messaging"]["queue_arn"],
+                            }
+                        ],
+                    }
+                ),
+                SetAsDefault=True,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        iam.attach_role_policy(RoleName=task_role_name, PolicyArn=managed_pol["Arn"])
+    
+        # 3) Out-of-band prefix-scoped IAM role with inline policy
+        ops_role_name = f"{prefix}-ops-breakglass-role"
+        iam.create_role(
+            RoleName=ops_role_name,
+            AssumeRolePolicyDocument=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {"Service": "lambda.amazonaws.com"},
+                            "Action": "sts:AssumeRole",
+                        }
+                    ],
+                }
+            ),
+            Tags=[
+                {"Key": "ClearLedgerDeployment", "Value": prefix},
+                {"Key": "Environment", "Value": m.get("environment", "eval")},
+                {"Key": "Service", "Value": "clearledger"},
+            ],
+        )
+        iam.put_role_policy(
+            RoleName=ops_role_name,
+            PolicyName=f"{prefix}-ops-breakglass-inline",
+            PolicyDocument=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": ["sqs:GetQueueAttributes"],
+                            "Resource": m["messaging"]["queue_arn"],
+                        }
+                    ],
+                }
+            ),
+        )
+    
+        # 4) Out-of-band prefix-scoped SQS queue, versioned S3 bucket, DynamoDB table,
+        #    CloudWatch log group, EventBridge schedule, KMS alias, and customer-managed KMS key
+        sqs.create_queue(
+            QueueName=f"{prefix}-ops-dlq",
+            tags={
+                "ClearLedgerDeployment": prefix,
+                "Environment": m.get("environment", "eval"),
+                "Service": "clearledger",
+                "ManagedBy": "ops-runbook",
+            },
+        )
+        ops_bucket_name = f"{prefix}-ops-quarantine"
+        try:
+            s3.create_bucket(Bucket=ops_bucket_name)
+            s3.put_bucket_versioning(
+                Bucket=ops_bucket_name,
+                VersioningConfiguration={"Status": "Enabled"},
+            )
+            s3.put_object(
+                Bucket=ops_bucket_name,
+                Key="quarantine/diag-001.ndjson",
+                Body=b'{"diag":1}\n',
+                ContentType="application/x-ndjson",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            ddb.create_table(
+                TableName=f"{prefix}-ops-scratch",
+                AttributeDefinitions=[{"AttributeName": "PK", "AttributeType": "S"}],
+                KeySchema=[{"AttributeName": "PK", "KeyType": "HASH"}],
+                BillingMode="PAY_PER_REQUEST",
+                Tags=[
+                    {"Key": "ClearLedgerDeployment", "Value": prefix},
+                    {"Key": "Environment", "Value": m.get("environment", "eval")},
+                    {"Key": "Service", "Value": "clearledger"},
+                ],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        ops_log_group = f"/clearledger/{prefix}/ops-audit"
+        try:
+            logs.create_log_group(
+                logGroupName=ops_log_group,
+                tags={
+                    "ClearLedgerDeployment": prefix,
+                    "Environment": m.get("environment", "eval"),
+                    "Service": "clearledger",
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            scheduler.create_schedule(
+                Name=f"{prefix}-ops-canary-schedule",
+                ScheduleExpression="rate(5 minutes)",
+                FlexibleTimeWindow={"Mode": "OFF"},
+                Target={
+                    "Arn": m["workers"]["outbox_relay"]["function_arn"],
+                    "RoleArn": m["iam"]["scheduler_role_arn"],
+                    "Input": json.dumps({"source": "ops-canary"}),
+                },
+                State="ENABLED",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            ops_kms_key = kms.create_key(
+                Description=f"{prefix} ops diagnostic key",
+                Tags=[
+                    {"TagKey": "ClearLedgerDeployment", "TagValue": prefix},
+                    {"TagKey": "Environment", "TagValue": m.get("environment", "eval")},
+                    {"TagKey": "Service", "TagValue": "clearledger"},
+                ],
+            )["KeyMetadata"]["KeyId"]
+            kms.create_alias(
+                AliasName=f"alias/{prefix}-ops-alias",
+                TargetKeyId=ops_kms_key,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    
+        destroy_sh = SUBMISSION_DIR / "destroy.sh"
+        result = run_script(destroy_sh, timeout_sec=900)
+        if result.returncode != 0:
+            ctx.recorder.add_cap("cleanup_leak", 79)
+            raise AssertionError(
+                f"destroy.sh failed with rc={result.returncode}:\nSTDOUT:\n{result.stdout[-800:]}\nSTDERR:\n{result.stderr[-800:]}"
+            )
+    
+        def _cleaned() -&gt; dict[str, dict[str, list[str]]] | None:
+            post_inv = snapshot_inventory(ctx.config)
+            diff = diff_inventory(ctx.pre_deploy_inventory, post_inv)
+            if not diff["additions"] and not diff["removals"]:
+                return diff
+            return None
+    
+        try:
+            wait_until(_cleaned, timeout_sec=30.0, interval_sec=1.5, description="clean post-destroy inventory")
+        except Exception:  # noqa: BLE001
+            pass
+    
+        post_inv = snapshot_inventory(ctx.config)
+        final = diff_inventory(ctx.pre_deploy_inventory, post_inv)
+    
+        baseline = ctx.baseline
+        assert baseline["s3_bucket"] in post_inv["s3_buckets"], "Baseline S3 bucket was deleted by destroy.sh"
+        assert baseline["sqs_queue_url"] in post_inv["sqs_queues"], "Baseline SQS queue was deleted by destroy.sh"
+        assert baseline["dynamodb_table_name"] in post_inv["dynamodb_tables"], "Baseline DynamoDB table was deleted"
+        assert baseline["iam_role_name"] in post_inv["iam_roles"], "Baseline IAM role was deleted"
+        assert baseline["log_group_name"] in post_inv["log_groups"], "Baseline CloudWatch log group was deleted"
+        assert baseline["vpc_id"] in post_inv["vpcs"], "Baseline VPC was deleted"
+    
+        kms = boto_client("kms", ctx.config)
+        base_key = kms.describe_key(KeyId=baseline["kms_key_arn"])["KeyMetadata"]
+        assert base_key["KeyState"] == "Enabled", "Baseline KMS key was disabled or scheduled for deletion"
+    
+        if STATE_PATH.is_file():
+            remaining_state_res = [
+                r for r in load_tfstate().get("resources", []) if r.get("mode") == "managed"
+            ]
+            if remaining_state_res:
+                ctx.recorder.add_cap("cleanup_leak", 79)
+                raise AssertionError(
+                    f"terraform.tfstate still contains {len(remaining_state_res)} managed resources after destroy.sh"
+                )
+    
+        if final["additions"] or final["removals"]:
+            ctx.recorder.add_cap("cleanup_leak", 79)
+&gt;           raise AssertionError(
+                f"Post-destroy inventory mismatch: leaked={final['additions']}, removed_baseline={final['removals']}"
+            )
+E           AssertionError: Post-destroy inventory mismatch: leaked={'kms_keys': ['arn:aws:kms:us-east-1:000000000000:key/98c379a4-b51e-4eb0-9ce0-4688ad55b020']}, removed_baseline={}
+
+/tests/suite/test_lifecycle.py:1118: AssertionError</failure></testcase></testsuite></testsuites>
