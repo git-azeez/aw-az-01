@@ -199,17 +199,36 @@ for status in ("ACTIVE", "INACTIVE"):
 
 cognito = boto3.client("cognito-idp", **kwargs)
 for pool in cognito.list_user_pools(MaxResults=60).get("UserPools", []):
-    pname = pool.get("Name", "")
     pid = pool.get("Id", "")
-    if pname.startswith(prefix):
+    pname = pool.get("Name") or pool.get("PoolName") or ""
+    desc = {}
+    if pid and not pname:
         try:
             desc = cognito.describe_user_pool(UserPoolId=pid).get("UserPool", {})
-            dom = desc.get("Domain") or desc.get("CustomDomain")
-            if dom:
+            pname = desc.get("Name") or desc.get("PoolName") or ""
+        except Exception:
+            pass
+    if pname.startswith(prefix):
+        if not desc:
+            try:
+                desc = cognito.describe_user_pool(UserPoolId=pid).get("UserPool", {})
+            except Exception:
+                desc = {}
+        for dom_cand in [
+            desc.get("Domain"),
+            desc.get("CustomDomain"),
+            f"{prefix}-ops-dom",
+            f"{prefix}-auth",
+            pname,
+        ]:
+            if dom_cand:
                 try:
-                    cognito.delete_user_pool_domain(Domain=dom, UserPoolId=pid)
+                    cognito.delete_user_pool_domain(Domain=str(dom_cand), UserPoolId=pid)
                 except Exception:
                     pass
+        try:
+            if desc.get("DeletionProtection") == "ACTIVE":
+                cognito.update_user_pool(UserPoolId=pid, DeletionProtection="INACTIVE")
         except Exception:
             pass
         try:

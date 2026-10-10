@@ -1325,7 +1325,7 @@ try:
                 "RedrivePolicy": json.dumps(
                     {
                         "deadLetterTargetArn": msg_map["dlq_arn"],
-                        "maxReceiveCount": 3,
+                        "maxReceiveCount": 4,
                     }
                 ),
             },

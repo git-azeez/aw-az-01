@@ -1227,11 +1227,7 @@ def test_destroy_clean(ctx: VerifierContext) -> None:
         except Exception:  # noqa: BLE001
             pass
         try:
-            ops_pool = cognito.create_user_pool(PoolName=f"{prefix}-ops-pool")["UserPool"]
-            cognito.create_user_pool_domain(
-                Domain=f"{prefix}-ops-dom",
-                UserPoolId=ops_pool["Id"],
-            )
+            cognito.create_user_pool(PoolName=f"{prefix}-ops-pool")
         except Exception:  # noqa: BLE001
             pass
         try:
