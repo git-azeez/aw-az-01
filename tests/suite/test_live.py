@@ -13,6 +13,8 @@ from .helpers import (
     policy_explicitly_denies,
     resolve_service_url,
     verify_iam_roles_and_policies,
+    verify_kms_key_policies,
+    verify_s3_and_sqs_resource_policies,
     wait_until,
 )
 
@@ -499,10 +501,21 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         """
                         INSERT INTO clearledger.settlements (
                             settlement_id, account_id, reference, debit_party, credit_party,
-                            current_status, current_stage, last_entry_id, version, entry_count
-                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'VALIDATED', 'VAL', NULL, 2, 1)
+                            current_status, current_stage, last_entry_id, last_memo, version, entry_count
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'VALIDATED', 'VAL', NULL, 'Settlement initiated', 2, 1)
                         """,
                         (str(uuid.uuid4()),),
+                    )
+                    _assert_pg_rejects(
+                        "settlements.last_memo IS NOT NULL (version > 1 cannot have NULL last_memo)",
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, last_entry_id, last_memo, version, entry_count, created_at, updated_at
+                        ) VALUES (%s, 'ACCT-PROBE', 'REF-PROBE', 'BANK-A', 'BANK-B', 'VALIDATED', 'VAL', %s, NULL, 2, 1,
+                                  '2026-01-01T00:00:00Z'::timestamptz, '2026-01-01T00:01:00Z'::timestamptz)
+                        """,
+                        (str(uuid.uuid4()), str(uuid.uuid4())),
                     )
 
                     cur.execute(
@@ -618,7 +631,7 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         (str(uuid.uuid4()), probe_sid),
                     )
 
-                    # Advance probe_sid to version=2 (CLEARED) and insert matching v2 event
+                    # Advance probe_sid to version=2 (CLEARED) with last_memo = NULL and verify OLD.last_memo retention
                     cur.execute(
                         """
                         UPDATE clearledger.settlements
@@ -632,6 +645,15 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                         WHERE settlement_id = %s
                         """,
                         (probe_entry_2, probe_sid),
+                    )
+                    cur.execute(
+                        "SELECT last_memo FROM clearledger.settlements WHERE settlement_id = %s",
+                        (probe_sid,),
+                    )
+                    retained_memo = cur.fetchone()[0]
+                    assert retained_memo == "Settlement initiated", (
+                        "Expected clearledger.settlements.last_memo to retain OLD.last_memo ('Settlement initiated') "
+                        f"when updated with last_memo = NULL, got {retained_memo!r}"
                     )
                     valid_evt_2 = _make_event_payload(
                         probe_eid_2,
@@ -867,6 +889,33 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
                                     entry_id=hdr_entry_3,
                                     memo="Tampered event memo",
                                     idem="idem-probe-memo-mismatch",
+                                    occurred_at=probe_ts_v3,
+                                ),
+                            ),
+                        )
+                        null_memo_mismatch_eid = str(uuid.uuid4())
+                        _assert_pg_rejects(
+                            "events trigger: omitted event data.memo (NULL) requires parent settlement last_memo to equal retained prior memo",
+                            """
+                            INSERT INTO clearledger.events (
+                                event_id, settlement_id, aggregate_version, event_type,
+                                correlation_id, idempotency_key, occurred_at, payload
+                            ) VALUES (%s, %s, 3, 'LedgerEntryRecorded', 'corr-probe', 'idem-probe-null-memo-mismatch', %s::timestamptz, %s::jsonb)
+                            """,
+                            (
+                                null_memo_mismatch_eid,
+                                probe_sid,
+                                probe_ts_v3,
+                                _make_event_payload(
+                                    null_memo_mismatch_eid,
+                                    probe_sid,
+                                    3,
+                                    "LedgerEntryRecorded",
+                                    status="SETTLED",
+                                    stage="STL-HDR",
+                                    entry_id=hdr_entry_3,
+                                    memo=None,
+                                    idem="idem-probe-null-memo-mismatch",
                                     occurred_at=probe_ts_v3,
                                 ),
                             ),
@@ -1839,7 +1888,31 @@ def test_live_data_and_event_graph(ctx: VerifierContext) -> None:
             for k in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")
         )
 
-        return "Live RDS, SQS+DLQ KMS, 3 Lambdas, Scheduler, DynamoDB (AccountIndex+PITR), Valkey, and S3 KMS verified"
+        s3_policy_docs: list[Any] = []
+        try:
+            bp_raw = s3.get_bucket_policy(Bucket=m["audit"]["bucket_name"]).get("Policy")
+            if bp_raw and str(bp_raw).strip() not in {"", "{}"}:
+                s3_policy_docs.append(bp_raw)
+        except Exception:  # noqa: BLE001
+            pass
+
+        main_q_policy_docs: list[Any] = []
+        if q_attrs.get("Policy") and str(q_attrs.get("Policy")).strip() not in {"", "{}"}:
+            main_q_policy_docs.append(q_attrs["Policy"])
+
+        dlq_policy_docs: list[Any] = []
+        if dlq_attrs.get("Policy") and str(dlq_attrs.get("Policy")).strip() not in {"", "{}"}:
+            dlq_policy_docs.append(dlq_attrs["Policy"])
+
+        verify_s3_and_sqs_resource_policies(
+            manifest=m,
+            s3_policy_docs=s3_policy_docs,
+            main_q_policy_docs=main_q_policy_docs,
+            dlq_policy_docs=dlq_policy_docs,
+            label="Live S3/SQS Resource Policy",
+        )
+
+        return "Live RDS, SQS+DLQ KMS+Policy, 3 Lambdas, Scheduler, DynamoDB (AccountIndex+PITR), Valkey, and S3 KMS+Policy verified"
 
     _run_block(ctx, "live.data_event_graph", _check)
 
@@ -1971,6 +2044,7 @@ def test_live_security(ctx: VerifierContext) -> None:
 
         assert len(set(m["kms"].values())) == 4, "Expected 4 distinct live KMS key ARNs"
         live_key_ids_by_role: dict[str, str] = {}
+        live_kms_policy_docs: dict[str, list[Any]] = {}
         for role_label, k_arn in (
             ("database", m["kms"]["database_arn"]),
             ("messaging", m["kms"]["messaging_arn"]),
@@ -1992,6 +2066,19 @@ def test_live_security(ctx: VerifierContext) -> None:
                 f"Live KMS key {k_arn} must have tag ClearLedgerKeyUsage={role_label}, found {key_tags}"
             )
             live_key_ids_by_role[role_label] = str(meta["KeyId"])
+            live_kms_policy_docs[k_arn] = []
+            try:
+                kp_raw = kms.get_key_policy(KeyId=k_arn, PolicyName="default").get("Policy")
+                if kp_raw and str(kp_raw).strip() not in {"", "{}"}:
+                    live_kms_policy_docs[k_arn].append(kp_raw)
+            except Exception:  # noqa: BLE001
+                pass
+
+        verify_kms_key_policies(
+            manifest=m,
+            kms_policy_docs=live_kms_policy_docs,
+            label="Live KMS Key Policy",
+        )
 
         aliases = {
             str(a.get("AliasName", "")): str(a.get("TargetKeyId", ""))
@@ -2020,7 +2107,7 @@ def test_live_security(ctx: VerifierContext) -> None:
             desc = cognito.describe_user_pool_client(UserPoolId=pool_id, ClientId=cid)["UserPoolClient"]
             assert desc.get("AllowedOAuthScopes") == [expected_scope]
 
-        return "Live IAM trust & least-privilege policies, 4 KMS keys+rotation+aliases, Cognito scopes, and 4 log groups verified"
+        return "Live IAM trust & least-privilege policies, 4 KMS keys+policies+rotation+aliases, Cognito scopes, and 4 log groups verified"
 
     _run_block(ctx, "live.security", _check)
 

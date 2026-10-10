@@ -138,12 +138,76 @@ CREATE TABLE IF NOT EXISTS clearledger.settlements (
     current_status TEXT NOT NULL,
     current_stage TEXT NOT NULL,
     last_entry_id UUID NULL,
-    last_memo TEXT NULL,
+    last_memo TEXT NOT NULL,
     version INTEGER NOT NULL,
     entry_count INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT chk_settlements_nonempty_fields CHECK (
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS clearledger.events (
+    seq BIGSERIAL PRIMARY KEY,
+    event_id UUID NOT NULL UNIQUE,
+    settlement_id UUID NOT NULL REFERENCES clearledger.settlements(settlement_id) ON DELETE CASCADE,
+    aggregate_version INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    correlation_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    occurred_at TIMESTAMPTZ NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (settlement_id, aggregate_version),
+    UNIQUE (settlement_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS clearledger.outbox (
+    seq BIGSERIAL PRIMARY KEY,
+    event_id UUID NOT NULL UNIQUE REFERENCES clearledger.events(event_id) ON DELETE CASCADE,
+    settlement_id UUID NOT NULL REFERENCES clearledger.settlements(settlement_id) ON DELETE CASCADE,
+    aggregate_version INTEGER NOT NULL,
+    correlation_id TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    published_at TIMESTAMPTZ NULL,
+    archived_at TIMESTAMPTZ NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT NULL,
+    UNIQUE (settlement_id, aggregate_version),
+    FOREIGN KEY (settlement_id, aggregate_version)
+        REFERENCES clearledger.events(settlement_id, aggregate_version) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS clearledger.idempotency_keys (
+    scope TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    status_code INTEGER NOT NULL,
+    response_body JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (scope, idempotency_key)
+);
+
+-- Drop and recreate all CHECK constraints so any out-of-band constraint tampering is repaired
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN
+        SELECT t.relname AS table_name, c.conname AS constraint_name
+          FROM pg_constraint c
+          JOIN pg_class t ON c.conrelid = t.oid
+          JOIN pg_namespace n ON t.relnamespace = n.oid
+         WHERE n.nspname = 'clearledger'
+           AND t.relname IN ('settlements', 'events', 'outbox', 'idempotency_keys')
+           AND c.contype = 'c'
+    LOOP
+        EXECUTE format('ALTER TABLE clearledger.%I DROP CONSTRAINT IF EXISTS %I', r.table_name, r.constraint_name);
+    END LOOP;
+END;
+$$;
+
+ALTER TABLE clearledger.settlements
+    ADD CONSTRAINT chk_settlements_nonempty_fields CHECK (
         char_length(btrim(account_id)) BETWEEN 3 AND 64
         AND account_id = btrim(account_id)
         AND char_length(btrim(reference)) BETWEEN 3 AND 64
@@ -154,13 +218,15 @@ CREATE TABLE IF NOT EXISTS clearledger.settlements (
         AND credit_party = btrim(credit_party)
         AND char_length(btrim(current_stage)) BETWEEN 2 AND 64
         AND current_stage = btrim(current_stage)
-        AND (last_memo IS NULL OR (char_length(btrim(last_memo)) BETWEEN 1 AND 256 AND last_memo = btrim(last_memo)))
+        AND last_memo IS NOT NULL
+        AND char_length(btrim(last_memo)) BETWEEN 1 AND 256
+        AND last_memo = btrim(last_memo)
         AND updated_at >= created_at
     ),
-    CONSTRAINT chk_settlements_distinct_parties CHECK (btrim(debit_party) <> btrim(credit_party)),
-    CONSTRAINT chk_settlements_version_positive CHECK (version >= 1),
-    CONSTRAINT chk_settlements_entry_count_version CHECK (entry_count >= 0 AND entry_count = version - 1),
-    CONSTRAINT chk_settlements_lifecycle_state CHECK (
+    ADD CONSTRAINT chk_settlements_distinct_parties CHECK (btrim(debit_party) <> btrim(credit_party)),
+    ADD CONSTRAINT chk_settlements_version_positive CHECK (version >= 1),
+    ADD CONSTRAINT chk_settlements_entry_count_version CHECK (entry_count >= 0 AND entry_count = version - 1),
+    ADD CONSTRAINT chk_settlements_lifecycle_state CHECK (
         (
             version = 1
             AND entry_count = 0
@@ -176,10 +242,11 @@ CREATE TABLE IF NOT EXISTS clearledger.settlements (
             AND entry_count = version - 1
             AND current_status <> 'INITIATED'
             AND last_entry_id IS NOT NULL
+            AND last_memo IS NOT NULL
             AND updated_at > created_at
         )
     ),
-    CONSTRAINT chk_settlements_status_enum CHECK (
+    ADD CONSTRAINT chk_settlements_status_enum CHECK (
         current_status IN (
             'INITIATED',
             'VALIDATED',
@@ -189,35 +256,22 @@ CREATE TABLE IF NOT EXISTS clearledger.settlements (
             'RECONCILED',
             'DISPUTED'
         )
-    )
-);
+    );
 
-CREATE TABLE IF NOT EXISTS clearledger.events (
-    seq BIGSERIAL PRIMARY KEY,
-    event_id UUID NOT NULL UNIQUE,
-    settlement_id UUID NOT NULL REFERENCES clearledger.settlements(settlement_id) ON DELETE CASCADE,
-    aggregate_version INTEGER NOT NULL,
-    event_type TEXT NOT NULL,
-    correlation_id TEXT NOT NULL,
-    idempotency_key TEXT NOT NULL,
-    occurred_at TIMESTAMPTZ NOT NULL,
-    payload JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (settlement_id, aggregate_version),
-    UNIQUE (settlement_id, idempotency_key),
-    CONSTRAINT chk_events_nonempty_fields CHECK (
+ALTER TABLE clearledger.events
+    ADD CONSTRAINT chk_events_nonempty_fields CHECK (
         char_length(btrim(correlation_id)) BETWEEN 4 AND 128
         AND correlation_id = btrim(correlation_id)
         AND char_length(btrim(idempotency_key)) BETWEEN 8 AND 128
         AND idempotency_key = btrim(idempotency_key)
     ),
-    CONSTRAINT chk_events_version_positive CHECK (aggregate_version >= 1),
-    CONSTRAINT chk_events_type_version CHECK (
+    ADD CONSTRAINT chk_events_version_positive CHECK (aggregate_version >= 1),
+    ADD CONSTRAINT chk_events_type_version CHECK (
         (event_type = 'SettlementInitiated' AND aggregate_version = 1)
         OR
         (event_type = 'LedgerEntryRecorded' AND aggregate_version >= 2)
     ),
-    CONSTRAINT chk_events_payload_coherence CHECK (
+    ADD CONSTRAINT chk_events_payload_coherence CHECK (
         (
             jsonb_typeof(payload) = 'object'
             AND (payload - ARRAY['schemaVersion','eventId','eventType','aggregateType','aggregateId','aggregateVersion','occurredAt','correlationId','idempotencyKey','data']) = '{}'::jsonb
@@ -270,37 +324,22 @@ CREATE TABLE IF NOT EXISTS clearledger.events (
                 )
             )
         ) IS TRUE
-    )
-);
+    );
 
-CREATE TABLE IF NOT EXISTS clearledger.outbox (
-    seq BIGSERIAL PRIMARY KEY,
-    event_id UUID NOT NULL UNIQUE REFERENCES clearledger.events(event_id) ON DELETE CASCADE,
-    settlement_id UUID NOT NULL REFERENCES clearledger.settlements(settlement_id) ON DELETE CASCADE,
-    aggregate_version INTEGER NOT NULL,
-    correlation_id TEXT NOT NULL,
-    payload JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    published_at TIMESTAMPTZ NULL,
-    archived_at TIMESTAMPTZ NULL,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    last_error TEXT NULL,
-    UNIQUE (settlement_id, aggregate_version),
-    FOREIGN KEY (settlement_id, aggregate_version)
-        REFERENCES clearledger.events(settlement_id, aggregate_version) ON DELETE CASCADE,
-    CONSTRAINT chk_outbox_nonempty_corr CHECK (
+ALTER TABLE clearledger.outbox
+    ADD CONSTRAINT chk_outbox_nonempty_corr CHECK (
         char_length(btrim(correlation_id)) BETWEEN 4 AND 128
         AND correlation_id = btrim(correlation_id)
     ),
-    CONSTRAINT chk_outbox_version_positive CHECK (aggregate_version >= 1),
-    CONSTRAINT chk_outbox_attempts_nonnegative CHECK (attempts >= 0),
-    CONSTRAINT chk_outbox_attempts_zero_state CHECK (
+    ADD CONSTRAINT chk_outbox_version_positive CHECK (aggregate_version >= 1),
+    ADD CONSTRAINT chk_outbox_attempts_nonnegative CHECK (attempts >= 0),
+    ADD CONSTRAINT chk_outbox_attempts_zero_state CHECK (
         attempts > 0 OR (published_at IS NULL AND last_error IS NULL)
     ),
-    CONSTRAINT chk_outbox_published_attempts CHECK (
+    ADD CONSTRAINT chk_outbox_published_attempts CHECK (
         published_at IS NULL OR (attempts >= 1 AND last_error IS NULL AND published_at >= created_at)
     ),
-    CONSTRAINT chk_outbox_last_error_state CHECK (
+    ADD CONSTRAINT chk_outbox_last_error_state CHECK (
         last_error IS NULL OR (
             published_at IS NULL
             AND attempts >= 1
@@ -308,10 +347,10 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
             AND last_error = btrim(last_error)
         )
     ),
-    CONSTRAINT chk_outbox_archived_requires_published CHECK (
+    ADD CONSTRAINT chk_outbox_archived_requires_published CHECK (
         archived_at IS NULL OR (published_at IS NOT NULL AND archived_at >= published_at)
     ),
-    CONSTRAINT chk_outbox_payload_coherence CHECK (
+    ADD CONSTRAINT chk_outbox_payload_coherence CHECK (
         (
             jsonb_typeof(payload) = 'object'
             AND (payload - ARRAY['schemaVersion','eventId','eventType','aggregateType','aggregateId','aggregateVersion','occurredAt','correlationId','idempotencyKey','data']) = '{}'::jsonb
@@ -366,18 +405,10 @@ CREATE TABLE IF NOT EXISTS clearledger.outbox (
                 )
             )
         ) IS TRUE
-    )
-);
+    );
 
-CREATE TABLE IF NOT EXISTS clearledger.idempotency_keys (
-    scope TEXT NOT NULL,
-    idempotency_key TEXT NOT NULL,
-    request_hash TEXT NOT NULL,
-    status_code INTEGER NOT NULL,
-    response_body JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (scope, idempotency_key),
-    CONSTRAINT chk_idempotency_fields CHECK (
+ALTER TABLE clearledger.idempotency_keys
+    ADD CONSTRAINT chk_idempotency_fields CHECK (
         (
             scope ~ '^(create|entry):[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
             AND request_hash ~ '^[0-9a-f]{64}$'
@@ -392,14 +423,13 @@ CREATE TABLE IF NOT EXISTS clearledger.idempotency_keys (
             AND response_body->'idempotentReplay' = 'false'::jsonb
         ) IS TRUE
     ),
-    CONSTRAINT chk_idempotency_status_code CHECK (
+    ADD CONSTRAINT chk_idempotency_status_code CHECK (
         (
             (scope LIKE 'create:%' AND status_code = 201 AND (response_body->>'version')::integer = 1)
             OR
             (scope LIKE 'entry:%' AND status_code = 202 AND (response_body->>'version')::integer >= 2)
         ) IS TRUE
-    )
-);
+    );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clearledger_idempotency_unique_event_id
     ON clearledger.idempotency_keys ((response_body->>'eventId'));
@@ -493,6 +523,10 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
+    IF NEW.last_memo IS NULL THEN
+        NEW.last_memo := OLD.last_memo;
+    END IF;
+
     IF NEW.settlement_id <> OLD.settlement_id
        OR NEW.account_id <> OLD.account_id
        OR NEW.reference <> OLD.reference
@@ -576,6 +610,7 @@ DECLARE
     v_stage text;
     v_last_entry uuid;
     v_last_memo text;
+    v_expected_memo text;
     v_parent_ver integer;
     v_parent_created timestamptz;
     v_parent_updated timestamptz;
@@ -610,6 +645,19 @@ BEGIN
             USING ERRCODE = '23503';
     END IF;
 
+    IF (NEW.payload #>> '{data,memo}') IS NOT NULL THEN
+        v_expected_memo := NEW.payload #>> '{data,memo}';
+    ELSE
+        SELECT payload #>> '{data,memo}'
+          INTO v_expected_memo
+          FROM clearledger.events
+         WHERE settlement_id = NEW.settlement_id
+           AND aggregate_version < NEW.aggregate_version
+           AND (payload #>> '{data,memo}') IS NOT NULL
+         ORDER BY aggregate_version DESC
+         LIMIT 1;
+    END IF;
+
     IF v_parent_ver <> NEW.aggregate_version
        OR v_acct <> (NEW.payload #>> '{data,accountId}')
        OR v_ref <> (NEW.payload #>> '{data,reference}')
@@ -617,7 +665,7 @@ BEGIN
        OR v_credit <> (NEW.payload #>> '{data,creditParty}')
        OR v_status <> (NEW.payload #>> '{data,status}')
        OR v_stage <> (NEW.payload #>> '{data,clearingStage}')
-       OR COALESCE(v_last_memo, '') <> COALESCE(NEW.payload #>> '{data,memo}', '')
+       OR v_last_memo IS DISTINCT FROM v_expected_memo
        OR ABS(EXTRACT(EPOCH FROM (NEW.occurred_at - v_parent_updated))) > 0.001
        OR (NEW.aggregate_version = 1 AND ABS(EXTRACT(EPOCH FROM (NEW.occurred_at - v_parent_created))) > 0.001) THEN
         RAISE EXCEPTION 'Event row does not match parent settlement state at version %', NEW.aggregate_version
@@ -1135,6 +1183,7 @@ for usage_name, arn_key in (
         pass
     allow_arns = [str(iam_map[rk]) for rk in kms_authorized_roles[usage_name] if iam_map.get(rk)]
     deny_arns = [str(iam_map[rk]) for rk in all_role_keys if rk not in kms_authorized_roles[usage_name] and iam_map.get(rk)]
+    all_workload_arns = [str(iam_map[rk]) for rk in all_role_keys if iam_map.get(rk)]
     expected_kms_policy = {
         "Version": "2012-10-17",
         "Statement": [
@@ -1157,6 +1206,13 @@ for usage_name, arn_key in (
                 "Effect": "Deny",
                 "Principal": {"AWS": deny_arns},
                 "Action": ["kms:Decrypt", "kms:GenerateDataKey"],
+                "Resource": "*",
+            },
+            {
+                "Sid": "DenyDestructiveKeyActions",
+                "Effect": "Deny",
+                "Principal": {"AWS": all_workload_arns},
+                "Action": ["kms:DisableKey", "kms:ScheduleKeyDeletion"],
                 "Resource": "*",
             },
         ],
@@ -1205,7 +1261,7 @@ try:
 except Exception:
     pass
 
-# Reconcile RDS tags, ALB health check, ECS containerInsights, DynamoDB PITR, S3 PublicAccessBlock
+# Reconcile RDS tags, ALB health check, ECS containerInsights, DynamoDB PITR, S3 PublicAccessBlock & Bucket Policy
 try:
     rds_arn = str((m.get("database") or {}).get("instance_arn") or "")
     if rds_arn:
@@ -1273,6 +1329,48 @@ try:
 except Exception:
     pass
 
+try:
+    audit_b_arn = str(m["audit"]["bucket_arn"])
+    archiver_r_arn = str(iam_map["archiver_role_arn"])
+    non_archiver_arns = [str(iam_map[rk]) for rk in all_role_keys if rk != "archiver_role_arn" and iam_map.get(rk)]
+    all_workload_arns = [str(iam_map[rk]) for rk in all_role_keys if iam_map.get(rk)]
+    expected_s3_policy = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Sid": "AllowArchiverAuditObjectAccess",
+                "Effect": "Allow",
+                "Principal": {"AWS": archiver_r_arn},
+                "Action": ["s3:PutObject", "s3:GetObject", "s3:AbortMultipartUpload"],
+                "Resource": f"{audit_b_arn}/ledger-audit/*",
+            },
+            {
+                "Sid": "AllowArchiverAuditBucketList",
+                "Effect": "Allow",
+                "Principal": {"AWS": archiver_r_arn},
+                "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+                "Resource": audit_b_arn,
+            },
+            {
+                "Sid": "DenyObjectDeletionAllWorkloads",
+                "Effect": "Deny",
+                "Principal": {"AWS": all_workload_arns},
+                "Action": ["s3:DeleteObject", "s3:DeleteObjectVersion"],
+                "Resource": [audit_b_arn, f"{audit_b_arn}/*"],
+            },
+            {
+                "Sid": "DenyNonArchiverBucketWrites",
+                "Effect": "Deny",
+                "Principal": {"AWS": non_archiver_arns},
+                "Action": ["s3:PutObject"],
+                "Resource": [audit_b_arn, f"{audit_b_arn}/*"],
+            },
+        ],
+    }
+    s3.put_bucket_policy(Bucket=m["audit"]["bucket_name"], Policy=json.dumps(expected_s3_policy))
+except Exception:
+    pass
+
 # Reconcile EventBridge schedules, SQS queues, CloudWatch Log Groups, and Lambda worker configs/ESM,
 # and purge any non-canonical prefix-scoped resources
 sched_map = m.get("schedules") or {}
@@ -1315,8 +1413,43 @@ except Exception:
 msg_map = m.get("messaging") or {}
 main_q_url = str(msg_map.get("queue_url") or "")
 dlq_q_url = str(msg_map.get("dlq_url") or "")
+main_q_arn = str(msg_map.get("queue_arn") or "")
+dlq_q_arn = str(msg_map.get("dlq_arn") or "")
 try:
     if main_q_url:
+        expected_main_q_policy = {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Sid": "AllowPublishersSendToMainQueue",
+                    "Effect": "Allow",
+                    "Principal": {"AWS": [str(iam_map["ecs_task_role_arn"]), str(iam_map["relay_role_arn"])]},
+                    "Action": ["sqs:SendMessage", "sqs:GetQueueAttributes", "sqs:GetQueueUrl"],
+                    "Resource": main_q_arn,
+                },
+                {
+                    "Sid": "AllowProjectorConsumeMainQueue",
+                    "Effect": "Allow",
+                    "Principal": {"AWS": str(iam_map["projector_role_arn"])},
+                    "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility"],
+                    "Resource": main_q_arn,
+                },
+                {
+                    "Sid": "DenyNonPublishersSendToMainQueue",
+                    "Effect": "Deny",
+                    "Principal": {"AWS": [str(iam_map[rk]) for rk in ("ecs_execution_role_arn", "projector_role_arn", "archiver_role_arn", "scheduler_role_arn") if iam_map.get(rk)]},
+                    "Action": ["sqs:SendMessage"],
+                    "Resource": main_q_arn,
+                },
+                {
+                    "Sid": "DenyNonProjectorConsumeMainQueue",
+                    "Effect": "Deny",
+                    "Principal": {"AWS": [str(iam_map[rk]) for rk in ("ecs_execution_role_arn", "ecs_task_role_arn", "relay_role_arn", "archiver_role_arn", "scheduler_role_arn") if iam_map.get(rk)]},
+                    "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage"],
+                    "Resource": main_q_arn,
+                },
+            ],
+        }
         sqs.set_queue_attributes(
             QueueUrl=main_q_url,
             Attributes={
@@ -1325,20 +1458,48 @@ try:
                 "MessageRetentionPeriod": "172800",
                 "RedrivePolicy": json.dumps(
                     {
-                        "deadLetterTargetArn": msg_map["dlq_arn"],
+                        "deadLetterTargetArn": dlq_q_arn,
                         "maxReceiveCount": 4,
                     }
                 ),
+                "Policy": json.dumps(expected_main_q_policy),
             },
         )
 except Exception:
     pass
 try:
     if dlq_q_url:
+        expected_dlq_policy = {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Sid": "AllowProjectorDlqSend",
+                    "Effect": "Allow",
+                    "Principal": {"AWS": str(iam_map["projector_role_arn"])},
+                    "Action": ["sqs:SendMessage"],
+                    "Resource": dlq_q_arn,
+                },
+                {
+                    "Sid": "DenyDlqConsumeAllWorkloads",
+                    "Effect": "Deny",
+                    "Principal": {"AWS": [str(iam_map[rk]) for rk in all_role_keys if iam_map.get(rk)]},
+                    "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage"],
+                    "Resource": dlq_q_arn,
+                },
+                {
+                    "Sid": "DenyNonProjectorDlqSend",
+                    "Effect": "Deny",
+                    "Principal": {"AWS": [str(iam_map[rk]) for rk in all_role_keys if rk != "projector_role_arn" and iam_map.get(rk)]},
+                    "Action": ["sqs:SendMessage"],
+                    "Resource": dlq_q_arn,
+                },
+            ],
+        }
         sqs.set_queue_attributes(
             QueueUrl=dlq_q_url,
             Attributes={
                 "MessageRetentionPeriod": "1209600",
+                "Policy": json.dumps(expected_dlq_policy),
             },
         )
 except Exception:
@@ -1732,6 +1893,8 @@ with psycopg.connect(pg_conninfo) as conn:
                         raise ValueError(f"Outbox row {ev_id} is marked unarchived in PostgreSQL")
                     if parsed_line != authoritative_payload:
                         raise ValueError(f"Tampered S3 audit record for {ev_id}")
+                    if list(parsed_line.keys())[:3] != ["schemaVersion", "eventId", "eventType"] or list((parsed_line.get("data") or {}).keys())[:1] != ["kind"]:
+                        raise ValueError(f"Non-canonical S3 audit record key ordering for {ev_id}")
                     batch_seen.add(ev_id)
                     batch_ids.append(ev_id)
                     batch_seqs.append(int(row_seq))

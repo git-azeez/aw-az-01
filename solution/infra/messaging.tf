@@ -8,6 +8,58 @@ resource "aws_sqs_queue" "dlq" {
   })
 }
 
+resource "aws_sqs_queue_policy" "dlq" {
+  queue_url = aws_sqs_queue.dlq.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowProjectorDlqSend"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.projector.arn
+        }
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.dlq.arn
+      },
+      {
+        Sid    = "DenyDlqConsumeAllWorkloads"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.projector.arn,
+            aws_iam_role.relay.arn,
+            aws_iam_role.archiver.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage"
+        ]
+        Resource = aws_sqs_queue.dlq.arn
+      },
+      {
+        Sid    = "DenyNonProjectorDlqSend"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.relay.arn,
+            aws_iam_role.archiver.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.dlq.arn
+      }
+    ]
+  })
+}
+
 resource "aws_sqs_queue" "events" {
   name                       = "${local.prefix}-events"
   visibility_timeout_seconds = 3
@@ -21,6 +73,77 @@ resource "aws_sqs_queue" "events" {
 
   tags = merge(local.common_tags, {
     Name = "${local.prefix}-events"
+  })
+}
+
+resource "aws_sqs_queue_policy" "events" {
+  queue_url = aws_sqs_queue.events.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowPublishersSendToMainQueue"
+        Effect = "Allow"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.relay.arn
+          ]
+        }
+        Action = [
+          "sqs:SendMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:GetQueueUrl"
+        ]
+        Resource = aws_sqs_queue.events.arn
+      },
+      {
+        Sid    = "AllowProjectorConsumeMainQueue"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.projector.arn
+        }
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes",
+          "sqs:ChangeMessageVisibility"
+        ]
+        Resource = aws_sqs_queue.events.arn
+      },
+      {
+        Sid    = "DenyNonPublishersSendToMainQueue"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.projector.arn,
+            aws_iam_role.archiver.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.events.arn
+      },
+      {
+        Sid    = "DenyNonProjectorConsumeMainQueue"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.relay.arn,
+            aws_iam_role.archiver.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage"
+        ]
+        Resource = aws_sqs_queue.events.arn
+      }
+    ]
   })
 }
 

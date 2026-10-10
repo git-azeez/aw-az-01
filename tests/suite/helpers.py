@@ -592,6 +592,220 @@ def verify_iam_roles_and_policies(
             _assert_denied(sched_docs, "scheduler_role_arn", kms_act, kms_arn, f"{kms_label} KMS key")
 
 
+def _principal_matches(principal_field: Any, target_arn: str, allow_wildcard: bool = False) -> bool:
+    if principal_field == "*":
+        return allow_wildcard
+    if isinstance(principal_field, dict):
+        aws_p = principal_field.get("AWS")
+        if aws_p == "*":
+            return allow_wildcard
+        for pat in _as_str_list(aws_p):
+            if pat == "*":
+                if allow_wildcard:
+                    return True
+            elif fnmatchcase(target_arn, pat):
+                return True
+    return False
+
+
+def resource_policy_allows_principal(
+    policy_docs: list[Any], principal_arn: str, action: str, resource: str
+) -> bool:
+    action_l = action.lower()
+    allowed = False
+    for raw_doc in policy_docs:
+        doc = _parse_policy_doc(raw_doc)
+        stmts = doc.get("Statement") or []
+        if isinstance(stmts, dict):
+            stmts = [stmts]
+        for stmt in stmts:
+            if not isinstance(stmt, dict):
+                continue
+            effect = stmt.get("Effect")
+            actions = [a.lower() for a in _as_str_list(stmt.get("Action"))]
+            resources = _as_str_list(stmt.get("Resource"))
+            act_match = any(fnmatchcase(action_l, pat) for pat in actions)
+            res_match = any(fnmatchcase(resource, pat) for pat in resources)
+            if not (act_match and res_match):
+                continue
+            if effect == "Deny" and _principal_matches(stmt.get("Principal"), principal_arn, allow_wildcard=True):
+                return False
+            if effect == "Allow" and _principal_matches(stmt.get("Principal"), principal_arn, allow_wildcard=False):
+                allowed = True
+    return allowed
+
+
+def resource_policy_denies_principal(
+    policy_docs: list[Any], principal_arn: str, action: str, resource: str
+) -> bool:
+    action_l = action.lower()
+    for raw_doc in policy_docs:
+        doc = _parse_policy_doc(raw_doc)
+        stmts = doc.get("Statement") or []
+        if isinstance(stmts, dict):
+            stmts = [stmts]
+        for stmt in stmts:
+            if not isinstance(stmt, dict) or stmt.get("Effect") != "Deny":
+                continue
+            actions = [a.lower() for a in _as_str_list(stmt.get("Action"))]
+            resources = _as_str_list(stmt.get("Resource"))
+            act_match = any(fnmatchcase(action_l, pat) for pat in actions)
+            res_match = any(fnmatchcase(resource, pat) for pat in resources)
+            if act_match and res_match and _principal_matches(stmt.get("Principal"), principal_arn, allow_wildcard=False):
+                return True
+    return False
+
+
+def verify_kms_key_policies(
+    manifest: dict[str, Any],
+    kms_policy_docs: dict[str, list[Any]],
+    label: str = "KMS Key Policy",
+) -> None:
+    iam_map = manifest["iam"]
+    all_role_keys = (
+        "ecs_execution_role_arn",
+        "ecs_task_role_arn",
+        "projector_role_arn",
+        "relay_role_arn",
+        "archiver_role_arn",
+        "scheduler_role_arn",
+    )
+    kms_matrix = (
+        (
+            "database",
+            manifest["kms"]["database_arn"],
+            {"relay_role_arn", "archiver_role_arn"},
+        ),
+        (
+            "messaging",
+            manifest["kms"]["messaging_arn"],
+            {"ecs_task_role_arn", "projector_role_arn", "relay_role_arn"},
+        ),
+        (
+            "projection",
+            manifest["kms"]["projection_arn"],
+            {"ecs_task_role_arn", "projector_role_arn"},
+        ),
+        (
+            "audit",
+            manifest["kms"]["audit_arn"],
+            {"archiver_role_arn"},
+        ),
+    )
+    for kms_label, kms_arn, allowed_roles in kms_matrix:
+        docs = kms_policy_docs.get(kms_arn) or []
+        assert docs, f"{label}: missing resource-based key policy for {kms_label} KMS key ({kms_arn})"
+        for rkey in all_role_keys:
+            r_arn = iam_map[rkey]
+            if rkey in allowed_roles:
+                for act in ("kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"):
+                    assert resource_policy_allows_principal(docs, r_arn, act, kms_arn), (
+                        f"{label}: {kms_label} KMS key policy must explicitly allow {act} for {rkey} ({r_arn})"
+                    )
+            else:
+                for act in ("kms:Decrypt", "kms:GenerateDataKey"):
+                    assert not resource_policy_allows_principal(docs, r_arn, act, kms_arn), (
+                        f"{label}: {kms_label} KMS key policy must not allow {act} for unauthorized role {rkey} ({r_arn})"
+                    )
+                    assert resource_policy_denies_principal(docs, r_arn, act, kms_arn), (
+                        f"{label}: {kms_label} KMS key policy must explicitly deny (Effect=Deny) {act} for unauthorized role {rkey} ({r_arn})"
+                    )
+            for destructive_act in ("kms:DisableKey", "kms:ScheduleKeyDeletion"):
+                assert resource_policy_denies_principal(docs, r_arn, destructive_act, kms_arn), (
+                    f"{label}: {kms_label} KMS key policy must explicitly deny (Effect=Deny) {destructive_act} for {rkey} ({r_arn})"
+                )
+
+
+def verify_s3_and_sqs_resource_policies(
+    manifest: dict[str, Any],
+    s3_policy_docs: list[Any],
+    main_q_policy_docs: list[Any],
+    dlq_policy_docs: list[Any],
+    label: str = "Resource Policy",
+) -> None:
+    iam_map = manifest["iam"]
+    all_role_keys = (
+        "ecs_execution_role_arn",
+        "ecs_task_role_arn",
+        "projector_role_arn",
+        "relay_role_arn",
+        "archiver_role_arn",
+        "scheduler_role_arn",
+    )
+    bucket_arn = manifest["audit"]["bucket_arn"]
+    audit_prefix = str(manifest["audit"]["prefix"]).lstrip("/")
+    audit_obj_arn = f"{bucket_arn}/{audit_prefix}probe.ndjson"
+    queue_arn = manifest["messaging"]["queue_arn"]
+    dlq_arn = manifest["messaging"]["dlq_arn"]
+
+    assert s3_policy_docs, f"{label}: missing S3 bucket policy on audit bucket ({bucket_arn})"
+    archiver_arn = iam_map["archiver_role_arn"]
+    for act in ("s3:ListBucket", "s3:GetBucketLocation"):
+        assert resource_policy_allows_principal(s3_policy_docs, archiver_arn, act, bucket_arn), (
+            f"{label}: S3 bucket policy must allow {act} on {bucket_arn} for archiver_role_arn"
+        )
+    for act in ("s3:PutObject", "s3:GetObject", "s3:AbortMultipartUpload"):
+        assert resource_policy_allows_principal(s3_policy_docs, archiver_arn, act, audit_obj_arn), (
+            f"{label}: S3 bucket policy must allow {act} on {audit_obj_arn} for archiver_role_arn"
+        )
+    assert not resource_policy_allows_principal(
+        s3_policy_docs, archiver_arn, "s3:PutObject", f"{bucket_arn}/unscoped-root-object.ndjson"
+    ), f"{label}: S3 bucket policy s3:PutObject for archiver_role_arn must be scoped to {bucket_arn}/ledger-audit/*"
+    for rkey in all_role_keys:
+        r_arn = iam_map[rkey]
+        for del_act in ("s3:DeleteObject", "s3:DeleteObjectVersion"):
+            assert resource_policy_denies_principal(s3_policy_docs, r_arn, del_act, audit_obj_arn), (
+                f"{label}: S3 bucket policy must explicitly deny (Effect=Deny) {del_act} on {audit_obj_arn} for {rkey}"
+            )
+        if rkey != "archiver_role_arn":
+            assert not resource_policy_allows_principal(s3_policy_docs, r_arn, "s3:PutObject", audit_obj_arn), (
+                f"{label}: S3 bucket policy must not allow s3:PutObject on {audit_obj_arn} for {rkey}"
+            )
+            assert resource_policy_denies_principal(s3_policy_docs, r_arn, "s3:PutObject", audit_obj_arn), (
+                f"{label}: S3 bucket policy must explicitly deny (Effect=Deny) s3:PutObject on {audit_obj_arn} for {rkey}"
+            )
+
+    assert main_q_policy_docs, f"{label}: missing SQS queue policy on main queue ({queue_arn})"
+    for producer_key in ("ecs_task_role_arn", "relay_role_arn"):
+        p_arn = iam_map[producer_key]
+        for act in ("sqs:SendMessage", "sqs:GetQueueAttributes", "sqs:GetQueueUrl"):
+            assert resource_policy_allows_principal(main_q_policy_docs, p_arn, act, queue_arn), (
+                f"{label}: main SQS queue policy must allow {act} for {producer_key}"
+            )
+    proj_arn = iam_map["projector_role_arn"]
+    for act in ("sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility"):
+        assert resource_policy_allows_principal(main_q_policy_docs, proj_arn, act, queue_arn), (
+            f"{label}: main SQS queue policy must allow {act} for projector_role_arn"
+        )
+    for rkey in all_role_keys:
+        r_arn = iam_map[rkey]
+        if rkey != "projector_role_arn":
+            for consume_act in ("sqs:ReceiveMessage", "sqs:DeleteMessage"):
+                assert resource_policy_denies_principal(main_q_policy_docs, r_arn, consume_act, queue_arn), (
+                    f"{label}: main SQS queue policy must explicitly deny (Effect=Deny) {consume_act} for {rkey}"
+                )
+        if rkey not in {"ecs_task_role_arn", "relay_role_arn"}:
+            assert resource_policy_denies_principal(main_q_policy_docs, r_arn, "sqs:SendMessage", queue_arn), (
+                f"{label}: main SQS queue policy must explicitly deny (Effect=Deny) sqs:SendMessage for {rkey}"
+            )
+
+    assert dlq_policy_docs, f"{label}: missing SQS queue policy on DLQ ({dlq_arn})"
+    assert resource_policy_allows_principal(dlq_policy_docs, proj_arn, "sqs:SendMessage", dlq_arn), (
+        f"{label}: DLQ policy must allow sqs:SendMessage for projector_role_arn"
+    )
+    for rkey in all_role_keys:
+        r_arn = iam_map[rkey]
+        if rkey != "projector_role_arn":
+            assert resource_policy_denies_principal(dlq_policy_docs, r_arn, "sqs:SendMessage", dlq_arn), (
+                f"{label}: DLQ policy must explicitly deny (Effect=Deny) sqs:SendMessage for {rkey}"
+            )
+        for consume_act in ("sqs:ReceiveMessage", "sqs:DeleteMessage"):
+            assert resource_policy_denies_principal(dlq_policy_docs, r_arn, consume_act, dlq_arn), (
+                f"{label}: DLQ policy must explicitly deny (Effect=Deny) {consume_act} for {rkey}"
+            )
+
+
+
 def run_script(script_path: Path, timeout_sec: int) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     cfg = load_config()

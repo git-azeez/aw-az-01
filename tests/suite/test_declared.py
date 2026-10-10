@@ -13,6 +13,8 @@ from .helpers import (
     load_tfstate,
     run_iac_validate,
     verify_iam_roles_and_policies,
+    verify_kms_key_policies,
+    verify_s3_and_sqs_resource_policies,
 )
 
 
@@ -657,7 +659,62 @@ def test_declared_data_and_async(ctx: VerifierContext) -> None:
         for flag in ("block_public_acls", "block_public_policy", "ignore_public_acls", "restrict_public_buckets"):
             assert pab[0].get(flag) is True
 
-        return "RDS, SQS+DLQ, 3 Lambdas, Scheduler, DynamoDB (AccountIndex+PITR+SSE), Valkey, and S3 KMS verified"
+        s3_policy_docs: list[Any] = []
+        if buckets[0].get("policy") and str(buckets[0].get("policy")).strip() not in {"", "{}"}:
+            s3_policy_docs.append(buckets[0].get("policy"))
+        for bp in _by_type(items, "aws_s3_bucket_policy"):
+            if bp.get("bucket") in {manifest["audit"]["bucket_name"], buckets[0].get("id")} or len(_by_type(items, "aws_s3_bucket_policy")) == 1:
+                if bp.get("policy") and str(bp.get("policy")).strip() not in {"", "{}"}:
+                    s3_policy_docs.append(bp.get("policy"))
+
+        main_q_name = manifest["messaging"]["queue_name"]
+        dlq_q_name = manifest["messaging"]["dlq_name"]
+        main_q_urls = {
+            str(u).rstrip("/")
+            for u in (main_q.get("url"), main_q.get("id"), manifest["messaging"]["queue_url"])
+            if u
+        }
+        dlq_q_urls = {
+            str(u).rstrip("/")
+            for u in (dlq_q.get("url"), dlq_q.get("id"), manifest["messaging"]["dlq_url"])
+            if u
+        }
+        main_q_addr = str(main_q.get("_address") or "")
+        dlq_q_addr = str(dlq_q.get("_address") or "")
+        main_q_policy_docs: list[Any] = []
+        dlq_policy_docs: list[Any] = []
+        if main_q.get("policy") and str(main_q.get("policy")).strip() not in {"", "{}"}:
+            main_q_policy_docs.append(main_q.get("policy"))
+        if dlq_q.get("policy") and str(dlq_q.get("policy")).strip() not in {"", "{}"}:
+            dlq_policy_docs.append(dlq_q.get("policy"))
+        for qp in _by_type(items, "aws_sqs_queue_policy"):
+            qp_expr = cfg_map.get(str(qp.get("_address") or ""), {})
+            qp_qurl = str(qp.get("queue_url") or qp.get("id") or "").rstrip("/")
+            pol_raw = qp.get("policy")
+            if not pol_raw or str(pol_raw).strip() in {"", "{}"}:
+                continue
+            if (
+                qp_qurl in main_q_urls
+                or qp_qurl.endswith(f"/{main_q_name}")
+                or (main_q_addr and config_depends_on_resource(qp_expr.get("queue_url"), main_q_addr))
+            ):
+                main_q_policy_docs.append(pol_raw)
+            elif (
+                qp_qurl in dlq_q_urls
+                or qp_qurl.endswith(f"/{dlq_q_name}")
+                or (dlq_q_addr and config_depends_on_resource(qp_expr.get("queue_url"), dlq_q_addr))
+            ):
+                dlq_policy_docs.append(pol_raw)
+
+        verify_s3_and_sqs_resource_policies(
+            manifest=manifest,
+            s3_policy_docs=s3_policy_docs,
+            main_q_policy_docs=main_q_policy_docs,
+            dlq_policy_docs=dlq_policy_docs,
+            label="Declared S3/SQS Resource Policy",
+        )
+
+        return "RDS, SQS+DLQ (with resource policies), 3 Lambdas, Scheduler, DynamoDB (AccountIndex+PITR+SSE), Valkey, and S3 KMS+Policy verified"
 
     _run_block(ctx, "declared.data_async", _check)
 
@@ -708,6 +765,8 @@ def test_declared_security(ctx: VerifierContext) -> None:
         kms_arns = list(manifest["kms"].values())
         assert len(set(kms_arns)) == 4, "Expected 4 distinct KMS key ARNs"
         expected_key_ids: set[str] = set()
+        kms_policy_docs: dict[str, list[Any]] = {arn: [] for arn in kms_arns}
+        kid_to_arn: dict[str, str] = {}
         for arn in kms_arns:
             key = keys.get(arn)
             assert key is not None, f"KMS key {arn} not in state"
@@ -715,8 +774,25 @@ def test_declared_security(ctx: VerifierContext) -> None:
             assert key.get("enable_key_rotation") is True, f"KMS key {arn} must have enable_key_rotation=true in state"
             del_window = int(key.get("deletion_window_in_days") or 0)
             assert 10 <= del_window <= 30, f"KMS key {arn} deletion_window_in_days must be 10..30, got {del_window}"
-            expected_key_ids.add(str(key.get("key_id") or arn.rsplit("/", 1)[-1]))
+            kid = str(key.get("key_id") or arn.rsplit("/", 1)[-1])
+            expected_key_ids.add(kid)
             expected_key_ids.add(arn)
+            kid_to_arn[kid] = arn
+            kid_to_arn[arn] = arn
+            if key.get("policy") and str(key.get("policy")).strip() not in {"", "{}"}:
+                kms_policy_docs[arn].append(key.get("policy"))
+
+        for kp in _by_type(items, "aws_kms_key_policy"):
+            target_kid = str(kp.get("key_id") or "")
+            mapped_arn = kid_to_arn.get(target_kid)
+            if mapped_arn and kp.get("policy") and str(kp.get("policy")).strip() not in {"", "{}"}:
+                kms_policy_docs[mapped_arn].append(kp.get("policy"))
+
+        verify_kms_key_policies(
+            manifest=manifest,
+            kms_policy_docs=kms_policy_docs,
+            label="Declared KMS Key Policy",
+        )
 
         prefix = ctx.config["resource_prefix"]
         aliases = _by_type(items, "aws_kms_alias")
@@ -765,7 +841,7 @@ def test_declared_security(ctx: VerifierContext) -> None:
             ret = int(lg.get("retention_in_days") or 0)
             assert ret >= 14, f"Log group {lg_name} retention_in_days must be >= 14 in state, got {ret}"
 
-        return "IAM trust & least-privilege policies, 4 KMS keys+aliases, Cognito OAuth2 scopes, and 4 log groups verified"
+        return "IAM trust & least-privilege policies, 4 KMS keys+policies+aliases, Cognito OAuth2 scopes, and 4 log groups verified"
 
     _run_block(ctx, "declared.security", _check)
 

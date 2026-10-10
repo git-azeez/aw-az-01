@@ -59,6 +59,8 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
             for idx in range(settlement_count):
                 step_override = 4 if idx == 0 else (3 if idx == 1 else (5 if idx == 2 else None))
                 spec = build_random_settlement_spec(ctx.rng, step_count=step_override)
+                if idx in {2, 3, 4}:
+                    spec["entries"][-1]["memo"] = None
                 sid = spec["settlementId"]
                 corr_id = f"corr-wf-{idx}-{uuid.uuid4().hex[:8]}"
 
@@ -119,6 +121,17 @@ def test_settlement_lifecycle_workflow(ctx: VerifierContext) -> None:
                 assert proj.get("lastMemo") == expected_last_memo, (
                     f"Expected projected lastMemo to retain most recent non-null memo {expected_last_memo!r}, got {proj.get('lastMemo')!r}"
                 )
+                with pg_connect(ctx.manifest, ctx.config) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "SELECT last_memo FROM clearledger.settlements WHERE settlement_id = %s",
+                            (sid,),
+                        )
+                        pg_last_memo = cur.fetchone()[0]
+                        assert pg_last_memo == expected_last_memo, (
+                            f"Expected clearledger.settlements.last_memo to retain most recent non-null memo "
+                            f"{expected_last_memo!r} for {sid}, got {pg_last_memo!r}"
+                        )
 
                 tl_resp = client.get(f"/v1/settlements/{sid}/ledger", headers={"Authorization": f"Bearer {tokens['read']}"})
                 assert tl_resp.status_code == 200
@@ -1327,6 +1340,13 @@ def test_outbox_recovery_after_sqs_queue_deletion(ctx: VerifierContext) -> None:
                     row_seq, auth_pay = pg_outbox_map[ev_id]
                     assert rec == auth_pay, (
                         f"Expected deploy.sh to heal tampered S3 audit record for eventId {ev_id}: got {rec.get('data')}, expected {auth_pay.get('data')}"
+                    )
+                    assert list(rec.keys())[:3] == ["schemaVersion", "eventId", "eventType"], (
+                        f"Expected S3 audit batch {key} record {ev_id} to preserve canonical ClearLedgerDomainEventEnvelope "
+                        f"field order (schemaVersion, eventId, eventType, ...) as produced by clearledger-audit-archiver, got keys {list(rec.keys())[:4]}"
+                    )
+                    assert list((rec.get("data") or {}).keys())[:1] == ["kind"], (
+                        f"Expected S3 audit batch {key} record {ev_id} data object to begin with 'kind', got keys {list((rec.get('data') or {}).keys())[:3]}"
                     )
                     s3_records_by_eid[ev_id] = rec
                     batch_seqs.append(row_seq)

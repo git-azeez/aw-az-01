@@ -22,6 +22,8 @@ from .helpers import (
     run_script,
     snapshot_inventory,
     valkey_connect,
+    verify_kms_key_policies,
+    verify_s3_and_sqs_resource_policies,
     wait_until,
 )
 
@@ -87,6 +89,21 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                 )
                 cur.execute("ALTER TABLE clearledger.outbox DISABLE TRIGGER USER")
                 cur.execute("DROP INDEX IF EXISTS clearledger.idx_clearledger_entry_id")
+                cur.execute(
+                    """
+                    SELECT c.relname, con.conname
+                    FROM pg_constraint con
+                    JOIN pg_class c ON c.oid = con.conrelid
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'clearledger'
+                      AND c.relname IN ('settlements', 'events')
+                      AND con.contype = 'c'
+                    """
+                )
+                for relname, conname in cur.fetchall():
+                    safe_con = str(conname).replace('"', '""')
+                    cur.execute(f'ALTER TABLE clearledger.{relname} DROP CONSTRAINT IF EXISTS "{safe_con}"')
+                    cur.execute(f'ALTER TABLE clearledger.{relname} ADD CONSTRAINT "{safe_con}" CHECK (true)')
             conn.commit()
 
         # Corrupt S3 audit archive for s3_loss_sid in-place (while archived_at remains NOT NULL in PostgreSQL),
@@ -431,6 +448,42 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             )
         except Exception:  # noqa: BLE001
             pass
+        try:
+            s3.delete_bucket_policy(Bucket=before_bucket)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            sqs.set_queue_attributes(
+                QueueUrl=before_manifest["messaging"]["queue_url"],
+                Attributes={"Policy": ""},
+            )
+            sqs.set_queue_attributes(
+                QueueUrl=before_manifest["messaging"]["dlq_url"],
+                Attributes={"Policy": ""},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            kms.put_key_policy(
+                KeyId=before_manifest["kms"]["audit_arn"],
+                PolicyName="default",
+                Policy=json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Sid": "DriftedRootOnly",
+                                "Effect": "Allow",
+                                "Principal": {"AWS": "arn:aws:iam::000000000000:root"},
+                                "Action": "kms:*",
+                                "Resource": "*",
+                            }
+                        ],
+                    }
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
         # 2. Data-plane drift:
         # - Inflated-version STATE corruption on sample_sid + poisoned Valkey cache
@@ -726,7 +779,8 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             f"Expected deploy.sh to revoke out-of-band egress rules on valkey security group {valkey_sg_id}, found {valkey_explicit_egress}"
         )
 
-        # Verify KMS key state, rotation, and tags after re-apply
+        # Verify KMS key state, rotation, tags, and resource policies after re-apply
+        reapplied_kms_policies: dict[str, list[str]] = {}
         for role_label, k_arn in (
             ("database", after_manifest["kms"]["database_arn"]),
             ("messaging", after_manifest["kms"]["messaging_arn"]),
@@ -747,6 +801,36 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
             assert k_tags.get("ClearLedgerDeployment") == prefix and k_tags.get("ClearLedgerKeyUsage") == role_label, (
                 f"Expected deploy.sh to restore KMS tags on {role_label} ({k_arn}), found {k_tags}"
             )
+            reapplied_kms_policies[k_arn] = []
+            try:
+                kp_raw = kms.get_key_policy(KeyId=k_arn, PolicyName="default").get("Policy")
+                if kp_raw and str(kp_raw).strip() not in {"", "{}"}:
+                    reapplied_kms_policies[k_arn].append(kp_raw)
+            except Exception:  # noqa: BLE001
+                pass
+
+        verify_kms_key_policies(
+            manifest=after_manifest,
+            kms_policy_docs=reapplied_kms_policies,
+            label="Post-Reapply KMS Key Policy",
+        )
+
+        reapplied_s3_policies: list[str] = []
+        try:
+            bp_raw = s3.get_bucket_policy(Bucket=after_manifest["audit"]["bucket_name"]).get("Policy")
+            if bp_raw and str(bp_raw).strip() not in {"", "{}"}:
+                reapplied_s3_policies.append(bp_raw)
+        except Exception:  # noqa: BLE001
+            pass
+        reapplied_main_q_policies = [q_attrs["Policy"]] if q_attrs.get("Policy") and str(q_attrs.get("Policy")).strip() not in {"", "{}"} else []
+        reapplied_dlq_policies = [dlq_attrs["Policy"]] if dlq_attrs.get("Policy") and str(dlq_attrs.get("Policy")).strip() not in {"", "{}"} else []
+        verify_s3_and_sqs_resource_policies(
+            manifest=after_manifest,
+            s3_policy_docs=reapplied_s3_policies,
+            main_q_policy_docs=reapplied_main_q_policies,
+            dlq_policy_docs=reapplied_dlq_policies,
+            label="Post-Reapply S3/SQS Resource Policy",
+        )
 
         rds_tags_after = {
             t.get("Key"): t.get("Value")
@@ -814,6 +898,26 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                     ev_id: (int(seq), (json.loads(pay) if isinstance(pay, str) else pay))
                     for seq, ev_id, pay in cur.fetchall()
                 }
+                cur.execute("SAVEPOINT sp_reapply_check_probe")
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO clearledger.settlements (
+                            settlement_id, account_id, reference, debit_party, credit_party,
+                            current_status, current_stage, last_memo, version, entry_count
+                        ) VALUES (%s, 'ACCT-CHK', 'REF-CHK', 'BANK-SAME', 'BANK-SAME', 'INITIATED', 'INITIATED@BANK-SAME', 'Settlement initiated', 1, 0)
+                        """,
+                        (str(uuid.uuid4()),),
+                    )
+                except Exception:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_reapply_check_probe")
+                    cur.execute("RELEASE SAVEPOINT sp_reapply_check_probe")
+                else:
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_reapply_check_probe")
+                    cur.execute("RELEASE SAVEPOINT sp_reapply_check_probe")
+                    raise AssertionError(
+                        "Expected deploy.sh to restore canonical CHECK constraints on clearledger.settlements after in-place CHECK (true) tampering"
+                    )
         assert after_count == before_count, f"Settlement count changed after re-apply: {before_count} -> {after_count}"
         assert unpub_count == 0, f"deploy.sh left {unpub_count} unpublished outbox rows after re-apply"
         assert unarch_count == 0, f"deploy.sh left {unarch_count} unarchived outbox rows after re-apply"
@@ -873,6 +977,13 @@ def test_reapply_idempotence(ctx: VerifierContext) -> None:
                     row_seq, auth_pay = pg_outbox_map[ev_id]
                     assert rec == auth_pay, (
                         f"Expected deploy.sh to heal tampered S3 audit record for eventId {ev_id}: got {rec.get('data')}, expected {auth_pay.get('data')}"
+                    )
+                    assert list(rec.keys())[:3] == ["schemaVersion", "eventId", "eventType"], (
+                        f"Expected S3 audit batch {key} record {ev_id} to preserve canonical ClearLedgerDomainEventEnvelope "
+                        f"field order (schemaVersion, eventId, eventType, ...) as produced by clearledger-audit-archiver, got keys {list(rec.keys())[:4]}"
+                    )
+                    assert list((rec.get("data") or {}).keys())[:1] == ["kind"], (
+                        f"Expected S3 audit batch {key} record {ev_id} data object to begin with 'kind', got keys {list((rec.get('data') or {}).keys())[:3]}"
                     )
                     s3_records_by_eid[ev_id] = rec
                     batch_seqs.append(row_seq)

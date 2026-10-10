@@ -44,6 +44,25 @@ resource "aws_kms_key" "database" {
           "kms:GenerateDataKey"
         ]
         Resource = "*"
+      },
+      {
+        Sid    = "DenyDestructiveKeyActions"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.projector.arn,
+            aws_iam_role.relay.arn,
+            aws_iam_role.archiver.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action = [
+          "kms:DisableKey",
+          "kms:ScheduleKeyDeletion"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -102,6 +121,25 @@ resource "aws_kms_key" "messaging" {
         Action = [
           "kms:Decrypt",
           "kms:GenerateDataKey"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "DenyDestructiveKeyActions"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.projector.arn,
+            aws_iam_role.relay.arn,
+            aws_iam_role.archiver.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action = [
+          "kms:DisableKey",
+          "kms:ScheduleKeyDeletion"
         ]
         Resource = "*"
       }
@@ -164,6 +202,25 @@ resource "aws_kms_key" "projection" {
           "kms:GenerateDataKey"
         ]
         Resource = "*"
+      },
+      {
+        Sid    = "DenyDestructiveKeyActions"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.projector.arn,
+            aws_iam_role.relay.arn,
+            aws_iam_role.archiver.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action = [
+          "kms:DisableKey",
+          "kms:ScheduleKeyDeletion"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -222,6 +279,25 @@ resource "aws_kms_key" "audit" {
         Action = [
           "kms:Decrypt",
           "kms:GenerateDataKey"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "DenyDestructiveKeyActions"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.projector.arn,
+            aws_iam_role.relay.arn,
+            aws_iam_role.archiver.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action = [
+          "kms:DisableKey",
+          "kms:ScheduleKeyDeletion"
         ]
         Resource = "*"
       }

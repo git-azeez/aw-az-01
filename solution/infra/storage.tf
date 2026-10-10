@@ -168,6 +168,82 @@ resource "aws_s3_bucket_public_access_block" "audit" {
   restrict_public_buckets = true
 }
 
+resource "aws_s3_bucket_policy" "audit" {
+  bucket = aws_s3_bucket.audit.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowArchiverAuditObjectAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.archiver.arn
+        }
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:AbortMultipartUpload"
+        ]
+        Resource = "${aws_s3_bucket.audit.arn}/ledger-audit/*"
+      },
+      {
+        Sid    = "AllowArchiverAuditBucketList"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.archiver.arn
+        }
+        Action = [
+          "s3:ListBucket",
+          "s3:GetBucketLocation"
+        ]
+        Resource = aws_s3_bucket.audit.arn
+      },
+      {
+        Sid    = "DenyObjectDeletionAllWorkloads"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.projector.arn,
+            aws_iam_role.relay.arn,
+            aws_iam_role.archiver.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action = [
+          "s3:DeleteObject",
+          "s3:DeleteObjectVersion"
+        ]
+        Resource = [
+          aws_s3_bucket.audit.arn,
+          "${aws_s3_bucket.audit.arn}/*"
+        ]
+      },
+      {
+        Sid    = "DenyNonArchiverBucketWrites"
+        Effect = "Deny"
+        Principal = {
+          AWS = [
+            aws_iam_role.ecs_execution.arn,
+            aws_iam_role.ecs_task.arn,
+            aws_iam_role.projector.arn,
+            aws_iam_role.relay.arn,
+            aws_iam_role.scheduler.arn
+          ]
+        }
+        Action = [
+          "s3:PutObject"
+        ]
+        Resource = [
+          aws_s3_bucket.audit.arn,
+          "${aws_s3_bucket.audit.arn}/*"
+        ]
+      }
+    ]
+  })
+}
+
 locals {
   database_host = local.aws_endpoint_host
   database_port = aws_db_instance.main.port
