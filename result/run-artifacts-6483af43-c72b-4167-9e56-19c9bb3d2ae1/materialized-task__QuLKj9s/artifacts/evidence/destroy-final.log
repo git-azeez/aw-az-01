@@ -1,0 +1,24 @@
+Initializing the backend...
+Initializing provider plugins...
+- Reusing previous version of hashicorp/aws from the dependency lock file
+- Using previously-installed hashicorp/aws v6.51.0
+
+Terraform has been successfully initialized!
+
+No changes. No objects need to be destroyed.
+
+Either you have not created any objects yet or the existing objects were
+already deleted outside of Terraform.
+
+Warning: Argument is deprecated
+
+  with aws_dynamodb_table.projection,
+  on main.tf line 200, in resource "aws_dynamodb_table" "projection":
+ 200: resource "aws_dynamodb_table" "projection" {
+
+range_key is deprecated. Use key_schema instead.
+
+(and one more similar warning elsewhere)
+
+Destroy complete! Resources: 0 destroyed.
+ClearLedger teardown complete.

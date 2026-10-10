@@ -1,0 +1,461 @@
+Initializing the backend...
+Initializing provider plugins...
+- Reusing previous version of hashicorp/aws from the dependency lock file
+- Using previously-installed hashicorp/aws v6.51.0
+
+Terraform has been successfully initialized!
+data.aws_caller_identity.current: Reading...
+aws_vpc.main: Refreshing state... [id=vpc-362d75ec]
+aws_kms_key.store["audit"]: Refreshing state... [id=dcbcfc42-afeb-4723-80d8-2e233af79f8b]
+aws_kms_key.store["database"]: Refreshing state... [id=a4eda744-71b3-4920-a7df-1802993e829c]
+aws_kms_key.store["messaging"]: Refreshing state... [id=ca3b79d6-107b-4ffe-9811-b6ddbc5b68ef]
+aws_kms_key.store["projection"]: Refreshing state... [id=acf7edf3-5fd0-47a9-9054-28c374f737fe]
+aws_cognito_user_pool.auth: Refreshing state... [id=us-east-1_64bec7b8b]
+data.aws_caller_identity.current: Read complete after 0s [id=000000000000]
+aws_sqs_queue.dlq: Refreshing state... [id=http://aws:4566/000000000000/cl-988257-events-dlq]
+aws_subnet.private[1]: Refreshing state... [id=subnet-7174c427]
+aws_subnet.private[0]: Refreshing state... [id=subnet-6b66b3fd]
+aws_security_group.rds: Refreshing state... [id=sg-caa8f3c13c02e0900]
+aws_db_subnet_group.database: Refreshing state... [id=cl-988257-database]
+aws_sqs_queue.main: Refreshing state... [id=http://aws:4566/000000000000/cl-988257-events]
+aws_db_instance.database: Refreshing state... [id=db-693F459DF99644F18BAD11B9]
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  - destroy
+
+Terraform will perform the following actions:
+
+  # aws_cognito_user_pool.auth will be destroyed
+  - resource "aws_cognito_user_pool" "auth" {
+      - alias_attributes           = [] -> null
+      - arn                        = "arn:aws:cognito-idp:us-east-1:000000000000:userpool/us-east-1_64bec7b8b" -> null
+      - auto_verified_attributes   = [] -> null
+      - creation_date              = "2026-10-10T14:50:36Z" -> null
+      - deletion_protection        = "INACTIVE" -> null
+      - endpoint                   = "cognito-idp.us-east-1.amazonaws.com/us-east-1_64bec7b8b" -> null
+      - estimated_number_of_users  = 0 -> null
+      - id                         = "us-east-1_64bec7b8b" -> null
+      - last_modified_date         = "2026-10-10T14:50:36Z" -> null
+      - mfa_configuration          = "OFF" -> null
+      - name                       = "cl-988257-auth" -> null
+      - region                     = "us-east-1" -> null
+      - tags                       = {} -> null
+      - tags_all                   = {
+          - "ClearLedgerDeployment" = "cl-988257"
+        } -> null
+      - user_pool_tier             = "ESSENTIALS" -> null
+      - username_attributes        = [] -> null
+        # (6 unchanged attributes hidden)
+
+      - admin_create_user_config {
+          - allow_admin_create_user_only = false -> null
+        }
+
+      - email_configuration {
+          - email_sending_account  = "COGNITO_DEFAULT" -> null
+            # (4 unchanged attributes hidden)
+        }
+
+      - sms_configuration {}
+
+      - username_configuration {
+          - case_sensitive = false -> null
+        }
+
+      - verification_message_template {
+            # (6 unchanged attributes hidden)
+        }
+    }
+
+  # aws_db_subnet_group.database will be destroyed
+  - resource "aws_db_subnet_group" "database" {
+      - arn                     = "arn:aws:rds:us-east-1:000000000000:subgrp:cl-988257-database" -> null
+      - description             = "Managed by Terraform" -> null
+      - id                      = "cl-988257-database" -> null
+      - name                    = "cl-988257-database" -> null
+      - region                  = "us-east-1" -> null
+      - subnet_ids              = [
+          - "subnet-6b66b3fd",
+          - "subnet-7174c427",
+        ] -> null
+      - supported_network_types = [] -> null
+      - tags                    = {} -> null
+      - tags_all                = {
+          - "ClearLedgerDeployment" = "cl-988257"
+        } -> null
+      - vpc_id                  = "vpc-362d75ec" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_kms_key.store["audit"] will be destroyed
+  - resource "aws_kms_key" "store" {
+      - arn                                = "arn:aws:kms:us-east-1:000000000000:key/dcbcfc42-afeb-4723-80d8-2e233af79f8b" -> null
+      - bypass_policy_lockout_safety_check = false -> null
+      - customer_master_key_spec           = "SYMMETRIC_DEFAULT" -> null
+      - deletion_window_in_days            = 10 -> null
+      - description                        = "cl-988257-audit" -> null
+      - enable_key_rotation                = true -> null
+      - id                                 = "dcbcfc42-afeb-4723-80d8-2e233af79f8b" -> null
+      - is_enabled                         = true -> null
+      - key_id                             = "dcbcfc42-afeb-4723-80d8-2e233af79f8b" -> null
+      - key_usage                          = "ENCRYPT_DECRYPT" -> null
+      - multi_region                       = false -> null
+      - policy                             = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action    = "kms:*"
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - AWS = "arn:aws:iam::000000000000:root"
+                        }
+                      - Resource  = "*"
+                      - Sid       = "Enable IAM User Permissions"
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - region                             = "us-east-1" -> null
+      - rotation_period_in_days            = 0 -> null
+      - tags                               = {
+          - "ClearLedgerKeyUsage" = "audit"
+          - "Name"                = "cl-988257-audit"
+        } -> null
+      - tags_all                           = {
+          - "ClearLedgerDeployment" = "cl-988257"
+          - "ClearLedgerKeyUsage"   = "audit"
+          - "Name"                  = "cl-988257-audit"
+        } -> null
+        # (2 unchanged attributes hidden)
+    }
+
+  # aws_kms_key.store["database"] will be destroyed
+  - resource "aws_kms_key" "store" {
+      - arn                                = "arn:aws:kms:us-east-1:000000000000:key/a4eda744-71b3-4920-a7df-1802993e829c" -> null
+      - bypass_policy_lockout_safety_check = false -> null
+      - customer_master_key_spec           = "SYMMETRIC_DEFAULT" -> null
+      - deletion_window_in_days            = 10 -> null
+      - description                        = "cl-988257-database" -> null
+      - enable_key_rotation                = true -> null
+      - id                                 = "a4eda744-71b3-4920-a7df-1802993e829c" -> null
+      - is_enabled                         = true -> null
+      - key_id                             = "a4eda744-71b3-4920-a7df-1802993e829c" -> null
+      - key_usage                          = "ENCRYPT_DECRYPT" -> null
+      - multi_region                       = false -> null
+      - policy                             = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action    = "kms:*"
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - AWS = "arn:aws:iam::000000000000:root"
+                        }
+                      - Resource  = "*"
+                      - Sid       = "Enable IAM User Permissions"
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - region                             = "us-east-1" -> null
+      - rotation_period_in_days            = 0 -> null
+      - tags                               = {
+          - "ClearLedgerKeyUsage" = "database"
+          - "Name"                = "cl-988257-database"
+        } -> null
+      - tags_all                           = {
+          - "ClearLedgerDeployment" = "cl-988257"
+          - "ClearLedgerKeyUsage"   = "database"
+          - "Name"                  = "cl-988257-database"
+        } -> null
+        # (2 unchanged attributes hidden)
+    }
+
+  # aws_kms_key.store["messaging"] will be destroyed
+  - resource "aws_kms_key" "store" {
+      - arn                                = "arn:aws:kms:us-east-1:000000000000:key/ca3b79d6-107b-4ffe-9811-b6ddbc5b68ef" -> null
+      - bypass_policy_lockout_safety_check = false -> null
+      - customer_master_key_spec           = "SYMMETRIC_DEFAULT" -> null
+      - deletion_window_in_days            = 10 -> null
+      - description                        = "cl-988257-messaging" -> null
+      - enable_key_rotation                = true -> null
+      - id                                 = "ca3b79d6-107b-4ffe-9811-b6ddbc5b68ef" -> null
+      - is_enabled                         = true -> null
+      - key_id                             = "ca3b79d6-107b-4ffe-9811-b6ddbc5b68ef" -> null
+      - key_usage                          = "ENCRYPT_DECRYPT" -> null
+      - multi_region                       = false -> null
+      - policy                             = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action    = "kms:*"
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - AWS = "arn:aws:iam::000000000000:root"
+                        }
+                      - Resource  = "*"
+                      - Sid       = "Enable IAM User Permissions"
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - region                             = "us-east-1" -> null
+      - rotation_period_in_days            = 0 -> null
+      - tags                               = {
+          - "ClearLedgerKeyUsage" = "messaging"
+          - "Name"                = "cl-988257-messaging"
+        } -> null
+      - tags_all                           = {
+          - "ClearLedgerDeployment" = "cl-988257"
+          - "ClearLedgerKeyUsage"   = "messaging"
+          - "Name"                  = "cl-988257-messaging"
+        } -> null
+        # (2 unchanged attributes hidden)
+    }
+
+  # aws_kms_key.store["projection"] will be destroyed
+  - resource "aws_kms_key" "store" {
+      - arn                                = "arn:aws:kms:us-east-1:000000000000:key/acf7edf3-5fd0-47a9-9054-28c374f737fe" -> null
+      - bypass_policy_lockout_safety_check = false -> null
+      - customer_master_key_spec           = "SYMMETRIC_DEFAULT" -> null
+      - deletion_window_in_days            = 10 -> null
+      - description                        = "cl-988257-projection" -> null
+      - enable_key_rotation                = true -> null
+      - id                                 = "acf7edf3-5fd0-47a9-9054-28c374f737fe" -> null
+      - is_enabled                         = true -> null
+      - key_id                             = "acf7edf3-5fd0-47a9-9054-28c374f737fe" -> null
+      - key_usage                          = "ENCRYPT_DECRYPT" -> null
+      - multi_region                       = false -> null
+      - policy                             = jsonencode(
+            {
+              - Statement = [
+                  - {
+                      - Action    = "kms:*"
+                      - Effect    = "Allow"
+                      - Principal = {
+                          - AWS = "arn:aws:iam::000000000000:root"
+                        }
+                      - Resource  = "*"
+                      - Sid       = "Enable IAM User Permissions"
+                    },
+                ]
+              - Version   = "2012-10-17"
+            }
+        ) -> null
+      - region                             = "us-east-1" -> null
+      - rotation_period_in_days            = 0 -> null
+      - tags                               = {
+          - "ClearLedgerKeyUsage" = "projection"
+          - "Name"                = "cl-988257-projection"
+        } -> null
+      - tags_all                           = {
+          - "ClearLedgerDeployment" = "cl-988257"
+          - "ClearLedgerKeyUsage"   = "projection"
+          - "Name"                  = "cl-988257-projection"
+        } -> null
+        # (2 unchanged attributes hidden)
+    }
+
+  # aws_security_group.rds will be destroyed
+  - resource "aws_security_group" "rds" {
+      - arn                    = "arn:aws:ec2:us-east-1:000000000000:security-group/sg-caa8f3c13c02e0900" -> null
+      - description            = "Managed by Terraform" -> null
+      - egress                 = [] -> null
+      - id                     = "sg-caa8f3c13c02e0900" -> null
+      - ingress                = [
+          - {
+              - cidr_blocks      = [
+                  - "10.42.0.0/16",
+                ]
+              - from_port        = 5432
+              - ipv6_cidr_blocks = []
+              - prefix_list_ids  = []
+              - protocol         = "tcp"
+              - security_groups  = []
+              - self             = false
+              - to_port          = 5432
+                # (1 unchanged attribute hidden)
+            },
+        ] -> null
+      - name                   = "cl-988257-rds" -> null
+      - owner_id               = "000000000000" -> null
+      - region                 = "us-east-1" -> null
+      - revoke_rules_on_delete = false -> null
+      - tags                   = {} -> null
+      - tags_all               = {
+          - "ClearLedgerDeployment" = "cl-988257"
+        } -> null
+      - vpc_id                 = "vpc-362d75ec" -> null
+        # (1 unchanged attribute hidden)
+    }
+
+  # aws_sqs_queue.dlq will be destroyed
+  - resource "aws_sqs_queue" "dlq" {
+      - arn                               = "arn:aws:sqs:us-east-1:000000000000:cl-988257-events-dlq" -> null
+      - content_based_deduplication       = false -> null
+      - delay_seconds                     = 0 -> null
+      - fifo_queue                        = false -> null
+      - id                                = "http://aws:4566/000000000000/cl-988257-events-dlq" -> null
+      - kms_data_key_reuse_period_seconds = 300 -> null
+      - kms_master_key_id                 = "arn:aws:kms:us-east-1:000000000000:key/ca3b79d6-107b-4ffe-9811-b6ddbc5b68ef" -> null
+      - max_message_size                  = 262144 -> null
+      - message_retention_seconds         = 1209600 -> null
+      - name                              = "cl-988257-events-dlq" -> null
+      - receive_wait_time_seconds         = 0 -> null
+      - region                            = "us-east-1" -> null
+      - sqs_managed_sse_enabled           = false -> null
+      - tags                              = {} -> null
+      - tags_all                          = {
+          - "ClearLedgerDeployment" = "cl-988257"
+        } -> null
+      - url                               = "http://aws:4566/000000000000/cl-988257-events-dlq" -> null
+      - visibility_timeout_seconds        = 30 -> null
+        # (6 unchanged attributes hidden)
+    }
+
+  # aws_subnet.private[0] will be destroyed
+  - resource "aws_subnet" "private" {
+      - arn                                            = "arn:aws:ec2:us-east-1:000000000000:subnet/subnet-6b66b3fd" -> null
+      - assign_ipv6_address_on_creation                = false -> null
+      - availability_zone                              = "us-east-1a" -> null
+      - availability_zone_id                           = "us-east-1-az1" -> null
+      - cidr_block                                     = "10.42.10.0/24" -> null
+      - enable_dns64                                   = false -> null
+      - enable_lni_at_device_index                     = 0 -> null
+      - enable_resource_name_dns_a_record_on_launch    = false -> null
+      - enable_resource_name_dns_aaaa_record_on_launch = false -> null
+      - id                                             = "subnet-6b66b3fd" -> null
+      - ipv6_native                                    = false -> null
+      - map_customer_owned_ip_on_launch                = false -> null
+      - map_public_ip_on_launch                        = false -> null
+      - owner_id                                       = "000000000000" -> null
+      - region                                         = "us-east-1" -> null
+      - tags                                           = {
+          - "Name" = "cl-988257-private-0"
+        } -> null
+      - tags_all                                       = {
+          - "ClearLedgerDeployment" = "cl-988257"
+          - "Name"                  = "cl-988257-private-0"
+        } -> null
+      - vpc_id                                         = "vpc-362d75ec" -> null
+        # (5 unchanged attributes hidden)
+    }
+
+  # aws_subnet.private[1] will be destroyed
+  - resource "aws_subnet" "private" {
+      - arn                                            = "arn:aws:ec2:us-east-1:000000000000:subnet/subnet-7174c427" -> null
+      - assign_ipv6_address_on_creation                = false -> null
+      - availability_zone                              = "us-east-1b" -> null
+      - availability_zone_id                           = "us-east-1-az2" -> null
+      - cidr_block                                     = "10.42.11.0/24" -> null
+      - enable_dns64                                   = false -> null
+      - enable_lni_at_device_index                     = 0 -> null
+      - enable_resource_name_dns_a_record_on_launch    = false -> null
+      - enable_resource_name_dns_aaaa_record_on_launch = false -> null
+      - id                                             = "subnet-7174c427" -> null
+      - ipv6_native                                    = false -> null
+      - map_customer_owned_ip_on_launch                = false -> null
+      - map_public_ip_on_launch                        = false -> null
+      - owner_id                                       = "000000000000" -> null
+      - region                                         = "us-east-1" -> null
+      - tags                                           = {
+          - "Name" = "cl-988257-private-1"
+        } -> null
+      - tags_all                                       = {
+          - "ClearLedgerDeployment" = "cl-988257"
+          - "Name"                  = "cl-988257-private-1"
+        } -> null
+      - vpc_id                                         = "vpc-362d75ec" -> null
+        # (5 unchanged attributes hidden)
+    }
+
+  # aws_vpc.main will be destroyed
+  - resource "aws_vpc" "main" {
+      - arn                                  = "arn:aws:ec2:us-east-1:000000000000:vpc/vpc-362d75ec" -> null
+      - assign_generated_ipv6_cidr_block     = false -> null
+      - cidr_block                           = "10.42.0.0/16" -> null
+      - default_network_acl_id               = "acl-d1c82bca5e197d43c" -> null
+      - default_route_table_id               = "rtb-1efca5e19cce1d5d2" -> null
+      - default_security_group_id            = "sg-a0086ee9037f92b8f" -> null
+      - dhcp_options_id                      = "dopt-default" -> null
+      - enable_dns_hostnames                 = true -> null
+      - enable_dns_support                   = true -> null
+      - enable_network_address_usage_metrics = false -> null
+      - id                                   = "vpc-362d75ec" -> null
+      - instance_tenancy                     = "default" -> null
+      - ipv6_netmask_length                  = 0 -> null
+      - main_route_table_id                  = "rtb-1efca5e19cce1d5d2" -> null
+      - owner_id                             = "000000000000" -> null
+      - region                               = "us-east-1" -> null
+      - tags                                 = {
+          - "Name" = "cl-988257-vpc"
+        } -> null
+      - tags_all                             = {
+          - "ClearLedgerDeployment" = "cl-988257"
+          - "Name"                  = "cl-988257-vpc"
+        } -> null
+        # (4 unchanged attributes hidden)
+    }
+
+Plan: 0 to add, 0 to change, 11 to destroy.
+aws_db_subnet_group.database: Destroying... [id=cl-988257-database]
+aws_sqs_queue.dlq: Destroying... [id=http://aws:4566/000000000000/cl-988257-events-dlq]
+aws_security_group.rds: Destroying... [id=sg-caa8f3c13c02e0900]
+aws_cognito_user_pool.auth: Destroying... [id=us-east-1_64bec7b8b]
+aws_db_subnet_group.database: Destruction complete after 0s
+aws_security_group.rds: Destruction complete after 0s
+aws_subnet.private[0]: Destroying... [id=subnet-6b66b3fd]
+aws_subnet.private[1]: Destroying... [id=subnet-7174c427]
+aws_subnet.private[1]: Destruction complete after 0s
+aws_subnet.private[0]: Destruction complete after 0s
+aws_vpc.main: Destroying... [id=vpc-362d75ec]
+aws_vpc.main: Destruction complete after 0s
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-988257-events-dlq, 10s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-988257-events-dlq, 20s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-988257-events-dlq, 30s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-988257-events-dlq, 40s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-988257-events-dlq, 50s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-988257-events-dlq, 1m0s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-988257-events-dlq, 1m10s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-988257-events-dlq, 1m20s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-988257-events-dlq, 1m30s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-988257-events-dlq, 1m40s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-988257-events-dlq, 1m50s elapsed]
+aws_sqs_queue.dlq: Still destroying... [id=http://aws:4566/000000000000/cl-988257-events-dlq, 2m0s elapsed]
+aws_sqs_queue.dlq: Destruction complete after 2m9s
+aws_kms_key.store["projection"]: Destroying... [id=acf7edf3-5fd0-47a9-9054-28c374f737fe]
+aws_kms_key.store["messaging"]: Destroying... [id=ca3b79d6-107b-4ffe-9811-b6ddbc5b68ef]
+aws_kms_key.store["audit"]: Destroying... [id=dcbcfc42-afeb-4723-80d8-2e233af79f8b]
+aws_kms_key.store["database"]: Destroying... [id=a4eda744-71b3-4920-a7df-1802993e829c]
+aws_kms_key.store["projection"]: Destruction complete after 0s
+aws_kms_key.store["messaging"]: Destruction complete after 0s
+aws_kms_key.store["audit"]: Destruction complete after 0s
+aws_kms_key.store["database"]: Destruction complete after 1s
+
+Warning: Argument is deprecated
+
+  with aws_dynamodb_table.projection,
+  on main.tf line 200, in resource "aws_dynamodb_table" "projection":
+ 200: resource "aws_dynamodb_table" "projection" {
+
+hash_key is deprecated. Use key_schema instead.
+
+(and one more similar warning elsewhere)
+
+Error: deleting Cognito user pool (us-east-1_64bec7b8b): operation error Cognito Identity Provider: DeleteUserPool, https response error StatusCode: 400, RequestID: 5fe00c62-57f2-4279-991a-44dbb3d03a96, InvalidParameterException: User pool cannot be deleted. It has a domain configured that should be deleted first.
+
+Traceback (most recent call last):
+  File "/workspace/submission/lifecycle.py", line 311, in <module>
+    {'deploy': deploy, 'destroy': destroy}[sys.argv[1]]()
+  File "/workspace/submission/lifecycle.py", line 303, in destroy
+    tf('destroy', '-input=false', '-auto-approve', '-no-color')
+  File "/workspace/submission/lifecycle.py", line 66, in tf
+    result = subprocess.run(['terraform', *args], cwd=ROOT / 'infra', env=ENV,
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['terraform', 'destroy', '-input=false', '-auto-approve', '-no-color']' returned non-zero exit status 1.
