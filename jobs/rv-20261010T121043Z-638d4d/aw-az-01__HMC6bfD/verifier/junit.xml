@@ -1,0 +1,1274 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" errors="19" failures="0" skipped="0" tests="19" time="145.250" timestamp="2026-10-10T12:14:54.263888+00:00" hostname="23a4165356d9"><testcase classname="test_declared" name="test_iac_discipline" time="144.691"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_declared" name="test_declared_compute_and_ingress" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_declared" name="test_declared_data_and_async" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_declared" name="test_declared_security" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_live" name="test_live_compute_and_ingress" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_live" name="test_live_data_and_event_graph" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_live" name="test_live_security" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_settlement_lifecycle_workflow" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_projection_and_valkey_cache" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_idempotency_and_optimistic_concurrency" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_backlog_accumulation_and_drain" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_duplicate_delivery_and_dlq_isolation" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_outbox_recovery_after_sqs_queue_deletion" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_projection_rebuild_from_event_log" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_ecs_task_failure_replacement" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_rds_reboot_recovery" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_behavior" name="test_authorization_audit_and_observability" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_lifecycle" name="test_reapply_idempotence" time="0.000"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase><testcase classname="test_lifecycle" name="test_destroy_clean" time="0.001"><error message="failed on setup with &quot;AssertionError: deploy.sh failed (rc=1):&#10;  STDOUT:&#10;  plete after 6s [id=cl-d97226-outbox-relay]&#10;  aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]&#10;  aws_scheduler_schedule.outbox_relay: Creating...&#10;  aws_scheduler_schedule.audit_archiver: Creating...&#10;  aws_iam_role_policy.scheduler: Creating...&#10;  aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]&#10;  aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]&#10;  aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]&#10;  &#10;  Warning: Argument is deprecated&#10;  &#10;    with aws_dynamodb_table.projections,&#10;    on storage.tf line 41, in resource &quot;aws_dynamodb_table&quot; &quot;projections&quot;:&#10;    41: resource &quot;aws_dynamodb_table&quot; &quot;projections&quot; {&#10;  &#10;  hash_key is deprecated. Use key_schema instead.&#10;  &#10;  (and 5 more similar warnings elsewhere)&#10;  &#10;  Apply complete! Resources: 68 added, 0 changed, 0 destroyed.&#10;  &#10;  Outputs:&#10;  &#10;  manifest = &lt;sensitive&gt;&#10;  &#10;  STDERR:&#10;  NOTICE:  trigger &quot;trg_clearledger_idempotency_guard&quot; for relation &quot;clearledger.idempotency_keys&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_update&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_settlements_before_delete&quot; for relation &quot;clearledger.settlements&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_before_insert&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_events_immutable&quot; for relation &quot;clearledger.events&quot; does not exist, skipping&#10;  NOTICE:  trigger &quot;trg_clearledger_outbox_guard&quot; for relation &quot;clearledger.outbox&quot; does not exist, skipping&#10;  Traceback (most recent call last):&#10;    File &quot;&lt;stdin&gt;&quot;, line 337, in &lt;module&gt;&#10;  KeyError: 'relay_schedule_name'&#10;  &#10;assert False&quot;">@pytest.fixture(scope="session")
+    def ctx() -&gt; VerifierContext:
+        config = load_config()
+        baseline = load_baseline()
+        seed = int(config["resource_prefix"].split("-")[-1], 16)
+        rng = random.Random(seed)
+        pre_inv = snapshot_inventory(config)
+    
+        layout_ok, layout_note = _verify_submission_layout()
+        _RECORDER.set_gate("submission_layout", layout_ok, layout_note)
+        assert layout_ok, layout_note
+    
+        deploy_sh = SUBMISSION_DIR / "deploy.sh"
+        try:
+            deploy_sh.chmod(0o755)
+            (SUBMISSION_DIR / "destroy.sh").chmod(0o755)
+        except OSError:
+            pass
+    
+        deploy_proc = run_script(deploy_sh, timeout_sec=720)
+        deploy_ok = deploy_proc.returncode == 0 and STATE_PATH.is_file()
+        _RECORDER.set_gate(
+            "deploy_succeeded",
+            deploy_ok,
+            f"rc={deploy_proc.returncode}" if deploy_ok else f"rc={deploy_proc.returncode}: {deploy_proc.stderr[-600:]}",
+        )
+&gt;       assert deploy_ok, f"deploy.sh failed (rc={deploy_proc.returncode}):\nSTDOUT:\n{deploy_proc.stdout[-1000:]}\nSTDERR:\n{deploy_proc.stderr[-1000:]}"
+E       AssertionError: deploy.sh failed (rc=1):
+E         STDOUT:
+E         plete after 6s [id=cl-d97226-outbox-relay]
+E         aws_lambda_function.audit_archiver: Creation complete after 6s [id=cl-d97226-audit-archiver]
+E         aws_scheduler_schedule.outbox_relay: Creating...
+E         aws_scheduler_schedule.audit_archiver: Creating...
+E         aws_iam_role_policy.scheduler: Creating...
+E         aws_iam_role_policy.scheduler: Creation complete after 0s [id=cl-d97226-scheduler-role:cl-d97226-scheduler-policy]
+E         aws_scheduler_schedule.outbox_relay: Creation complete after 0s [id=default/cl-d97226-outbox-relay-schedule]
+E         aws_scheduler_schedule.audit_archiver: Creation complete after 0s [id=default/cl-d97226-audit-archiver-schedule]
+E         
+E         Warning: Argument is deprecated
+E         
+E           with aws_dynamodb_table.projections,
+E           on storage.tf line 41, in resource "aws_dynamodb_table" "projections":
+E           41: resource "aws_dynamodb_table" "projections" {
+E         
+E         hash_key is deprecated. Use key_schema instead.
+E         
+E         (and 5 more similar warnings elsewhere)
+E         
+E         Apply complete! Resources: 68 added, 0 changed, 0 destroyed.
+E         
+E         Outputs:
+E         
+E         manifest = &lt;sensitive&gt;
+E         
+E         STDERR:
+E         NOTICE:  trigger "trg_clearledger_idempotency_guard" for relation "clearledger.idempotency_keys" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_update" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_settlements_before_delete" for relation "clearledger.settlements" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_before_insert" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_events_immutable" for relation "clearledger.events" does not exist, skipping
+E         NOTICE:  trigger "trg_clearledger_outbox_guard" for relation "clearledger.outbox" does not exist, skipping
+E         Traceback (most recent call last):
+E           File "&lt;stdin&gt;", line 337, in &lt;module&gt;
+E         KeyError: 'relay_schedule_name'
+E         
+E       assert False
+
+/tests/suite/conftest.py:98: AssertionError</error></testcase></testsuite></testsuites>
