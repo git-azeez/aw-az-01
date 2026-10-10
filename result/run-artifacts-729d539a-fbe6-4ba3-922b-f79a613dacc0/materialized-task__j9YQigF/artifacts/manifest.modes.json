@@ -1,8 +1,0 @@
-{
-  "/workspace/submission": {
-    ".lifecycle.lock": "600",
-    ".ownership.json": "600",
-    "infra/.terraform.tfstate.lock.info": "600",
-    "manifest.json": "600"
-  }
-}

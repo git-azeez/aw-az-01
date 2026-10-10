@@ -1,5 +1,0 @@
-Agent 'oracle' does not declare an options_model; leftover kwargs are ignored
-Skipping image OS validation for hb__4c6978e049219b760698f241548e01c8: docker inspect returned 1
-Collecting main service artifacts
-Skipping image OS validation for hb__70f191f016703b10db52e7c90509c7c6: docker inspect returned 1
-The verifier.env contains an API key (often the case for LLM-based verifiers). You will incur costs associated with the API calls.
