@@ -1321,6 +1321,7 @@ try:
             QueueUrl=main_q_url,
             Attributes={
                 "VisibilityTimeout": "3",
+                "ReceiveMessageWaitTimeSeconds": "2",
                 "MessageRetentionPeriod": "172800",
                 "RedrivePolicy": json.dumps(
                     {
@@ -1379,8 +1380,8 @@ except Exception:
 
 for fn_key, expected_updates in (
     ("projector", {"PROJECTION_TABLE": m["projections"]["table_name"]}),
-    ("outbox_relay", {"OUTBOX_BATCH_SIZE": "50", "EVENT_QUEUE_URL": main_q_url}),
-    ("audit_archiver", {"AUDIT_BUCKET": m["audit"]["bucket_name"], "AUDIT_PREFIX": str(m["audit"]["prefix"])}),
+    ("outbox_relay", {"OUTBOX_BATCH_SIZE": "50", "EVENT_QUEUE_URL": main_q_url, "SQS_QUEUE_URL": main_q_url}),
+    ("audit_archiver", {"AUDIT_BUCKET": m["audit"]["bucket_name"], "AUDIT_PREFIX": str(m["audit"]["prefix"]), "AUDIT_BATCH_SIZE": "100"}),
 ):
     try:
         fn_name = m["workers"][fn_key]["function_name"]
@@ -1400,7 +1401,7 @@ try:
         lam.update_event_source_mapping(
             UUID=str(msg_map["event_source_mapping_uuid"]),
             Enabled=True,
-            BatchSize=10,
+            BatchSize=5,
             FunctionResponseTypes=["ReportBatchItemFailures"],
         )
 except Exception:
