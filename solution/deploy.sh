@@ -1207,13 +1207,24 @@ except Exception:
 
 # Reconcile RDS tags, ALB health check, ECS containerInsights, DynamoDB PITR, S3 PublicAccessBlock
 try:
-    db_inst_id = m["database"]["instance_identifier"]
-    db_insts = rds.describe_db_instances(DBInstanceIdentifier=db_inst_id).get("DBInstances", [])
-    if db_insts and db_insts[0].get("DBInstanceArn"):
+    rds_arn = str((m.get("database") or {}).get("instance_arn") or "")
+    if rds_arn:
         rds.add_tags_to_resource(
-            ResourceName=db_insts[0]["DBInstanceArn"],
+            ResourceName=rds_arn,
             Tags=[{"Key": "ClearLedgerDeployment", "Value": prefix}],
         )
+    raw_db_id = str((m.get("database") or {}).get("instance_id") or "")
+    arn_db_id = rds_arn.rsplit(":", 1)[-1] if rds_arn else ""
+    for d in rds.describe_db_instances().get("DBInstances", []):
+        if (
+            d.get("DBInstanceIdentifier") in {raw_db_id, arn_db_id}
+            or d.get("DbiResourceId") == raw_db_id
+            or d.get("DBInstanceArn") == rds_arn
+        ) and d.get("DBInstanceArn"):
+            rds.add_tags_to_resource(
+                ResourceName=d["DBInstanceArn"],
+                Tags=[{"Key": "ClearLedgerDeployment", "Value": prefix}],
+            )
 except Exception:
     pass
 
@@ -1228,13 +1239,18 @@ try:
 except Exception:
     pass
 
-try:
-    ecs.update_cluster_settings(
-        cluster=m["compute"]["cluster_arn"],
-        settings=[{"name": "containerInsights", "value": "enabled"}],
-    )
-except Exception:
-    pass
+for cluster_ref in (
+    (m.get("compute") or {}).get("cluster_name"),
+    (m.get("compute") or {}).get("cluster_arn"),
+):
+    if cluster_ref:
+        try:
+            ecs.update_cluster_settings(
+                cluster=str(cluster_ref),
+                settings=[{"name": "containerInsights", "value": "enabled"}],
+            )
+        except Exception:
+            pass
 
 try:
     ddb.update_continuous_backups(
@@ -1257,11 +1273,34 @@ try:
 except Exception:
     pass
 
-# Purge any non-canonical prefix-scoped EventBridge schedules, SQS queues, and CloudWatch Log Groups
+# Reconcile EventBridge schedules, SQS queues, CloudWatch Log Groups, and Lambda worker configs/ESM,
+# and purge any non-canonical prefix-scoped resources
+sched_map = m.get("schedules") or {}
 canonical_schedules = {
-    m["schedules"]["relay_schedule_name"],
-    m["schedules"]["archiver_schedule_name"],
-}
+    str(sched_map.get("outbox_schedule_name") or ""),
+    str(sched_map.get("archive_schedule_name") or ""),
+} - {""}
+for sched_name, sched_expr, fn_key in (
+    (sched_map.get("outbox_schedule_name"), "rate(1 minute)", "outbox_relay"),
+    (sched_map.get("archive_schedule_name"), "rate(5 minutes)", "audit_archiver"),
+):
+    if sched_name:
+        try:
+            cur_s = scheduler.get_schedule(Name=str(sched_name))
+            scheduler.update_schedule(
+                Name=str(sched_name),
+                ScheduleExpression=sched_expr,
+                FlexibleTimeWindow=cur_s.get("FlexibleTimeWindow") or {"Mode": "OFF"},
+                Target=cur_s.get("Target")
+                or {
+                    "Arn": m["workers"][fn_key]["function_arn"],
+                    "RoleArn": m["iam"]["scheduler_role_arn"],
+                },
+                State="ENABLED",
+            )
+        except Exception:
+            pass
+
 try:
     for sc in scheduler.list_schedules().get("Schedules", []):
         sname = sc.get("Name", "")
@@ -1273,10 +1312,41 @@ try:
 except Exception:
     pass
 
+msg_map = m.get("messaging") or {}
+main_q_url = str(msg_map.get("queue_url") or "")
+dlq_q_url = str(msg_map.get("dlq_url") or "")
+try:
+    if main_q_url:
+        sqs.set_queue_attributes(
+            QueueUrl=main_q_url,
+            Attributes={
+                "VisibilityTimeout": "3",
+                "MessageRetentionPeriod": "172800",
+                "RedrivePolicy": json.dumps(
+                    {
+                        "deadLetterTargetArn": msg_map["dlq_arn"],
+                        "maxReceiveCount": 3,
+                    }
+                ),
+            },
+        )
+except Exception:
+    pass
+try:
+    if dlq_q_url:
+        sqs.set_queue_attributes(
+            QueueUrl=dlq_q_url,
+            Attributes={
+                "MessageRetentionPeriod": "1209600",
+            },
+        )
+except Exception:
+    pass
+
 canonical_queue_names = {
-    str(m["messaging"]["main_queue_url"]).rsplit("/", 1)[-1],
-    str(m["messaging"]["dlq_url"]).rsplit("/", 1)[-1],
-}
+    str(msg_map.get("queue_name") or main_q_url.rsplit("/", 1)[-1]),
+    str(msg_map.get("dlq_name") or dlq_q_url.rsplit("/", 1)[-1]),
+} - {""}
 try:
     for qurl in sqs.list_queues(QueueNamePrefix=prefix).get("QueueUrls", []):
         qname = str(qurl).rsplit("/", 1)[-1]
@@ -1289,6 +1359,12 @@ except Exception:
     pass
 
 canonical_log_groups = set((m.get("logs") or {}).values())
+for lg_name in canonical_log_groups:
+    if lg_name:
+        try:
+            logs.put_retention_policy(logGroupName=str(lg_name), retentionInDays=14)
+        except Exception:
+            pass
 try:
     for lg_prefix in (f"/clearledger/{prefix}", prefix):
         for lg_obj in logs.describe_log_groups(logGroupNamePrefix=lg_prefix).get("logGroups", []):
@@ -1298,6 +1374,35 @@ try:
                     logs.delete_log_group(logGroupName=lg_name)
                 except Exception:
                     pass
+except Exception:
+    pass
+
+for fn_key, expected_updates in (
+    ("projector", {"PROJECTION_TABLE": m["projections"]["table_name"]}),
+    ("outbox_relay", {"OUTBOX_BATCH_SIZE": "50", "EVENT_QUEUE_URL": main_q_url}),
+    ("audit_archiver", {"AUDIT_BUCKET": m["audit"]["bucket_name"], "AUDIT_PREFIX": str(m["audit"]["prefix"])}),
+):
+    try:
+        fn_name = m["workers"][fn_key]["function_name"]
+        fn_cfg = lam.get_function_configuration(FunctionName=fn_name)
+        cur_env = dict((fn_cfg.get("Environment") or {}).get("Variables") or {})
+        if any(cur_env.get(k) != v for k, v in expected_updates.items() if v):
+            cur_env.update({k: v for k, v in expected_updates.items() if v})
+            lam.update_function_configuration(
+                FunctionName=fn_name,
+                Environment={"Variables": cur_env},
+            )
+    except Exception:
+        pass
+
+try:
+    if msg_map.get("event_source_mapping_uuid"):
+        lam.update_event_source_mapping(
+            UUID=str(msg_map["event_source_mapping_uuid"]),
+            Enabled=True,
+            BatchSize=10,
+            FunctionResponseTypes=["ReportBatchItemFailures"],
+        )
 except Exception:
     pass
 
