@@ -98,52 +98,82 @@ QUICK-PICK OPTIONS FOR `CLOUD_PROVIDER`, `REALM_DOMAIN`, & `BUSINESS_SCENARIO`
 
 You are an expert Staff Cloud Infrastructure & Benchmark Architect building and calibrating evaluation tasks for the **DevCloud Benchmark** (Harbor / Realm evaluation platform).
 
-Your primary mission is to build a complete, production-grade cloud infrastructure and distributed systems benchmark task that satisfies **three non-negotiable calibration targets**:
-1. **Oracle Reference Solution = 100% True Pass (`reward = 1.0`, `100/100` rubric points)** when executed in a clean, separate verifier container.
-2. **Evaluated Model Runs = `gpt-5.6-m1alias-gpt-6-astra` True Pass (`reward = 1.0`, `100/100`) and All Remaining Model Runs True Fail (`reward = 0.0`, score `< 100/100`)**:
-   - Specifically, `oracle` and `openai/gpt-5.6-m1alias-gpt-6-astra` (`gpt-astra`, at most 1 non-oracle model run) MUST achieve a **True Pass (`100/100`, `reward = 1.0`)**, while all remaining evaluated model runs (`claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-5.6-m1alias-gpt-6.1-sol`, etc.) MUST evaluate to **True Fails (`< 100/100`, `reward = 0.0`)**.
-   - Across the entire model evaluation suite, **only `oracle` and `gpt-5.6-m1alias-gpt-6-astra` (1 non-oracle model run)** are permitted to achieve a **True Pass (`100/100`)**. All other model runs must be **True Fails**.
-3. **Zero False Fails and Zero False Passes (`0` tolerated across all runs)**:
-   - **No False Fails (`0` allowed)**: Every model failure MUST be a **True Fail** caused by the model missing an explicit, documented architectural, security, state-machine, drift-remediation, or cross-store recovery requirement. A model must **NEVER** fail due to undocumented test assertions, contradictions between `instruction.md`/`contracts/` and `tests/suite/*.py`, emulator quirks, or Python package/`PATH`/virtualenv discrepancies between `environment/Dockerfile` and `tests/runtime/Dockerfile`.
-   - **No False Passes (`0` allowed)**: A model must **NEVER** pass if it takes shortcuts such as wildcard `"*"` IAM permissions, unrestricted `0.0.0.0/0` security group rules, missing DB constraints/triggers/indexes, or incomplete drift/cache/archive cleanup.
+Your primary mission is to build a complete, production-grade cloud infrastructure and distributed systems benchmark task at a **Very Hard / Systems-Adversarial** difficulty level that satisfies **four non-negotiable calibration targets**:
+1. **`rv check` = 25/25 Pass (18 Static Checks + 7 LLM Judge Checks)**:
+   - Every assertion in `tests/suite/*.py` MUST be backed by an explicit, unambiguous architectural, schema, security, or recovery contract in `instruction.md` and `environment/workspace/contracts/**/*.md`.
+   - Keep individual test files in `tests/suite/*.py` modular by placing reusable policy/AST/database verification helpers in `tests/suite/helpers.py` so `rv check` LLM judges never hit token-truncation limits.
+2. **Oracle Reference Solution (`rv oracle` / `solution/`) = 100% True Pass (`reward = 1.0`, `100/100` rubric points)** when executed in a clean, separate verifier container.
+3. **All Evaluated Frontier Model Runs = 100% True Fail (`reward = 0.0`, score `< 100/100`)**:
+   - **ONLY `oracle` (`solution/`)** is permitted to achieve a **True Pass (`100/100`, `reward = 1.0`)**.
+   - **ALL evaluated frontier model runs** (`anthropic/claude-opus-5-5`, `anthropic/claude-sonnet-5-5`, `openai/gpt-5.6-m1alias-gpt-6.1-sol`, `openai/gpt-5.6-m1alias-gpt-6-astra`, etc.) MUST evaluate to **True Fails (`< 100/100`, `reward = 0.0`)**.
+   - Maximum allowed non-oracle True Passes: **strictly ZERO (`0`)**.
+4. **Zero False Fails and Zero False Passes (`0` tolerated across all runs)**:
+   - **No False Fails (`0` allowed)**: Every model failure MUST be a **True Fail** caused by the model missing an explicit, documented architectural, security, state-machine, concurrency, drift-remediation, or cross-store recovery requirement. A model must **NEVER** fail due to undocumented test assertions, contradictions between `instruction.md`/`contracts/` and `tests/suite/*.py`, emulator quirks, or Python package/`PATH`/virtualenv discrepancies between `environment/Dockerfile` and `tests/runtime/Dockerfile`.
+   - **No False Passes (`0` allowed)**: A model must **NEVER** pass if it takes shortcuts such as identity-only IAM without resource policies, wildcard `"*"` permissions, unrestricted `0.0.0.0/0` security group rules, naive `IF NOT EXISTS` DDL that ignores mutated `CHECK` constraints, `sort_keys=True` serialization that breaks canonical envelope field order, or existence-only `deploy.sh` checks that miss in-place DynamoDB/S3 data corruption.
 
 ---
 
 ## 1. Verdict Taxonomy & Mandatory "Frontier-Breaker" Design Patterns
 
 ### A. Verdict Definitions & Acceptance Criteria
-- **True Pass (Required for `oracle` and `gpt-5.6-m1alias-gpt-6-astra`; 0 other model runs allowed)**:
+- **True Pass (Strictly Reserved for `oracle` ONLY; `0` non-oracle model runs allowed)**:
   - Solution satisfies every documented contract requirement and scores `100/100` (`reward = 1.0`).
-  - Acceptance rule: `oracle` and `openai/gpt-5.6-m1alias-gpt-6-astra` MUST be **True Passes (`100/100`)**, and **all remaining evaluated model runs** (`claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-5.6-m1alias-gpt-6.1-sol`) MUST be **True Fails (`< 100/100`)**.
-- **True Fail (REQUIRED for all remaining evaluated frontier models)**:
-  - The environment and `deploy_succeeded` gate work cleanly without harness/container bugs, and the model scores `< 100/100` (`reward = 0.0`, ideally `40–88/100`) because its submission violates one or more documented engineering invariants (or its `deploy.sh` fails due to a genuine bug in the model's own HCL/code).
+- **True Fail (REQUIRED for ALL evaluated frontier models)**:
+  - The environment and `deploy_succeeded` gate work cleanly without harness/container bugs, and every evaluated model (`claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-5.6-m1alias-gpt-6.1-sol`, `gpt-5.6-m1alias-gpt-6-astra`) scores `< 100/100` (`reward = 0.0`) because its submission fails multiple documented systems invariants across static, live, behavioral, and lifecycle rubric blocks.
 - **False Fail (STRICTLY FORBIDDEN — `0` allowed)**:
-  - Failure caused by an undocumented test check, spec contradiction, missing Python/CLI package in `tests/runtime/Dockerfile` vs. `environment/Dockerfile` (e.g., `requests` installed in `environment/Dockerfile` but missing in `tests/runtime/Dockerfile`), unhandled emulator default behavior (e.g., Floci's default `IpProtocol = "-1"` egress rule on newly created security groups), or login-shell `PATH` stripping.
+  - Failure caused by an undocumented test check, spec contradiction, missing Python/CLI package in `tests/runtime/Dockerfile` vs. `environment/Dockerfile`, unhandled emulator default behavior, or login-shell `PATH` stripping.
 - **False Pass (STRICTLY FORBIDDEN — `0` allowed)**:
-  - Model scores `100/100` despite violating a documented security, networking, data-integrity, or lifecycle requirement because the verifier didn't test the live state.
+  - Any model scoring `100/100` despite taking implementation shortcuts or failing edge-case invariants.
 
-### B. 5 Mandatory "Frontier-Breaker" Invariants (Must Be Included in Every Task)
-Frontier models easily solve standard CRUD + IaC provisioning. To guarantee that only `oracle` and `gpt-5.6-m1alias-gpt-6-astra` achieve a **True Pass** while all other models produce a **True Fail**, you MUST design and document all 5 of these multi-layered invariants in `/workspace/contracts/` and `instruction.md`, and enforce them in `tests/suite/*.py`:
+### B. 10 Mandatory "Frontier-Breaker" Systems-Adversarial Invariants (Must Be Included in Every Task)
+Frontier models easily solve greenfield IaC provisioning and copy-paste specs. To guarantee that **only `oracle` achieves a True Pass (`100/100`)** while **all frontier models achieve a True Fail (`0.0`)**, you MUST design and document all 10 of these coupled invariants in `/workspace/contracts/` and `instruction.md`, implement them in `solution/`, and enforce them in `tests/suite/*.py`:
 
-1. **Zero-Trust Network Egress (`egress = []` on Data Stores + Port-Scoped Ingress Egress)**:
-   - Document in `contracts/infrastructure.md` and `instruction.md` that data-store security groups / firewall rules (e.g., `rds`, `valkey`) must have **no outbound egress rules (`egress = []`)**, and load-balancer security groups (e.g., `alb`) must restrict outbound egress strictly to the application target port (e.g., TCP `8080`) within the VPC CIDR.
-   - Verify **both** declared Terraform state (`terraform show -json` in `test_declared.py`) **and** live cloud security group rules (`IpPermissionsEgress` in `test_live.py` and `test_lifecycle.py`). Note that cloud control planes (including AWS/Floci) attach a default `0.0.0.0/0` egress rule unless explicitly revoked or declared with `egress = []` and reconciled.
-2. **Compound Least-Privilege IAM + Explicit `Deny` Guardrails + Cross-Role Boundaries**:
-   - Require multiple distinct IAM roles / service accounts (e.g., 6 roles: `ecs_exec`, `ecs_task`, and per-worker roles) where:
-     - `Allow` statements are scoped to exact resource ARNs (including `${table_arn}/index/<GSI>` for NoSQL index queries, `${bucket_arn}/*` for object actions, and exact log group ARNs).
-     - Every workload role includes an explicit `Effect = "Deny"` guardrail statement blocking destructive control/data-plane operations (`rds:DeleteDBInstance`, `dynamodb:DeleteTable`, `s3:DeleteBucket`, `kms:ScheduleKeyDeletion`, `sqs:DeleteQueue`, `secretsmanager:DeleteSecret` or cloud equivalents) on `"*"`.
-     - Worker roles include cross-boundary explicit `Deny` rules (e.g., a read-model projector role explicitly denied object storage access `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`).
-3. **Database Trigger-Enforced Immutability & Monotonic State Rank Progression**:
-   - Require PL/pgSQL triggers on PostgreSQL tables that:
-     - Enforce **append-only immutability** on ledger/journal/audit tables (rejecting `UPDATE` and `DELETE`).
-     - Enforce a **monotonic non-decreasing state rank progression** on primary state tables (e.g., rank `0 -> 1 -> 2` or `3`), allowing idempotent same-status updates or valid forward transitions while rejecting backward rank regressions (e.g., `SETTLED -> PENDING`) or invalid cross-terminal transitions (`SETTLED <-> FAILED`).
-   - Test these triggers directly via live database connections in `test_live.py`, and ensure the contract wording in `contracts/services/*.md` matches the exact rank semantics tested.
-4. **Cross-Store Self-Healing & Namespace-Wide Cache Eviction on `deploy.sh`**:
-   - Document in `contracts/` that `deploy.sh` must reconcile all secondary read stores (e.g., DynamoDB/Firestore projections, Valkey/Redis cache entries, S3/GCS audit archives) against PostgreSQL's authoritative state AND purge **all stray or orphaned keys** across the entire application namespace (`<prefix>:*`, not only `<prefix>:<entity>:*`) in Valkey/Redis.
-   - In `test_behavior.py` and `test_lifecycle.py`, inject unrelayed outbox rows, corrupt read projections, delete audit objects, and plant stray non-entity cache keys (e.g., `<prefix>:lock:stray-marker`) before running `deploy.sh`, then assert complete self-healing and stray key eviction.
-5. **Out-of-Band Control-Plane Drift Remediation Without Resource Replacement**:
-   - Document in `contracts/` and `instruction.md` that re-running `deploy.sh` must remediate out-of-band cloud control-plane drift—including revoking injected `0.0.0.0/0` ingress/egress rules on security groups, detaching and deleting out-of-band customer-managed IAM policies attached to workload roles (`<prefix>-drifted-...`), and restoring drifted configuration parameters—**without** destroying or replacing stateful resources (VPC, RDS instance, NoSQL table, object bucket).
-   - Test this end-to-end in `test_lifecycle.py` (`lifecycle.reapply_idempotence`).
+1. **Specification-Only Contracts (Zero Copy-Paste Code in `/workspace/contracts/`)**:
+   - `instruction.md` and `environment/workspace/contracts/**/*.md` must define exact resource names, schemas, state transitions, and security matrices in clear prose and tables, but MUST NOT include copy-pasteable Terraform HCL blocks, SQL DDL/trigger bodies, or Python reconciliation scripts.
+   - Distribute cross-cutting invariants across the relevant service contracts (`infrastructure.md`, `runtime.md`, `services/rds.md`, `services/kms.md`, `services/s3.md`, `services/sqs.md`, `services/iam.md`, `services/dynamodb.md`) so an agent must synthesize constraints across multiple files.
+2. **Zero-Trust Network Egress (`egress = []` on Data Stores + Port-Scoped Ingress/Egress)**:
+   - Document in `contracts/infrastructure.md` and `contracts/services/vpc.md` that data-store security groups (e.g., `rds`, `valkey`) must have **zero outbound egress rules (`egress = []`)**, `ecs` ingress must come strictly from `alb` on the application port (`8080`), and `alb` outbound egress must be restricted strictly to the application port (`8080`) within the VPC CIDR (never `0.0.0.0/0`).
+   - Verify **both** declared Terraform state (`test_declared.py`) **and** live cloud security group rules (`test_live.py` and `test_lifecycle.py`), explicitly revoking any emulator default `0.0.0.0/0` egress rules.
+3. **Bilateral Defense-in-Depth Security Matrix (IAM Role Policies + KMS, S3, and SQS Resource-Based Policies)**:
+   - Require 6 distinct workload IAM roles (`ecs_execution`, `ecs_task`, `projector`, `outbox_relay`, `audit_archiver`, `scheduler`) with ARN-scoped least-privilege `Allow` statements, explicit `Effect = "Deny"` guardrails on destructive actions, and cross-service role boundary denies.
+   - **AND require explicit resource-based policies** on all customer-managed KMS keys (`aws_kms_key` policy on `database`, `messaging`, `projection`, `audit`), the S3 audit bucket (`aws_s3_bucket_policy`), and both SQS queues (`aws_sqs_queue_policy` on the main queue and DLQ):
+     - **KMS Key Policies**: Grant account root full access, explicit `Allow` (`kms:Decrypt`, `kms:GenerateDataKey`, `kms:DescribeKey`) only to the exact workload role ARNs authorized for that key's domain, explicit `Deny` (`kms:Decrypt`, `kms:GenerateDataKey`) for all remaining unauthorized workload role ARNs, and explicit `Deny` (`kms:DisableKey`, `kms:ScheduleKeyDeletion`) across all 6 workload role ARNs.
+     - **S3 Bucket Policy**: Explicit `Allow` for the `archiver` role ARN on object writes/reads under the audit prefix and bucket listing, explicit `Deny` on `s3:DeleteObject` and `s3:DeleteObjectVersion` for all 6 workload role ARNs, and explicit `Deny` on `s3:PutObject` for all 5 non-archiver workload role ARNs.
+     - **SQS Queue Policies (Main & DLQ)**: On the main queue, explicit `Allow` for publisher roles (`ecs_task`, `outbox_relay`) on `sqs:SendMessage`, explicit `Allow` for `projector` on `sqs:ReceiveMessage`/`sqs:DeleteMessage`/`sqs:ChangeMessageVisibility`, and explicit `Deny` blocking non-publishers from `sqs:SendMessage` and non-projector roles from `sqs:ReceiveMessage`/`sqs:DeleteMessage`. On the DLQ, explicit `Allow` only for `projector` on `sqs:SendMessage`, explicit `Deny` on `sqs:ReceiveMessage`/`sqs:DeleteMessage` across all 6 workload roles, and explicit `Deny` on `sqs:SendMessage` across all 5 non-projector workload roles.
+   - Verify all KMS, S3, and SQS resource policies both statically in `test_declared.py` and against live AWS APIs in `test_live.py` and `test_lifecycle.py`.
+4. **Database-Enforced Cross-Table Coherence, Monotonic State Rank & Stateful Omitted-Field (`NULL`) Retention**:
+   - Keep the pre-built Rust/Go application service thin on domain validation so that PostgreSQL `CHECK` constraints, expression `UNIQUE` indexes, and PL/pgSQL `BEFORE INSERT OR UPDATE OR DELETE` triggers enforce:
+     - Append-only immutability on `events`, `outbox`, and `idempotency_keys` (and `DELETE` prohibition on the root aggregate table).
+     - Monotonic status rank progression (e.g., `INITIATED(0) -> VALIDATED(1) -> RESERVED(2) -> CLEARED(3) -> SETTLED(4) -> RECONCILED(5)`, with `DISPUTED` only allowed to remain `DISPUTED` or resolve to `RECONCILED`, and `RECONCILED` strictly terminal), mapping SQLSTATE `23514`/`23505` to HTTP `400 Bad Request`.
+     - Cross-table parent-child state coherence in `fn_guard_events_insert()`, `fn_guard_outbox_mutation()`, and `fn_guard_idempotency_keys()`.
+     - **Stateful `last_memo` (optional field) non-null retention**: `last_memo` on the root aggregate table is `NOT NULL` (seeded on creation). When a subsequent entry omits `memo` (`NULL`), `fn_guard_settlements_update()` MUST retain `OLD.last_memo` (`NEW.last_memo := COALESCE(NEW.last_memo, OLD.last_memo)`), and `fn_guard_events_insert()` MUST still verify `v_last_memo IS DISTINCT FROM v_expected_memo` even when `NEW.payload #>> '{data,memo}' IS NULL` by resolving the most recent non-null memo from prior events for that aggregate.
+   - Test every constraint and trigger directly via adversarial SQL in `test_live.py` (including omitted-memo parent tampering) and via HTTP in `test_behavior.py`.
+5. **In-Place PostgreSQL `CHECK (true)` Constraint Tampering & Disabled Trigger Healing in `deploy.sh`**:
+   - Models routinely write `ADD CONSTRAINT ...` inside `EXCEPTION WHEN duplicate_object THEN NULL`, which is a no-op if a constraint with the same name already exists but its expression was altered to `CHECK (true)`.
+   - Document in `contracts/services/rds.md` that `deploy.sh` must dynamically drop and recreate all `CHECK` constraints (`contype = 'c'`) and re-enable all triggers (`ENABLE TRIGGER ALL`) on all application tables on every run.
+   - In `test_lifecycle.py`, mutate existing `CHECK` constraints in-place to `CHECK (true)`, disable triggers (`DISABLE TRIGGER USER`), and drop expression indexes before re-running `deploy.sh`, then verify that invalid SQL writes are once again rejected afterward.
+6. **Multi-Threaded Concurrency & Optimistic-Locking Request Bursts (`test_behavior.py`)**:
+   - Use `ThreadPoolExecutor` to execute multi-threaded request bursts against the live service:
+     - **4-Way Concurrent Invalid Write Burst**: Simultaneously fire duplicate `entryId` requests and whitespace-only `memo` requests at the current `expectedVersion`, verifying all 4 return `400 Bad Request` and roll back cleanly without advancing the aggregate version.
+     - **10-Way Mixed Concurrent Request Burst**: Simultaneously fire 5 competing valid `expectedVersion` contenders with `memo = None` (omitted memo), 3 concurrent idempotent replays (`200 OK` with `idempotentReplay: true`), and 2 concurrent idempotency payload-mismatch conflicts (`409 Conflict`). Verify exactly 1 contender wins (`202 Accepted`), 4 contenders lose (`409 Conflict`), and both PostgreSQL (`last_memo`) and DynamoDB (`lastMemo`) retain the prior non-null memo.
+     - **Out-of-Order & Concurrent Scrambled-Batch Projector Race**: Deliver `v3 -> v1 -> v2` out of order and invoke the projector Lambda concurrently with 6 scrambled event batches, verifying monotonic projection convergence without version regression, plus poison-message redrive isolation to the DLQ.
+7. **Canonical JSON Envelope Key Ordering & Content-Addressed SHA-256 Audit Batches**:
+   - Require exact top-level and nested key ordering on event envelopes (`schemaVersion`, `eventId`, `eventType`, `aggregateType`, `aggregateId`, `aggregateVersion`, `occurredAt`, `correlationId`, `idempotencyKey`, `data`) rather than alphabetical `sort_keys=True` serialization.
+   - Require S3 audit batch keys to follow `ledger-audit/batch-<first_seq_8d>-<last_seq_8d>-<sha256_16>.ndjson` where `<sha256_16>` is the first 16 lowercase hex chars of the SHA-256 digest of the exact NDJSON byte body.
+   - Verify canonical key ordering and SHA-256 filename parity across normal archival, outbox recovery, and `deploy.sh` re-archival.
+8. **Deep Content-Parity Self-Healing Across DynamoDB Projections & Valkey Cache**:
+   - Models frequently check only whether a DynamoDB item or `version` exists.
+   - In `test_behavior.py` and `test_lifecycle.py`, inject 4 simultaneous projection/cache corruptions on already-published aggregates before recovery/`deploy.sh`:
+     1. Inflated-version `STATE` corruption (`version = 99`, which blocks naive `#version < :new_version` conditional writes unless purged first),
+     2. Missing `EVENT#00000001` + in-place mutated `EVENT#00000002` + phantom `EVENT#00000099` (keeping total `EVENT#*` count unchanged so count-only checks fail),
+     3. Same-version `STATE` attribute + GSI key + Valkey cache corruption on an aggregate whose final event had `memo = None` (so copying `NULL` or skipping same-version items fails), and
+     4. Orphan DynamoDB partitions and Valkey keys absent from PostgreSQL.
+9. **Contiguous Sequence-Interval S3 Audit Archive Reconciliation**:
+   - In `test_behavior.py` and `test_lifecycle.py`, tamper an existing S3 `.ndjson` batch while keeping `outbox.archived_at IS NOT NULL` in PostgreSQL, plant a valid-digest subset batch with an interior `outbox.seq` gap, plant an overlapping single-event batch and a reversed-order batch, and plant stray/orphan S3 objects and noncurrent versions.
+   - Require `deploy.sh` to verify every S3 batch line-by-line against `clearledger.outbox`, verify contiguous non-overlapping `outbox.seq` coverage and SHA-256 key digests, purge all noncurrent S3 object versions and delete markers, and re-archive cleanly when any gap, overlap, or tampering is detected.
+10. **Out-of-Band Control-Plane, Resource-Policy & Rogue-Resource Drift Remediation Without Replacement**:
+    - Before re-running `deploy.sh` in `test_lifecycle.py`, inject control-plane and policy drift across KMS (disable key rotation, tamper key policy, add rogue KMS key/alias), S3 (disable `PublicAccessBlock`, replace bucket policy with a permissive policy), SQS (mutate `VisibilityTimeout`/`MessageRetentionPeriod` and overwrite queue/DLQ policies), IAM (attach rogue inline and customer-managed policies and create rogue prefix-scoped roles), EC2 Security Groups (inject `0.0.0.0/0` ingress/egress rules), EventBridge Scheduler (disable schedule), CloudWatch Logs (mutate retention and create rogue log groups), and Lambda (tamper worker env vars and ESM batch size).
+    - Require `deploy.sh` to heal every drifted attribute and purge every rogue prefix-scoped resource **without** replacing stateful resources (RDS, DynamoDB table, S3 bucket).
 
 ---
 
@@ -153,35 +183,37 @@ Build the task repository with the exact layout below:
 
 ```text
 <repo-root>/
-├── task.toml                       # Harbor v1.1 task & resource configuration
+├── task.toml                       # Harbor v1.0/v1.1 task & resource configuration
 ├── instruction.md                  # Human-written task prompt given to the agent
 ├── reasoning.md                    # Human-written architectural design, rubric & solution walkthrough
 ├── environment/
-│   ├── Dockerfile                  # Multi-stage build: compiles hidden workload binaries + main agent/verifier image
+│   ├── Dockerfile                  # Multi-stage build: compiles hidden workload binaries + main agent image
 │   ├── docker-compose.yaml         # Multi-container topology: `main`, cloud emulator (`aws`/`gcp`/`azure`), and `runtime` bootstrapper
 │   ├── runtime.sh                  # Root-only bootstrap script (builds & pushes container/worker images, seeds config, deletes raw binaries)
 │   ├── application/                # Source code for pre-built service/worker workloads (compiled at image build time, NEVER exposed to agent)
 │   └── workspace/
 │       └── contracts/              # Detailed service & infrastructure contracts copied into `/workspace/contracts/`
-│           ├── README.md
 │           ├── infrastructure.md
-│           ├── deployment-manifest.schema.json
-│           ├── iam-permissions.json
+│           ├── runtime.md
+│           ├── openapi.yaml
+│           ├── schemas/*.json
 │           └── services/*.md
 ├── solution/
 │   ├── solve.sh                    # Copies Oracle files into `/workspace/submission/` and executes `/workspace/submission/deploy.sh`
-│   ├── deploy.sh                   # Oracle idempotent provisioning, schema migration, drift remediation & readiness script
+│   ├── deploy.sh                   # Oracle idempotent provisioning, schema/trigger reconciliation, drift remediation & readiness script
 │   ├── destroy.sh                  # Oracle clean teardown script
 │   └── infra/*.tf                  # Modular Terraform/OpenTofu HCL (`versions.tf`, `variables.tf`, `network.tf`, `security.tf`, `storage.tf`, `messaging.tf`, `compute.tf`, `outputs.tf`)
 └── tests/
-    ├── test.sh                     # Verifier entrypoint: runs pre-checks, executes submission `deploy.sh`, runs pytest suite, writes `/logs/verifier/reward.txt` and `/logs/verifier/results.json`
+    ├── runtime/
+    │   └── Dockerfile              # Separate verifier container image with identical Python/CLI toolchain
+    ├── test.sh                     # Verifier entrypoint: runs pytest suite, writes `/logs/verifier/reward.txt` and `/logs/verifier/results.json`
     └── suite/
-        ├── conftest.py             # Rubric weight accounting, fixtures, cloud/DB/cache helpers, result JSON writer
-        ├── _helpers.py             # Shared helpers for Terraform state inspection, live cloud queries, HTTP retries
-        ├── test_declared.py        # Static & declared state verification (`terraform show -json`, manifest schema, IAM policy AST)
-        ├── test_live.py            # Live cloud control-plane verification + end-to-end functional workflows
-        ├── test_behavior.py        # Fault injection, poison-message DLQ isolation, crash/outage recovery, scheduled reconciliation
-        └── test_lifecycle.py       # Out-of-band drift/state mutation + reapply idempotence (`deploy.sh`) + full teardown (`destroy.sh`)
+        ├── conftest.py             # Rubric weight accounting, fixtures, score cap enforcement, result JSON writer
+        ├── helpers.py              # Shared helpers for Terraform AST/state inspection, KMS/S3/SQS resource policy verification, DB/cache queries
+        ├── test_declared.py        # Static & declared state verification (`terraform show -json`, manifest schema, IAM & resource policy AST)
+        ├── test_live.py            # Live cloud control-plane, KMS/S3/SQS resource policies, and direct PostgreSQL constraint/trigger verification
+        ├── test_behavior.py        # End-to-end workflows, omitted-memo retention, multi-threaded concurrency bursts, DLQ isolation, outbox/S3/RDS recovery
+        └── test_lifecycle.py       # Adversarial in-place schema/policy/data drift + reapply idempotence (`deploy.sh`) + full teardown (`destroy.sh`)
 ```
 
 ---
@@ -195,15 +227,15 @@ Build the task repository with the exact layout below:
    - **CRITICAL (`rv check` `Compose-Llm-Services-Reach-Netleash`)**: Do **NOT** bake the Daytona sandbox proxy variables (`HTTP_PROXY`, `http_proxy`, `HTTPS_PROXY`, `https_proxy`, `CURL_CA_BUNDLE`, `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`) or the `/etc/daytona/netleash/ca.crt:/etc/daytona-netleash-ca.crt:ro` volume bind into the authored `environment/docker-compose.yaml` (the Daytona runner injects that wiring dynamically at trial time and restores the file afterwards). Instead, **ONLY** include `NO_PROXY` and `no_proxy` containing all local service names and aliases (`localhost,127.0.0.1,::1,aws,floci,runtime,.amazonaws.com,.elb.amazonaws.com,.local,.internal`).
 2. **Cloud Control-Plane Emulator Service (`aws` / `gcp` / `azure`)**:
    - **If `CLOUD_PROVIDER = AWS`**: Use Floci (`mirror.gcr.io/floci/floci:2.1.0@sha256:f5aa8c18302cedb4f2385f5c4e455b3efc77fee6bf7b6e5d1712b2817ba102db`) with `FLOCI_SERVICES_ECS_MOCK: "false"`, `FLOCI_SERVICES_RDS_MOCK: "false"`, real Postgres 16.6-alpine, real Valkey 8, container-backed Lambda, and EventBridge Scheduler enabled.
-   - **If `CLOUD_PROVIDER = GCP` or `Azure`**: Configure the corresponding local control-plane and data-plane emulator containers on the compose network with deterministic endpoints exported in `/workspace/config/environment.env`.
+   - **If `CLOUD_PROVIDER = GCP` or `Azure`**: Configure the corresponding local control-plane and data-plane emulator containers on the compose network with deterministic endpoints exported in `/workspace/config/config.json`.
 3. **`runtime` service (One-Shot Root Bootstrapper)**:
    - Runs as `user: "0:0"` (`root`) with `/var/run/docker.sock` mounted and `depends_on` the cloud emulator being healthy.
    - `main` depends on `runtime: condition: service_completed_successfully`.
-   - Executes `/opt/<project>/runtime.sh`, which generates `/workspace/config/environment.env` and `/workspace/config/seed.json`, packages compiled workload binaries from `/opt/<project>/bin/` into container/worker images, pushes them to the local registry, and deletes `/opt/<project>/bin/*` so the agent cannot reverse-engineer the binaries.
+   - Executes `/opt/<project>/runtime.sh`, which generates `/workspace/config/config.json`, packages compiled workload binaries from `/opt/<project>/bin/` into container/worker images, pushes them to the local registry, and deletes `/opt/<project>/bin/*` so the agent cannot reverse-engineer the binaries.
 
 ### B. Dockerfile & Shell `PATH` Parity (`environment/Dockerfile` & `tests/runtime/Dockerfile`)
 1. **Offline Terraform/OpenTofu Mirror**:
-   - Pre-install Terraform (`1.9.8`) and OpenTofu (`1.8.4`), pre-cache the required provider plugin (`hashicorp/aws` `6.51.0`, `hashicorp/google`, or `hashicorp/azurerm`) in `/opt/Terraform/cache`, symlink `registry.opentofu.org` to `registry.terraform.io`, and configure `/etc/terraform.tfrc` with `filesystem_mirror`.
+   - Pre-install Terraform (`1.9.8`) and OpenTofu (`1.8.4`), pre-cache the required provider plugin (`hashicorp/aws` `6.51.0`, `hashicorp/google`, or `hashicorp/azurerm`) in `/opt/terraform/cache`, symlink `registry.opentofu.org` to `registry.terraform.io`, and configure `/etc/terraform.tfrc` with `filesystem_mirror`.
    - Wrap `/usr/local/bin/terraform` and `/usr/local/bin/tofu` so they unset `HTTP_PROXY`/`HTTPS_PROXY` and set `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`.
 2. **Python Virtualenv & Login-Shell `PATH` Parity Across Both Agent and Verifier Containers (CRITICAL)**:
    - Create `/opt/venv` with `python3 -m venv --system-site-packages /opt/venv` in **both** `environment/Dockerfile` and `tests/runtime/Dockerfile` (so `pip install --user` never errors if an agent runs it inside `deploy.sh`).
@@ -216,23 +248,22 @@ Build the task repository with the exact layout below:
    - Pre-install `opencode-ai@1.17.8` with the idle-watchdog wrapper at `/opt/venv/bin/opencode` and proxy-safe shims for `curl`, `npm`, `uv`, `apt-get`, and `mini-swe-agent`.
 
 ### C. `task.toml` Configuration
-- Use `schema_version = "1.1"`.
 - Set `[verifier]` `environment_mode = "separate"` and `user = "verifier"`.
 - Exclude `.terraform`, `*.tfstate*`, `config.auto.tfvars.json`, and `.terraform.tfstate.lock.info` from `/workspace/submission` artifacts so the verifier always tests a clean `deploy.sh` run.
 
 ---
 
-## 4. Rubric Structure (`100` Points Total)
+## 4. Rubric Structure (`100` Points Total, Binary `1.0` Only at `100/100`)
 
-Gate all tests on `deploy_succeeded` in `tests/suite/conftest.py` and distribute the `100` points across 4 test modules:
-- **`declared.*` (20 points)** in `test_declared.py`:
-  - `declared.hcl_layout` (2), `declared.manifest_outputs` (3), `declared.network` (2), `declared.security` (3), `declared.storage` (3), `declared.messaging_monitoring` (2), `declared.compute_ingress` (2), `declared.evidence_report` (3).
-- **`live.*` (45 points)** in `test_live.py`:
-  - `live.network` (4), `live.security` (5), `live.storage` (6), `live.messaging_monitoring` (4), `live.compute_ingress` (5), `live.api_health_auth` (5), `live.primary_workflow` (8), `live.idempotency` (4), `live.domain_invariant_rejection` (4).
-- **`recovery.*` (20 points)** in `test_behavior.py`:
-  - `recovery.dlq_isolation` (6), `recovery.outbox_recovery` (6), `recovery.archiver_reconciliation` (4), `recovery.compute_task_recovery` (4).
-- **`lifecycle.*` (15 points)** in `test_lifecycle.py`:
-  - `lifecycle.reapply_idempotence` (7), `lifecycle.destroy_cleanup` (8).
+Gate all tests on `deploy_succeeded` in `tests/suite/conftest.py`, enforce score caps on critical failures (`deploy_failed -> 0`, `accepted_write_loss -> 49`, `teardown_leftovers -> 79`), and distribute the `100` points across 4 test modules:
+- **`declared.*` (30 points)** in `test_declared.py`:
+  - `declared.hcl_manifest` (8), `declared.network_compute` (7), `declared.data_async` (8 — includes S3 bucket policy & SQS main/DLQ queue policy AST checks), `declared.security` (7 — includes IAM role boundaries & KMS key policy AST checks).
+- **`live.*` (25 points)** in `test_live.py`:
+  - `live.network_compute` (8), `live.data_event_graph` (10 — includes live S3/SQS resource policies, direct PostgreSQL constraint/trigger rejection tests, and omitted-memo coherence tests), `live.security` (7 — includes live IAM & KMS key policy verification).
+- **`functional.*` / `async.*` / `recovery.*` (32 points)** in `test_behavior.py`:
+  - `functional.workflow` (8 — includes omitted-memo retention across DynamoDB & PostgreSQL, backward rank regression, whitespace memo, and duplicate entryId rejection), `functional.cache` (7), `functional.idempotency_concurrency` (5 — includes 4-way concurrent invalid write burst and 10-way mixed competing/omitted-memo/replay/conflict burst), `async.backlog_recovery` (7), `async.duplicate_and_dlq` (6), `recovery.outbox_recovery` (6 — includes 4-way DynamoDB/Valkey corruption, S3 archive corruption, and canonical envelope key order verification), `recovery.task_drain` (4), `recovery.rds_reboot` (4).
+- **`lifecycle.*` (13 points)** in `test_lifecycle.py`:
+  - `lifecycle.reapply_idempotence` (7 — includes in-place `CHECK (true)` constraint mutation, disabled trigger recovery, KMS/S3/SQS resource policy drift, 4-way DynamoDB corruption, S3 interior-gap/overlap/reversed batch tampering, and rogue resource cleanup), `lifecycle.destroy_cleanup` (6).
 
 ---
 
@@ -240,37 +271,37 @@ Gate all tests on `deploy_succeeded` in `tests/suite/conftest.py` and distribute
 
 Both `instruction.md` and `reasoning.md` **must read like authentic engineering documents written by a pragmatic Staff Engineer**:
 - Avoid AI-tell phrases ("Furthermore", "Crucially", "Delve into", "It is imperative").
-- In `instruction.md`, present a realistic operational handoff brief, summarize the architecture, security, and recovery expectations, and point to `/workspace/contracts/` for exact schemas, SQL definitions, and IAM matrices. Every requirement tested in `tests/suite/*.py` must be clearly stated.
+- In `instruction.md`, present a realistic operational handoff brief, summarize the architecture, bilateral security policies, database invariants, and recovery expectations, and point to `/workspace/contracts/` for detailed specifications. Every requirement tested in `tests/suite/*.py` must be clearly stated in the contracts without giving away copy-pasteable code.
 - In `reasoning.md`, document the architectural rationale, the 100-point rubric mapping, and a complete technical walkthrough of the reference solution (`solution/`).
 
 ---
 
 ## 6. Official Realm Domains (How to Tailor the Task to the Selected `REALM_DOMAIN`)
 
-Every DevCloud Benchmark task belongs to one of the 6 official Realm domains (or `reliability_and_recovery`). While every task must remain a multi-service architecture with all 5 Frontier-Breaker invariants, anchor the primary challenge and deepest rubric checks around the selected `REALM_DOMAIN`:
+Every DevCloud Benchmark task belongs to one of the 6 official Realm domains (or `reliability_and_recovery`). While every task must remain a multi-service architecture with all 10 Frontier-Breaker invariants, anchor the primary challenge and deepest rubric checks around the selected `REALM_DOMAIN`:
 1. **`compute_and_deployment` (Compute and Deployment)**:
    - Emphasize multi-container ECS Fargate / Cloud Run / ACA service orchestration, container-backed Lambda / serverless worker fleets, rollout/task recovery, health-check readiness gating, runtime environment/SSM wiring, and zero-downtime reapply idempotence.
 2. **`data_and_storage` (Data and Storage)**:
-   - Emphasize polyglot persistence invariants across PostgreSQL (PL/pgSQL immutability & monotonic state rank triggers), DynamoDB/NoSQL (composite keys, GSIs, PITR, KMS encryption), Valkey/Redis (read-through caching & full `<prefix>:*` namespace eviction), and S3/Object Storage (versioning, KMS default encryption, lifecycle policies, and tamper-evident audit archives).
+   - Emphasize polyglot persistence invariants across PostgreSQL (PL/pgSQL immutability, monotonic state rank, cross-table coherence, and stateful omitted-field retention triggers), DynamoDB/NoSQL (composite keys, GSIs, PITR, KMS encryption), Valkey/Redis (read-through caching & full namespace eviction), and S3/Object Storage (versioning, KMS default encryption, bucket policies, and content-addressed SHA-256 NDJSON audit archives).
 3. **`identity_and_access` (Identity and Access)**:
-   - Emphasize 6+ separated IAM roles / service accounts with resource-scoped least-privilege `Allow` policies (exact table + `/index/<GSI>` ARNs, bucket vs. object ARNs, per-service log group ARNs), explicit `Effect = "Deny"` guardrails against destructive actions, cross-service role boundary denies, KMS key rotation & aliases, Secrets Manager / SSM secret isolation, Cognito/JWT auth, and out-of-band IAM policy drift cleanup.
+   - Emphasize 6 separated IAM roles with resource-scoped least-privilege `Allow` policies, explicit `Effect = "Deny"` guardrails, cross-service role boundary denies, **plus** principal-scoped `Allow` and `Deny` resource policies on KMS keys (`database`, `messaging`, `projection`, `audit`), S3 buckets, and SQS queues (main & DLQ), Cognito/JWT auth, and out-of-band IAM/KMS/S3/SQS policy drift cleanup.
 4. **`messaging_and_events` (Messaging and Events)**:
-   - Emphasize transactional outbox relay from PostgreSQL to ordered FIFO queues (`.fifo`, content-based deduplication, message group ordering), poison-message redrive isolation (`maxReceiveCount = 3` to DLQ without blocking healthy message groups), S3/storage event notifications, and EventBridge Scheduler (`rate(1 minute)`) self-healing triggers.
+   - Emphasize transactional outbox relay from PostgreSQL to ordered queues, SQS main/DLQ resource policies, out-of-order (`v3 -> v1 -> v2`) and concurrent scrambled-batch projection convergence, poison-message redrive isolation to DLQ, and EventBridge Scheduler self-healing triggers.
 5. **`networking_and_traffic` (Networking and Traffic)**:
    - Emphasize multi-AZ VPC design (2 public + 2 private subnets across `us-east-1a` and `us-east-1b`, custom route tables, IGW), ALB + Target Group + Listener routing, strict security group chaining (`alb -> ecs -> rds/valkey`), zero outbound egress (`egress = []`) on data-store security groups (`rds`, `valkey`), port-restricted egress on `alb` (TCP `8080` to VPC CIDR), and live EC2 security group drift remediation.
 6. **`observability_and_monitoring` (Observability and Monitoring)**:
-   - Emphasize CloudWatch Log Groups (`retention_in_days = 14`, strict per-workload IAM scoping), CloudWatch Metric Alarms (DLQ visible messages, ALB unhealthy hosts, worker error rates, reconciliation lag) wired to SNS topics, automated cross-store audit discrepancy detection, and the structured `/workspace/evidence/verification-report.json` verification artifact.
+   - Emphasize CloudWatch Log Groups (`retention_in_days = 14`, strict per-workload IAM scoping, rogue log group cleanup), structured JSON operational telemetry across API and Lambda workers, and automated cross-store audit/projection discrepancy healing.
 
 ---
 
 ## 7. Execution Workflow
 
 Execute these steps in order:
-1. **Design Architecture, Contracts & Frontier-Breaker Invariants**: Present the domain architecture tailored to `REALM_DOMAIN` and `CLOUD_PROVIDER`, state machine, database schema/triggers, cloud resource inventory, and 100-point rubric.
+1. **Design Architecture, Contracts & 10 Frontier-Breaker Invariants**: Present the domain architecture tailored to `REALM_DOMAIN` and `CLOUD_PROVIDER`, state machine, database schema/triggers, bilateral IAM + resource-policy matrix, and 100-point rubric.
 2. **Implement Application Workloads (`environment/application/`)**: Write the pre-built service and worker binaries (e.g., Rust or Go).
-3. **Implement Environment & Contracts (`environment/Dockerfile`, `docker-compose.yaml`, `runtime.sh`, `workspace/contracts/*`)**: Build the container topology, bootstrapper, and complete contract documentation.
-4. **Implement Oracle Reference Solution (`solution/`)**: Write modular Terraform/OpenTofu files, `deploy.sh` (including schema setup, trigger creation, drift remediation, and cross-store reconciliation), `destroy.sh`, and `solve.sh`.
-5. **Implement Verification Suite (`tests/`)**: Write `test.sh` and `tests/suite/*.py` (`conftest.py`, `_helpers.py`, `test_declared.py`, `test_live.py`, `test_behavior.py`, `test_lifecycle.py`).
+3. **Implement Environment & Contracts (`environment/Dockerfile`, `docker-compose.yaml`, `runtime.sh`, `workspace/contracts/*`)**: Build the container topology, bootstrapper, and complete specification-only contract documentation.
+4. **Implement Oracle Reference Solution (`solution/`)**: Write modular Terraform/OpenTofu files (including KMS, S3, and SQS resource policies), `deploy.sh` (including dynamic `CHECK` constraint drop/recreation, trigger creation/enabling, KMS/S3/SQS policy reconciliation, control-plane drift remediation, and deep DynamoDB/Valkey/S3 content-parity reconciliation), `destroy.sh`, and `solve.sh`.
+5. **Implement Verification Suite (`tests/`)**: Write `tests/runtime/Dockerfile`, `test.sh`, and `tests/suite/*.py` (`conftest.py`, `helpers.py`, `test_declared.py`, `test_live.py`, `test_behavior.py`, `test_lifecycle.py`).
 6. **Write `instruction.md`, `reasoning.md`, and `task.toml`**: Finalize documentation and verify syntax across all scripts and Python test files.
 
 ---
@@ -312,10 +343,10 @@ Execute these steps in order:
 - **AUTHOR_EMAIL**: `azeez@micro1.ai`
 - **ORACLE_TARGET**: `100% True Pass (100/100, reward = 1.0)`
 - **MODEL_EVALUATION_ACCEPTANCE_RULE**:
-  # 1. `oracle` AND `openai/gpt-5.6-m1alias-gpt-6-astra` (`gpt-astra`) MUST both be True Passes (100/100, reward = 1.0).
-  # 2. All remaining evaluated model runs (`claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-5.6-m1alias-gpt-6.1-sol`, etc.) MUST evaluate to True Fail (< 100/100, reward = 0.0).
-  # 3. Maximum allowed non-oracle True Passes: strictly ONE (1) model run (`gpt-5.6-m1alias-gpt-6-astra`). All other model runs MUST be True Fails.
-  # 4. Strictly ZERO (0) False Passes and ZERO (0) False Fails are allowed across all runs.
+  # 1. ONLY `oracle` (`solution/`) is allowed to achieve a True Pass (100/100, reward = 1.0).
+  # 2. ALL evaluated frontier model runs (`claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-5.6-m1alias-gpt-6.1-sol`, `gpt-5.6-m1alias-gpt-6-astra`, etc.) MUST evaluate to True Fail (< 100/100, reward = 0.0).
+  # 3. Maximum allowed non-oracle True Passes: strictly ZERO (0) model runs.
+  # 4. Strictly ZERO (0) False Passes and ZERO (0) False Fails are allowed across all runs, and `rv check` MUST pass 25/25.
 - **ADDITIONAL_NOTES**: `Start by proposing 3 distinct, high-difficulty task architectures for the selected CLOUD_PROVIDER and REALM_DOMAIN, or if a specific BUSINESS_SCENARIO is set above, begin implementing Step 1 immediately.`
 
 ================================================================================
@@ -337,8 +368,8 @@ Inspect `result.json`, `verifier/results.json`, `verifier/test-stdout.txt`, `age
 2. Did the `deploy_succeeded` gate pass or fail on each run, and why?
 3. For every failed test in `verifier/results.json`, was it a genuine model mistake against a documented requirement in `instruction.md` / `/workspace/contracts/` (**True Fail**), or was it caused by an environment issue / undocumented check (**False Fail**)?
 4. Verify our strict acceptance rule:
-   - `oracle` AND `openai/gpt-5.6-m1alias-gpt-6-astra` = **True Pass (`100/100`, `reward = 1.0`)**
-   - All remaining model runs (`claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-5.6-m1alias-gpt-6.1-sol`) = **True Fails (`< 100/100`, `reward = 0.0`)**
-   - **0 False Fails** and **0 False Passes** across all runs
-5. If ANY run is a **False Fail** or **False Pass**, or if any model run other than `oracle` and `gpt-5.6-m1alias-gpt-6-astra` achieved a **True Pass (`100/100`)**, immediately fix the False Fail/Pass and calibrate the task across `/workspace/contracts/`, `instruction.md`, `solution/`, and `tests/suite/` so that `oracle` and `gpt-5.6-m1alias-gpt-6-astra` are True Passes and all other model runs are True Fails with zero False Passes and zero False Fails.
+   - **ONLY `oracle`** = **True Pass (`100/100`, `reward = 1.0`)**
+   - **ALL evaluated model runs** (`claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-5.6-m1alias-gpt-6.1-sol`, `gpt-5.6-m1alias-gpt-6-astra`) = **True Fails (`< 100/100`, `reward = 0.0`)**
+   - **0 False Fails** and **0 False Passes** across all runs, and **`rv check` = 25/25**
+5. If ANY run is a **False Fail** or **False Pass**, or if ANY non-oracle model run achieved a **True Pass (`100/100`)**, immediately fix the False Fail/Pass and increase task complexity across `/workspace/contracts/`, `instruction.md`, `solution/`, and `tests/suite/` so that ONLY `oracle` is a True Pass (`100/100`) and ALL model runs are True Fails (`0.0`) with zero False Passes and zero False Fails.
 ```

@@ -525,38 +525,128 @@ def test_idempotency_and_optimistic_concurrency(ctx: VerifierContext) -> None:
         assert len(e2_event_ids) == 1, f"Concurrent idempotent requests produced multiple eventIds: {e2_event_ids}"
         assert all(body["version"] == 3 for _, body in idem_results)
 
-        # Concurrent competing writes racing on expectedVersion=3 -> v4
+        # 4-way concurrent invalid write burst at expectedVersion=3 (2 duplicate entryId + 2 whitespace-only memo)
+        invalid_burst_payloads = [
+            (
+                f"idem-inv-dup-0-{uuid.uuid4()}",
+                dict(
+                     spec["entries"][2],
+                    entryId=e1["entryId"],
+                    clearingStage="CONCURRENT_INVALID_DUP_0",
+                    memo="Concurrent duplicate entryId 0",
+                    expectedVersion=3,
+                ),
+            ),
+            (
+                f"idem-inv-dup-1-{uuid.uuid4()}",
+                dict(
+                    spec["entries"][2],
+                    entryId=e2["entryId"],
+                    clearingStage="CONCURRENT_INVALID_DUP_1",
+                    memo="Concurrent duplicate entryId 1",
+                    expectedVersion=3,
+                ),
+            ),
+            (
+                f"idem-inv-blank-0-{uuid.uuid4()}",
+                dict(
+                    spec["entries"][2],
+                    entryId=str(uuid.uuid4()),
+                    clearingStage="CONCURRENT_INVALID_BLANK_0",
+                    memo="    ",
+                    expectedVersion=3,
+                ),
+            ),
+            (
+                f"idem-inv-blank-1-{uuid.uuid4()}",
+                dict(
+                    spec["entries"][2],
+                    entryId=str(uuid.uuid4()),
+                    clearingStage="CONCURRENT_INVALID_BLANK_1",
+                    memo=" \t  ",
+                    expectedVersion=3,
+                ),
+            ),
+        ]
+
+        def _post_invalid_burst(item: tuple[str, dict]) -> int:
+            idem_k, pay = item
+            with httpx.Client(base_url=service_url, timeout=10.0) as c:
+                r = c.post(
+                    f"/v1/settlements/{sid}/entries",
+                    headers={"Authorization": f"Bearer {tokens['write']}", "Idempotency-Key": idem_k},
+                    json=pay,
+                )
+                return r.status_code
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            inv_codes = list(pool.map(_post_invalid_burst, invalid_burst_payloads))
+        assert inv_codes == [400, 400, 400, 400], (
+            f"Expected all 4 concurrent invalid requests (duplicate entryId / blank memo) to return 400, got {inv_codes}"
+        )
+
+        # 10-way mixed concurrent multi-threaded burst:
+        # - 5 competing valid writes racing on expectedVersion=3 -> v4 with memo=None (omitted memo)
+        # - 3 concurrent idempotent replays on idem_e2
+        # - 2 concurrent idempotent payload conflicts on idem_e2
         base_e3 = spec["entries"][2]
         competing_entries = [
             dict(
                 base_e3,
                 entryId=str(uuid.uuid4()),
                 clearingStage=f"CONCURRENT_RACE_{idx}",
-                memo=f"Concurrent contender {idx}",
+                memo=None,
                 expectedVersion=3,
             )
             for idx in range(5)
         ]
 
-        def _post_competing(entry_payload: dict) -> tuple[int, dict]:
+        mixed_burst_tasks: list[tuple[str, str, dict]] = []
+        for entry_payload in competing_entries:
+            mixed_burst_tasks.append(
+                ("compete", f"idem-race-v4-{entry_payload['entryId']}", entry_payload)
+            )
+        for _ in range(3):
+            mixed_burst_tasks.append(("replay", idem_e2, e2))
+        for conflict_idx in range(2):
+            mixed_burst_tasks.append(
+                (
+                    "conflict",
+                    idem_e2,
+                    dict(e2, clearingStage=f"MUTATED_CONCURRENT_STAGE_{conflict_idx}"),
+                )
+            )
+
+        def _post_mixed_burst(task: tuple[str, str, dict]) -> tuple[str, int, dict, dict]:
+            kind, idem_k, pay = task
             with httpx.Client(base_url=service_url, timeout=10.0) as c:
                 r = c.post(
                     f"/v1/settlements/{sid}/entries",
                     headers={
                         "Authorization": f"Bearer {tokens['write']}",
-                        "Idempotency-Key": f"idem-race-v4-{entry_payload['entryId']}",
+                        "Idempotency-Key": idem_k,
                     },
-                    json=entry_payload,
+                    json=pay,
                 )
-                return r.status_code, r.json()
+                return kind, r.status_code, r.json(), pay
 
-        with ThreadPoolExecutor(max_workers=5) as pool:
-            race_results = list(pool.map(_post_competing, competing_entries))
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            burst_results = list(pool.map(_post_mixed_burst, mixed_burst_tasks))
 
-        winners = [(code, body, pay) for (code, body), pay in zip(race_results, competing_entries) if code == 202]
-        conflicts = [code for code, _ in race_results if code == 409]
+        replay_outcomes = [(code, body) for kind, code, body, _ in burst_results if kind == "replay"]
+        assert all(code == 200 and body.get("idempotentReplay") is True and body.get("version") == 3 for code, body in replay_outcomes), (
+            f"Expected all 3 concurrent idempotent replays in mixed burst to return 200 (version=3), got {replay_outcomes}"
+        )
+        conflict_outcomes = [code for kind, code, _, _ in burst_results if kind == "conflict"]
+        assert conflict_outcomes == [409, 409], (
+            f"Expected both concurrent idempotency payload conflicts in mixed burst to return 409, got {conflict_outcomes}"
+        )
+
+        compete_outcomes = [(code, body, pay) for kind, code, body, pay in burst_results if kind == "compete"]
+        winners = [(code, body, pay) for code, body, pay in compete_outcomes if code == 202]
+        conflicts = [code for code, _, _ in compete_outcomes if code == 409]
         assert len(winners) == 1 and len(conflicts) == 4, (
-            f"Expected exactly 1 winner (202) and 4 conflicts (409) in concurrent version race, got {[c for c, _ in race_results]}"
+            f"Expected exactly 1 winner (202) and 4 conflicts (409) in concurrent version race, got {[c for c, _, _ in compete_outcomes]}"
         )
         winning_entry = winners[0][2]
         assert winners[0][1]["version"] == 4
@@ -565,13 +655,23 @@ def test_idempotency_and_optimistic_concurrency(ctx: VerifierContext) -> None:
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM clearledger.events WHERE settlement_id = %s", (sid,))
                 assert cur.fetchone()[0] == 4
+                cur.execute("SELECT version, last_memo FROM clearledger.settlements WHERE settlement_id = %s", (sid,))
+                pg_v4_row = cur.fetchone()
+                assert pg_v4_row is not None and pg_v4_row[0] == 4, f"Expected version 4 in PostgreSQL, got {pg_v4_row}"
+                assert pg_v4_row[1] == e2["memo"], (
+                    f"Concurrent v4 entry with memo=None failed to retain prior last_memo {e2['memo']!r} in PostgreSQL (got {pg_v4_row[1]!r})"
+                )
 
         with httpx.Client(base_url=service_url, timeout=10.0) as client:
             def _v4_projected() -> bool:
                 r = client.get(f"/v1/settlements/{sid}", headers={"Authorization": f"Bearer {tokens['read']}"})
-                return r.status_code == 200 and r.json().get("version") == 4
+                return (
+                    r.status_code == 200
+                    and r.json().get("version") == 4
+                    and r.json().get("lastMemo") == e2["memo"]
+                )
 
-            wait_until(_v4_projected, timeout_sec=35.0, interval_sec=0.8, description="concurrent winner v4 projected")
+            wait_until(_v4_projected, timeout_sec=35.0, interval_sec=0.8, description="concurrent winner v4 projected with retained lastMemo")
 
         spec["entries"][2] = winning_entry
         ctx.committed_settlements[sid] = {
@@ -579,9 +679,9 @@ def test_idempotency_and_optimistic_concurrency(ctx: VerifierContext) -> None:
             "expected_version": 4,
             "last_status": winning_entry["status"],
             "last_stage": winning_entry["clearingStage"],
-            "expected_last_memo": winning_entry["memo"],
+            "expected_last_memo": e2["memo"],
         }
-        return f"Verified {replays} sequential + 6 concurrent idempotent replays, payload mismatch 409, and 5-way optimistic concurrency race"
+        return f"Verified {replays} sequential + 6 concurrent idempotent replays, 4-way concurrent invalid write burst, and 10-way mixed concurrency race"
 
     _run_block(ctx, "functional.idempotency_concurrency", _check)
 
